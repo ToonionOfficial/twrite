@@ -193,7 +193,7 @@ impl EditorBuffer {
                 inserted_text: text.to_string(),
                 deleted_text: String::new(),
             }],
-            previous_cursor: previous_cursor,
+            previous_cursor,
             resulting_cursor: self.cursor,
         };
 
