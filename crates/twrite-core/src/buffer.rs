@@ -251,17 +251,17 @@ impl EditorBuffer {
         }
 
         let char_idx = self.text.byte_to_char(self.cursor);
-        let next_char = (char_idx + 1).min(self.text.len_chars());
+        let next_char = char_idx + 1;
 
         let end = self.text.char_to_byte(next_char);
-        let range = self.cursor..end;
-        let deleted_text = self.text.byte_slice(range.clone()).to_string();
+        let byte_range = self.cursor..end;
+        let deleted_text = self.text.byte_slice(byte_range.clone()).to_string();
 
-        self.text.remove(range.clone());
+        self.text.remove(char_idx..next_char);
 
         let tx = Transaction {
             edits: vec![Edit {
-                bytes_range: range,
+                bytes_range: byte_range,
                 inserted_text: String::new(),
                 deleted_text,
             }],
