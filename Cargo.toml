@@ -1,0 +1,11 @@
+[workspace]
+resolver = "2"
+members = ["crates/twrite","crates/twrite-core", "crates/twrite-gpui"]
+
+[workspace.dependencies]
+ropey = "1.6.1"
+thiserror = "1.0"
+gpui = { git = "https://github.com/zed-industries/zed" }
+
+twrite-core = { version = "0.1.0", path = "crates/twrite-core" }
+twrite-gpui = { version = "0.1.0", path = "crates/twrite-gpui" }
