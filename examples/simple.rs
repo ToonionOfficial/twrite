@@ -34,7 +34,6 @@ fn main() {
                     ed
                 });
 
-                // Focus the editor immediately
                 let focus_handle = editor.read(cx).focus_handle.clone();
                 focus_handle.focus(window, cx);
 

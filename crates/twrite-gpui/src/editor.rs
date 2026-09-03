@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use gpui::*;
-use twrite_core::{EditorBuffer, EditorHook, Point as BufferPoint, Selection};
+use twrite_core::{EditorBuffer, EditorHook, Point as BufferPoint, Selection, SyntaxHighlighter};
 
 use crate::{canvas::EditorCanvas, config::EditorConfig, theme::EditorTheme};
 
@@ -8,6 +10,7 @@ pub struct Editor {
     pub theme: EditorTheme,
     pub config: EditorConfig,
     pub hooks: Vec<Box<dyn EditorHook>>,
+    pub highlighter: Option<Arc<dyn SyntaxHighlighter>>,
     pub focus_handle: FocusHandle,
     pub scroll_row: usize,
     pub selection: Option<Selection>,
@@ -23,6 +26,7 @@ impl Editor {
             theme: EditorTheme::default(),
             config: EditorConfig::default(),
             hooks: Vec::new(),
+            highlighter: None,
             focus_handle: cx.focus_handle(),
             scroll_row: 0,
             selection: None,
@@ -30,6 +34,16 @@ impl Editor {
             is_selecting: false,
             last_bounds: None,
         }
+    }
+
+    /// Sets the active syntax highlighter.
+    pub fn set_highlighter(&mut self, highlighter: impl SyntaxHighlighter) {
+        self.highlighter = Some(Arc::new(highlighter));
+    }
+
+    /// Clears the active syntax highlighter, reverting to plain text.
+    pub fn clear_highlighter(&mut self) {
+        self.highlighter = None;
     }
 
     pub fn delete_selection(&mut self) -> bool {
