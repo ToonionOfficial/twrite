@@ -318,11 +318,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.is_selecting = false;
-        if let Some(sel) = self.selection {
-            if sel.is_empty() {
+        if let Some(sel) = self.selection
+            && sel.is_empty() {
                 self.selection = None;
             }
-        }
         cx.notify();
     }
 
