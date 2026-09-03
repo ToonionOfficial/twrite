@@ -265,19 +265,40 @@ impl RenderOnce for EditorCanvas {
                         let pos = text_line
                             .position_for_index(col_in_line, line_height)
                             .unwrap_or(point(px(0.0), px(0.0)));
-                        let cursor_w = if config.block_cursor {
-                            px(8.5)
+
+                        let style = if config.block_cursor {
+                            twrite_core::CursorStyle::Block
                         } else {
-                            px(2.0)
+                            editor.cursor_style
                         };
 
-                        Some(fill(
-                            Bounds::new(
-                                point(text_origin_x + pos.x, current_y + pos.y),
-                                size(cursor_w, line_height),
-                            ),
-                            theme.cursor,
-                        ))
+                        match style {
+                            twrite_core::CursorStyle::Hidden => None,
+                            twrite_core::CursorStyle::Block => Some(fill(
+                                Bounds::new(
+                                    point(text_origin_x + pos.x, current_y + pos.y),
+                                    size(px(8.5), line_height),
+                                ),
+                                theme.cursor,
+                            )),
+                            twrite_core::CursorStyle::Underline => Some(fill(
+                                Bounds::new(
+                                    point(
+                                        text_origin_x + pos.x,
+                                        current_y + pos.y + line_height - px(2.0),
+                                    ),
+                                    size(px(8.5), px(2.0)),
+                                ),
+                                theme.cursor,
+                            )),
+                            twrite_core::CursorStyle::Bar => Some(fill(
+                                Bounds::new(
+                                    point(text_origin_x + pos.x, current_y + pos.y),
+                                    size(px(2.0), line_height),
+                                ),
+                                theme.cursor,
+                            )),
+                        }
                     } else {
                         None
                     };
