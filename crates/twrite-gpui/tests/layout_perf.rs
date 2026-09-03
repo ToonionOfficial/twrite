@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 
 use gpui::{Font, px};
 use twrite_core::{EditorBuffer, HighlightTag, StyleSpan};
-use twrite_gpui::{EditorTheme, LayoutCache, LineMetrics, build_line_text_runs};
+use twrite_gpui::{EditorTheme, LayoutCache, LineMetrics, RunFonts, build_line_text_runs};
 
 fn xorshift(seed: u64) -> impl FnMut() -> u64 {
     let mut x = if seed == 0 {
@@ -106,11 +106,15 @@ fn run_layout_pass(buf: &EditorBuffer, rows: std::ops::Range<usize>) -> Duration
         let spans = fake_spans(black_box(line));
         let metrics = LineMetrics::for_line(line, line, black_box(&spans), px(16.0), px(22.0));
         let checked = metrics.task_state == Some(true);
+        let fonts = RunFonts {
+            base: &font,
+            code: &font,
+        };
         let runs = build_line_text_runs(
             line,
             &spans,
             None,
-            &font,
+            &fonts,
             &theme,
             metrics.is_code_block,
             checked,

@@ -7,7 +7,7 @@ use twrite_core::{
 };
 
 use crate::{
-    canvas::{EditorCanvas, build_line_text_runs},
+    canvas::{EditorCanvas, RunFonts, build_line_text_runs},
     config::EditorConfig,
     layout_cache::LayoutCache,
     theme::EditorTheme,
@@ -31,6 +31,14 @@ pub struct Editor {
     /// Per-version cache of highlight/conceal/link inputs, shared by prepaint
     /// and hit-testing so each row is parsed once per epoch, not per frame.
     pub layout_cache: LayoutCache,
+    /// Bold/italic face availability from the last prepaint probe (`None` before first paint).
+    pub face_availability: Option<FaceAvailability>,
+    /// Base family picked by candidate auto-select (`None` before first paint,
+    /// or when no candidate has emphasis faces).
+    pub selected_font_family: Option<SharedString>,
+    /// Inputs the face probe last ran against: explicit families + host font.
+    /// Re-probed on change only.
+    pub face_probe_key: Option<(Option<SharedString>, Option<SharedString>, Font)>,
     /// Focus handle for keyboard input tracking within GPUI.
     pub focus_handle: FocusHandle,
     /// First visible row index in the viewport.
@@ -60,6 +68,20 @@ pub struct VisibleLink {
     pub bounds: Bounds<Pixels>,
     /// The destination URL.
     pub url: String,
+}
+
+/// Availability of bold/italic font faces for the editor's base font.
+///
+/// Computed during prepaint by comparing resolved `FontId`s: a missing face
+/// silently falls back to the regular face, which would make emphasis
+/// invisible. Host apps can surface this (e.g. in a status bar) and point
+/// users at `EditorConfig::font_family`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FaceAvailability {
+    /// Whether bold text resolves to a distinct face.
+    pub bold: bool,
+    /// Whether italic text resolves to a distinct face.
+    pub italic: bool,
 }
 
 /// Layout metrics and screen coordinates for a visible line, cached during prepaint for instant hit testing.
@@ -116,6 +138,9 @@ impl Editor {
             highlighter: None,
             highlighter_rev: 0,
             layout_cache: LayoutCache::new(),
+            face_availability: None,
+            selected_font_family: None,
+            face_probe_key: None,
             focus_handle: cx.focus_handle(),
             scroll_row: 0,
             selection: None,
@@ -147,6 +172,18 @@ impl Editor {
     /// Returns true if the cursor is currently in block mode.
     pub fn is_block_cursor(&self) -> bool {
         self.cursor_style == CursorStyle::Block || self.config.block_cursor
+    }
+
+    /// Resolves the base font: explicit family, else auto-selected family, else host.
+    pub fn resolved_base_font(&self, host: &Font) -> Font {
+        self.config
+            .base_font(host, self.selected_font_family.as_ref())
+    }
+
+    /// Resolves the `Code`-span font (follows auto-select unless overridden).
+    pub fn resolved_code_font(&self, host: &Font) -> Font {
+        self.config
+            .code_font(host, self.selected_font_family.as_ref())
     }
 
     /// Sets the active syntax highlighter.
@@ -349,7 +386,7 @@ impl Editor {
                 px(0.0)
             };
             let wrap_width = Some((bounds.size.width - gutter_width - px(24.0)).max(px(50.0)));
-            let font = win.text_style().font();
+            let font = self.resolved_base_font(&win.text_style().font());
 
             let get_row_visual_lines = |row: usize| -> usize {
                 let raw_line = self.buffer.line_to_string(row);
@@ -453,6 +490,11 @@ impl Editor {
 
             let cursor_row = self.buffer.cursor_point().row;
             let highlighter_rev = self.highlighter_rev;
+            // Resolve fonts before the cache borrow below (`&self` helpers
+            // conflict with the live `&mut layout_cache` borrow).
+            let host_font = window.text_style().font();
+            let font = self.resolved_base_font(&host_font);
+            let code_font = self.resolved_code_font(&host_font);
             let cached = self.layout_cache.cached_input(
                 &self.buffer,
                 self.highlighter.as_deref(),
@@ -466,12 +508,15 @@ impl Editor {
             let is_checked_task =
                 task_state == Some(true) && line_text.len() != concealed.display_text.len();
 
-            let font = window.text_style().font();
+            let fonts = RunFonts {
+                base: &font,
+                code: &code_font,
+            };
             let runs = build_line_text_runs(
                 &concealed.display_text,
                 &concealed.spans,
                 None,
-                &font,
+                &fonts,
                 &self.theme,
                 false,
                 is_checked_task,
@@ -990,14 +1035,25 @@ impl Render for Editor {
             gpui::CursorStyle::IBeam
         };
 
-        div()
+        let root = div()
             .track_focus(&self.focus_handle)
             .key_context("Editor")
             .size_full()
             .overflow_hidden()
             .cursor(cursor_style)
-            .bg(self.theme.background)
-            .on_key_down(cx.listener(Self::handle_key_down))
+            .bg(self.theme.background);
+        let root = if let Some(family) = self
+            .config
+            .font_family
+            .clone()
+            .or_else(|| self.selected_font_family.clone())
+        {
+            root.font_family(family)
+        } else {
+            root
+        };
+
+        root.on_key_down(cx.listener(Self::handle_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .on_mouse_up_out(

@@ -24,7 +24,7 @@ impl MarkdownApp {
 
 impl Render for MarkdownApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (cursor_pos, pixel_pos, status_text, conceal_mode) = {
+        let (cursor_pos, pixel_pos, status_text, conceal_mode, faces_text) = {
             let ed = self.editor.read(cx);
             let pt = ed.buffer.cursor_point();
             let pixel = ed
@@ -36,11 +36,30 @@ impl Render for MarkdownApp {
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "READY".to_string());
             let conceal = ed.config.markdown.conceal_mode;
+            let family = ed
+                .selected_font_family
+                .as_ref()
+                .map(|f| f.to_string())
+                .or_else(|| ed.config.font_family.as_ref().map(|f| f.to_string()))
+                .unwrap_or_else(|| "(host default)".to_string());
+            let faces = match ed.face_availability {
+                Some(f) if f.bold && f.italic => format!("Faces: {family} B+I ok"),
+                Some(f) => format!(
+                    "Faces: {family} {} missing",
+                    match (f.bold, f.italic) {
+                        (false, false) => "bold+italic",
+                        (false, true) => "bold",
+                        _ => "italic",
+                    }
+                ),
+                None => format!("Faces: {family} …"),
+            };
             (
                 format!("Ln {}, Col {}", pt.row + 1, pt.column + 1),
                 pixel,
                 status,
                 conceal,
+                faces,
             )
         };
 
@@ -136,6 +155,11 @@ impl Render for MarkdownApp {
                             .gap_4()
                             .child(
                                 div()
+                                    .text_color(rgb(0xf9e2af))
+                                    .child(faces_text),
+                            )
+                            .child(
+                                div()
                                     .text_color(rgb(0x89dceb))
                                     .child(format!("Cursor Pixel: {}", pixel_pos)),
                             )
@@ -197,6 +221,10 @@ fn main() {
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(initial_text, cx);
                     ed.config.line_numbers = true;
+                    // No explicit family: the editor auto-selects the first
+                    // platform monospace with bold + italic faces (see
+                    // `Editor::face_availability`). Set `ed.config.font_family
+                    // explicitly to override (e.g. Menlo, Consolas).
                     ed.enable_markdown();
                     ed
                 });
