@@ -218,6 +218,32 @@ impl EditorBuffer {
         self.cursor = self.line_end_offset();
     }
 
+    /// Deletes the text from the previous word boundary up to the cursor.
+    ///
+    /// Returns `true` if text was deleted, or `false` if the cursor was already at the beginning.
+    pub fn delete_prev_word(&mut self) -> bool {
+        let target = self.prev_word_offset();
+        if target < self.cursor {
+            self.delete_range(target..self.cursor);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Deletes the text from the cursor up to the next word boundary.
+    ///
+    /// Returns `true` if text was deleted, or `false` if the cursor was already at the end.
+    pub fn delete_next_word(&mut self) -> bool {
+        let target = self.next_word_offset();
+        if self.cursor < target {
+            self.delete_range(self.cursor..target);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Inserts `text` at the current cursor position.
     ///
     /// The inserted text becomes a single undoable transaction, and the
