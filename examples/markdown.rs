@@ -7,15 +7,23 @@ struct MarkdownApp {
 }
 
 impl Render for MarkdownApp {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (cursor_pos, status_text) = {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let (cursor_pos, pixel_pos, status_text) = {
             let ed = self.editor.read(cx);
             let pt = ed.buffer.cursor_point();
+            let pixel = ed
+                .cursor_pixel_position(window)
+                .map(|p| format!("X: {:.0}, Y: {:.0}", p.x, p.y))
+                .unwrap_or_else(|| "--".to_string());
             let status = ed
                 .status_text()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "READY".to_string());
-            (format!("Ln {}, Col {}", pt.row + 1, pt.column + 1), status)
+            (
+                format!("Ln {}, Col {}", pt.row + 1, pt.column + 1),
+                pixel,
+                status,
+            )
         };
 
         div()
@@ -87,8 +95,19 @@ impl Render for MarkdownApp {
                     )
                     .child(
                         div()
-                            .text_color(rgb(0xa6e3a1))
-                            .child(cursor_pos),
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .child(
+                                div()
+                                    .text_color(rgb(0x89dceb))
+                                    .child(format!("Cursor Pixel: {}", pixel_pos)),
+                            )
+                            .child(
+                                div()
+                                    .text_color(rgb(0xa6e3a1))
+                                    .child(cursor_pos),
+                            ),
                     ),
             )
     }

@@ -11,6 +11,7 @@ pub mod input;
 /// Color palettes, Catppuccin themes, and syntax token style resolution.
 pub mod theme;
 
+pub use canvas::{EditorCanvas, LineMetrics, build_line_text_runs};
 pub use config::EditorConfig;
 pub use editor::Editor;
 pub use theme::{EditorTheme, ResolvedTokenStyle, SyntaxTheme};

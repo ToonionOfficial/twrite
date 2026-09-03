@@ -6,7 +6,11 @@ use twrite_core::{
     SyntaxHighlighter,
 };
 
-use crate::{canvas::EditorCanvas, config::EditorConfig, theme::EditorTheme};
+use crate::{
+    canvas::{EditorCanvas, LineMetrics, build_line_text_runs},
+    config::EditorConfig,
+    theme::EditorTheme,
+};
 
 /// The main GPUI text editor view and controller.
 pub struct Editor {
@@ -332,24 +336,26 @@ impl Editor {
             let line_text = raw_line.trim_end_matches(['\r', '\n']);
             let line_start_byte = self.buffer.point_to_offset(BufferPoint::new(row, 0));
 
-            let runs = if line_text.is_empty() {
-                Vec::new()
+            let spans = if let Some(ref highlighter) = self.highlighter {
+                highlighter.highlight_line(&self.buffer, row, line_text)
             } else {
-                vec![TextRun {
-                    len: line_text.len(),
-                    font: font.clone(),
-                    color: self.theme.foreground,
-                    background_color: None,
-                    underline: None,
-                    strikethrough: None,
-                }]
+                Vec::new()
             };
+
+            let metrics = LineMetrics::for_line(
+                line_text,
+                &spans,
+                self.config.font_size,
+                self.config.line_height,
+            );
+
+            let runs = build_line_text_runs(line_text, &spans, None, &font, &self.theme);
 
             let text_line = window
                 .text_system()
                 .shape_text(
                     line_text.to_string().into(),
-                    self.config.font_size,
+                    metrics.font_size,
                     &runs,
                     wrap_width,
                     None,
@@ -359,7 +365,7 @@ impl Editor {
                 .unwrap_or_default();
 
             let line_visual_lines = text_line.wrap_boundaries.len() + 1;
-            let line_h = self.config.line_height * line_visual_lines;
+            let line_h = metrics.line_height * line_visual_lines;
 
             let is_last_line = row + 1 == total_lines;
             if relative_y < current_y_offset + line_h || is_last_line {
@@ -372,7 +378,7 @@ impl Editor {
                 let rel_pos = point(line_rel_x, line_rel_y);
 
                 let col_byte = text_line
-                    .closest_index_for_position(rel_pos, self.config.line_height)
+                    .closest_index_for_position(rel_pos, metrics.line_height)
                     .unwrap_or_else(|idx| idx);
 
                 return line_start_byte + col_byte.min(line_text.len());
@@ -382,6 +388,96 @@ impl Editor {
         }
 
         self.buffer.len_bytes()
+    }
+
+    /// Returns the window pixel coordinates (X, Y) at the bottom of the active cursor.
+    ///
+    /// This is typically used by downstream applications to anchor floating menus,
+    /// autocompletion popups, or hover tooltips directly below the text insertion cursor.
+    /// Returns `None` if the editor has not yet been rendered, or if the cursor is scrolled
+    /// outside the visible viewport.
+    pub fn cursor_pixel_position(&self, window: &Window) -> Option<Point<Pixels>> {
+        let bounds = self.last_bounds?;
+        let cursor_offset = self.buffer.cursor_offset();
+        let cursor_point = self.buffer.cursor_point();
+
+        if cursor_point.row < self.scroll_row {
+            return None;
+        }
+
+        let gutter_width = if self.config.line_numbers {
+            px(48.0)
+        } else {
+            px(0.0)
+        };
+        let text_origin_x = bounds.left() + gutter_width + px(12.0);
+
+        let wrap_width = if self.config.line_wrap {
+            let available = bounds.size.width - gutter_width - px(24.0);
+            Some(available.max(px(50.0)))
+        } else {
+            None
+        };
+
+        let total_lines = self.buffer.len_lines();
+        let mut current_y = bounds.top();
+        let font = window.text_style().font();
+
+        for row in self.scroll_row..total_lines {
+            if current_y >= bounds.bottom() {
+                return None;
+            }
+
+            let raw_line = self.buffer.line_to_string(row);
+            let line_text = raw_line.trim_end_matches(['\r', '\n']);
+            let line_start_byte = self.buffer.point_to_offset(BufferPoint::new(row, 0));
+
+            let spans = if let Some(ref highlighter) = self.highlighter {
+                highlighter.highlight_line(&self.buffer, row, line_text)
+            } else {
+                Vec::new()
+            };
+
+            let metrics = LineMetrics::for_line(
+                line_text,
+                &spans,
+                self.config.font_size,
+                self.config.line_height,
+            );
+
+            let runs = build_line_text_runs(line_text, &spans, None, &font, &self.theme);
+
+            let text_line = window
+                .text_system()
+                .shape_text(
+                    line_text.to_string().into(),
+                    metrics.font_size,
+                    &runs,
+                    wrap_width,
+                    None,
+                )
+                .ok()
+                .and_then(|mut l| l.pop())
+                .unwrap_or_default();
+
+            if row == cursor_point.row {
+                let col_in_line = cursor_offset
+                    .saturating_sub(line_start_byte)
+                    .min(line_text.len());
+                let pos = text_line
+                    .position_for_index(col_in_line, metrics.line_height)
+                    .unwrap_or(point(px(0.0), px(0.0)));
+
+                let cursor_x = text_origin_x + pos.x;
+                let cursor_y = current_y + pos.y + metrics.line_height;
+                return Some(point(cursor_x, cursor_y));
+            }
+
+            let line_visual_lines = text_line.wrap_boundaries.len() + 1;
+            current_y += metrics.line_height * line_visual_lines;
+        }
+
+        None
     }
 
     fn handle_key_down(

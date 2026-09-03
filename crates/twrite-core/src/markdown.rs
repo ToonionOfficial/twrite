@@ -49,12 +49,17 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         } else if trimmed_start.starts_with("## ") {
             spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading2));
             return spans;
-        } else if trimmed_start.starts_with("### ")
-            || trimmed_start.starts_with("#### ")
-            || trimmed_start.starts_with("##### ")
-            || trimmed_start.starts_with("###### ")
-        {
+        } else if trimmed_start.starts_with("### ") {
             spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading3));
+            return spans;
+        } else if trimmed_start.starts_with("#### ") {
+            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading4));
+            return spans;
+        } else if trimmed_start.starts_with("##### ") {
+            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading5));
+            return spans;
+        } else if trimmed_start.starts_with("###### ") {
+            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading6));
             return spans;
         }
 

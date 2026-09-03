@@ -1,8 +1,94 @@
 use gpui::*;
-use twrite_core::{Point as BufferPoint, StyleSpan, UnderlineDecoration, split_line_intervals};
+use twrite_core::{
+    HighlightTag, Point as BufferPoint, StyleSpan, StyleValue, UnderlineDecoration,
+    split_line_intervals,
+};
 
 use crate::editor::Editor;
 use crate::theme::EditorTheme;
+
+/// Visual layout metrics and block-level decorations for a single rendered line.
+#[derive(Debug, Clone)]
+pub struct LineMetrics {
+    /// Font size in pixels for this line.
+    pub font_size: Pixels,
+    /// Vertical line height in pixels for this line.
+    pub line_height: Pixels,
+    /// Whether this line is a blockquote.
+    pub is_quote: bool,
+    /// Whether this line is part of a fenced code block.
+    pub is_code_block: bool,
+}
+
+impl LineMetrics {
+    /// Calculates layout metrics and block-level decorations based on syntax spans and line text.
+    pub fn for_line(
+        line_text: &str,
+        spans: &[StyleSpan],
+        base_font_size: Pixels,
+        base_line_height: Pixels,
+    ) -> Self {
+        let mut font_size = base_font_size;
+        let mut line_height = base_line_height;
+
+        let has_h1 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading1)));
+        let has_h2 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading2)));
+        let has_h3 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading3)));
+        let has_h4 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading4)));
+        let has_h5 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading5)));
+        let has_h6 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading6)));
+
+        if has_h1 {
+            font_size = base_font_size * 2.0;
+            line_height = base_line_height * 1.8;
+        } else if has_h2 {
+            font_size = base_font_size * 1.5;
+            line_height = base_line_height * 1.4;
+        } else if has_h3 {
+            font_size = base_font_size * 1.25;
+            line_height = base_line_height * 1.2;
+        } else if has_h4 {
+            font_size = base_font_size * 1.125;
+            line_height = base_line_height * 1.1;
+        } else if has_h5 {
+            font_size = base_font_size * 1.0;
+            line_height = base_line_height * 1.0;
+        } else if has_h6 {
+            font_size = base_font_size * 0.875;
+            line_height = base_line_height * 0.95;
+        }
+
+        let trimmed = line_text.trim_start();
+        let is_quote = trimmed.starts_with("> ") || trimmed == ">";
+
+        let is_code_block = trimmed.starts_with("```")
+            || trimmed.starts_with("~~~")
+            || (!line_text.is_empty()
+                && spans.iter().any(|s| {
+                    s.range.len() == line_text.len()
+                        && matches!(s.style, StyleValue::Tag(HighlightTag::Code))
+                }));
+
+        Self {
+            font_size,
+            line_height,
+            is_quote,
+            is_code_block,
+        }
+    }
+}
 
 /// Builds styled text runs for a single line by blending syntax spans and active selection.
 pub fn build_line_text_runs(
@@ -97,11 +183,14 @@ pub fn build_line_text_runs(
     merged
 }
 
-/// Data computed during prepaint for each visible line
+/// Data computed during prepaint for each visible line.
 struct PreparedLine {
     gutter_num: Option<(Point<Pixels>, ShapedLine)>,
     text_origin: Point<Pixels>,
     text_line: WrappedLine,
+    line_height: Pixels,
+    quote_bar_quad: Option<PaintQuad>,
+    code_block_bg_quad: Option<PaintQuad>,
     empty_selection_quad: Option<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
 }
@@ -109,7 +198,6 @@ struct PreparedLine {
 /// The state struct (T) passed from `prepaint` to `paint`.
 struct EditorCanvasPrepaint {
     background_quad: PaintQuad,
-    line_height: Pixels,
     lines: Vec<PreparedLine>,
 }
 
@@ -139,8 +227,6 @@ impl RenderOnce for EditorCanvas {
                 let theme = editor.theme.clone();
                 let config = editor.config.clone();
                 let font = window.text_style().font();
-                let font_size = config.font_size;
-                let line_height = config.line_height;
 
                 let gutter_width = if config.line_numbers {
                     px(48.0)
@@ -193,7 +279,7 @@ impl RenderOnce for EditorCanvas {
 
                         let shaped = window.text_system().shape_line(
                             line_num_str.into(),
-                            font_size,
+                            config.font_size,
                             &[TextRun {
                                 len: 3,
                                 font: font.clone(),
@@ -215,6 +301,13 @@ impl RenderOnce for EditorCanvas {
                     } else {
                         Vec::new()
                     };
+
+                    let metrics = LineMetrics::for_line(
+                        line_text,
+                        &spans,
+                        config.font_size,
+                        config.line_height,
+                    );
 
                     let selection_line_range = if let Some(sel) = selection {
                         let sel_range = sel.byte_range();
@@ -248,7 +341,7 @@ impl RenderOnce for EditorCanvas {
                         .text_system()
                         .shape_text(
                             line_text.to_string().into(),
-                            font_size,
+                            metrics.font_size,
                             &runs,
                             wrap_width,
                             None,
@@ -258,14 +351,39 @@ impl RenderOnce for EditorCanvas {
                         .unwrap_or_default();
 
                     let line_visual_lines = text_line.wrap_boundaries.len() + 1;
-                    let line_total_height = line_height * line_visual_lines;
+                    let line_total_height = metrics.line_height * line_visual_lines;
+
+                    let quote_bar_quad = if metrics.is_quote {
+                        Some(fill(
+                            Bounds::new(
+                                point(bounds.left() + gutter_width + px(4.0), current_y),
+                                size(px(3.0), line_total_height),
+                            ),
+                            theme.syntax.comment,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    let code_block_bg_quad = if metrics.is_code_block {
+                        let bg_width = (bounds.size.width - gutter_width - px(8.0)).max(px(0.0));
+                        Some(fill(
+                            Bounds::new(
+                                point(bounds.left() + gutter_width + px(4.0), current_y),
+                                size(bg_width, line_total_height),
+                            ),
+                            theme.syntax.code_bg,
+                        ))
+                    } else {
+                        None
+                    };
 
                     let cursor_quad = if cursor_point.row == row && !is_all_selected {
                         let col_in_line = cursor_offset
                             .saturating_sub(line_start_byte)
                             .min(line_text.len());
                         let pos = text_line
-                            .position_for_index(col_in_line, line_height)
+                            .position_for_index(col_in_line, metrics.line_height)
                             .unwrap_or(point(px(0.0), px(0.0)));
 
                         let style = if config.block_cursor {
@@ -279,7 +397,7 @@ impl RenderOnce for EditorCanvas {
                             twrite_core::CursorStyle::Block => Some(fill(
                                 Bounds::new(
                                     point(text_origin_x + pos.x, current_y + pos.y),
-                                    size(px(8.5), line_height),
+                                    size(px(8.5), metrics.line_height),
                                 ),
                                 theme.cursor,
                             )),
@@ -287,7 +405,7 @@ impl RenderOnce for EditorCanvas {
                                 Bounds::new(
                                     point(
                                         text_origin_x + pos.x,
-                                        current_y + pos.y + line_height - px(2.0),
+                                        current_y + pos.y + metrics.line_height - px(2.0),
                                     ),
                                     size(px(8.5), px(2.0)),
                                 ),
@@ -296,7 +414,7 @@ impl RenderOnce for EditorCanvas {
                             twrite_core::CursorStyle::Bar => Some(fill(
                                 Bounds::new(
                                     point(text_origin_x + pos.x, current_y + pos.y),
-                                    size(px(2.0), line_height),
+                                    size(px(2.0), metrics.line_height),
                                 ),
                                 theme.cursor,
                             )),
@@ -313,7 +431,7 @@ impl RenderOnce for EditorCanvas {
                                 Some(fill(
                                     Bounds::new(
                                         point(text_origin_x, current_y),
-                                        size(px(6.0), line_height),
+                                        size(px(6.0), metrics.line_height),
                                     ),
                                     theme.selection,
                                 ))
@@ -331,6 +449,9 @@ impl RenderOnce for EditorCanvas {
                         gutter_num,
                         text_origin: point(text_origin_x, current_y),
                         text_line,
+                        line_height: metrics.line_height,
+                        quote_bar_quad,
+                        code_block_bg_quad,
                         empty_selection_quad,
                         cursor_quad,
                     });
@@ -340,7 +461,6 @@ impl RenderOnce for EditorCanvas {
 
                 EditorCanvasPrepaint {
                     background_quad: fill(bounds, theme.background),
-                    line_height,
                     lines,
                 }
             },
@@ -348,10 +468,17 @@ impl RenderOnce for EditorCanvas {
                 window.paint_quad(prepaint.background_quad);
 
                 for line in prepaint.lines {
+                    if let Some(code_bg) = line.code_block_bg_quad {
+                        window.paint_quad(code_bg);
+                    }
+                    if let Some(quote_bar) = line.quote_bar_quad {
+                        window.paint_quad(quote_bar);
+                    }
+
                     if let Some((origin, shaped_num)) = line.gutter_num {
                         let _ = shaped_num.paint(
                             origin,
-                            prepaint.line_height,
+                            line.line_height,
                             TextAlign::Left,
                             None,
                             window,
@@ -361,7 +488,7 @@ impl RenderOnce for EditorCanvas {
 
                     let _ = line.text_line.paint_background(
                         line.text_origin,
-                        prepaint.line_height,
+                        line.line_height,
                         TextAlign::Left,
                         None,
                         window,
@@ -377,7 +504,7 @@ impl RenderOnce for EditorCanvas {
 
                     let _ = line.text_line.paint(
                         line.text_origin,
-                        prepaint.line_height,
+                        line.line_height,
                         TextAlign::Left,
                         None,
                         window,

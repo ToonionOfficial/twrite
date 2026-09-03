@@ -69,6 +69,12 @@ pub enum HighlightTag {
     Heading2,
     /// Markdown heading level 3.
     Heading3,
+    /// Markdown heading level 4.
+    Heading4,
+    /// Markdown heading level 5.
+    Heading5,
+    /// Markdown heading level 6.
+    Heading6,
     /// Bold text.
     Bold,
     /// Italic text.

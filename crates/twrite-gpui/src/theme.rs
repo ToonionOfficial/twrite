@@ -149,7 +149,10 @@ impl EditorTheme {
             HighlightTag::Punctuation => self.syntax.punctuation,
             HighlightTag::Heading1 => self.syntax.heading1,
             HighlightTag::Heading2 => self.syntax.heading2,
-            HighlightTag::Heading3 => self.syntax.heading3,
+            HighlightTag::Heading3
+            | HighlightTag::Heading4
+            | HighlightTag::Heading5
+            | HighlightTag::Heading6 => self.syntax.heading3,
             HighlightTag::Bold => self.syntax.bold,
             HighlightTag::Italic => self.syntax.italic,
             HighlightTag::Code => self.syntax.code,
@@ -170,6 +173,9 @@ impl EditorTheme {
                     HighlightTag::Heading1
                         | HighlightTag::Heading2
                         | HighlightTag::Heading3
+                        | HighlightTag::Heading4
+                        | HighlightTag::Heading5
+                        | HighlightTag::Heading6
                         | HighlightTag::Bold
                 );
                 let italic = matches!(tag, HighlightTag::Italic | HighlightTag::Comment);
