@@ -20,3 +20,7 @@ path = "../../examples/syntax.rs"
 [[example]]
 name = "hooks"
 path = "../../examples/hooks.rs"
+
+[[example]]
+name = "vim"
+path = "../../examples/vim.rs"
