@@ -7,12 +7,12 @@ struct MarkdownApp {
 }
 
 impl Render for MarkdownApp {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let (cursor_pos, pixel_pos, status_text) = {
             let ed = self.editor.read(cx);
             let pt = ed.buffer.cursor_point();
             let pixel = ed
-                .cursor_pixel_position(window)
+                .cursor_pixel_position()
                 .map(|p| format!("X: {:.0}, Y: {:.0}", p.x, p.y))
                 .unwrap_or_else(|| "--".to_string());
             let status = ed

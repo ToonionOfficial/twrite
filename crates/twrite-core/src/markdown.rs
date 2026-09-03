@@ -1,3 +1,5 @@
+use std::sync::{Arc, RwLock};
+
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::{
@@ -5,26 +7,66 @@ use crate::{
     StyleSpan, SyntaxHighlighter, TextStyle,
 };
 
+/// Cached fence line row indices and associated document version.
+type FenceCache = Arc<RwLock<Option<(usize, Vec<usize>)>>>;
+
 /// A syntax highlighter for CommonMark and GFM Markdown documents using `pulldown-cmark`.
 #[derive(Debug, Clone, Default)]
-pub struct MarkdownHighlighter;
+pub struct MarkdownHighlighter {
+    cached_fences: FenceCache,
+}
 
 impl MarkdownHighlighter {
     /// Creates a new Markdown syntax highlighter.
     pub fn new() -> Self {
-        Self
+        Self {
+            cached_fences: Arc::new(RwLock::new(None)),
+        }
     }
 
-    fn is_in_fenced_code_block(buffer: &EditorBuffer, current_row: usize) -> bool {
-        let mut in_block = false;
-        for row in 0..current_row {
-            let line = buffer.line_to_string(row);
-            let trimmed = line.trim_start();
-            if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                in_block = !in_block;
-            }
+    fn is_in_fenced_code_block(&self, buffer: &EditorBuffer, current_row: usize) -> bool {
+        let version = buffer.version();
+        if let Ok(guard) = self.cached_fences.read()
+            && let Some((v, ref fences)) = *guard
+            && v == version
+        {
+            let count = fences.partition_point(|&f_row| f_row < current_row);
+            return count % 2 == 1;
         }
-        in_block
+
+        if let Ok(mut guard) = self.cached_fences.write() {
+            if let Some((v, ref fences)) = *guard
+                && v == version
+            {
+                let count = fences.partition_point(|&f_row| f_row < current_row);
+                return count % 2 == 1;
+            }
+
+            let mut fences = Vec::new();
+            let total_lines = buffer.len_lines();
+            let rope = buffer.text();
+            for r in 0..total_lines {
+                let line = rope.line(r);
+                let mut chars = line.chars();
+                while let Some(c) = chars.next() {
+                    if !c.is_whitespace() {
+                        if (c == '`' && chars.next() == Some('`') && chars.next() == Some('`'))
+                            || (c == '~' && chars.next() == Some('~') && chars.next() == Some('~'))
+                        {
+                            fences.push(r);
+                        }
+                        break;
+                    }
+                }
+            }
+
+            let count = fences.partition_point(|&f_row| f_row < current_row);
+            let in_block = count % 2 == 1;
+            *guard = Some((version, fences));
+            in_block
+        } else {
+            false
+        }
     }
 }
 
@@ -38,7 +80,7 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             return spans;
         }
 
-        if Self::is_in_fenced_code_block(buffer, row) {
+        if self.is_in_fenced_code_block(buffer, row) {
             spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Code));
             return spans;
         }

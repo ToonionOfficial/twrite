@@ -257,6 +257,7 @@ impl RenderOnce for EditorCanvas {
 
                 let mut lines: Vec<PreparedLine> = Vec::new();
                 let mut current_y = bounds.top();
+                let mut computed_cursor_pixel = None;
 
                 for row in scroll_row..total_lines {
                     if current_y >= bounds.bottom() {
@@ -378,7 +379,7 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    let cursor_quad = if cursor_point.row == row && !is_all_selected {
+                    let cursor_quad = if cursor_point.row == row {
                         let col_in_line = cursor_offset
                             .saturating_sub(line_start_byte)
                             .min(line_text.len());
@@ -386,38 +387,47 @@ impl RenderOnce for EditorCanvas {
                             .position_for_index(col_in_line, metrics.line_height)
                             .unwrap_or(point(px(0.0), px(0.0)));
 
-                        let style = if config.block_cursor {
-                            twrite_core::CursorStyle::Block
-                        } else {
-                            editor.cursor_style
-                        };
+                        computed_cursor_pixel = Some(point(
+                            text_origin_x + pos.x,
+                            current_y + pos.y + metrics.line_height,
+                        ));
 
-                        match style {
-                            twrite_core::CursorStyle::Hidden => None,
-                            twrite_core::CursorStyle::Block => Some(fill(
-                                Bounds::new(
-                                    point(text_origin_x + pos.x, current_y + pos.y),
-                                    size(px(8.5), metrics.line_height),
-                                ),
-                                theme.cursor,
-                            )),
-                            twrite_core::CursorStyle::Underline => Some(fill(
-                                Bounds::new(
-                                    point(
-                                        text_origin_x + pos.x,
-                                        current_y + pos.y + metrics.line_height - px(2.0),
+                        if !is_all_selected {
+                            let style = if config.block_cursor {
+                                twrite_core::CursorStyle::Block
+                            } else {
+                                editor.cursor_style
+                            };
+
+                            match style {
+                                twrite_core::CursorStyle::Hidden => None,
+                                twrite_core::CursorStyle::Block => Some(fill(
+                                    Bounds::new(
+                                        point(text_origin_x + pos.x, current_y + pos.y),
+                                        size(px(8.5), metrics.line_height),
                                     ),
-                                    size(px(8.5), px(2.0)),
-                                ),
-                                theme.cursor,
-                            )),
-                            twrite_core::CursorStyle::Bar => Some(fill(
-                                Bounds::new(
-                                    point(text_origin_x + pos.x, current_y + pos.y),
-                                    size(px(2.0), metrics.line_height),
-                                ),
-                                theme.cursor,
-                            )),
+                                    theme.cursor,
+                                )),
+                                twrite_core::CursorStyle::Underline => Some(fill(
+                                    Bounds::new(
+                                        point(
+                                            text_origin_x + pos.x,
+                                            current_y + pos.y + metrics.line_height - px(2.0),
+                                        ),
+                                        size(px(8.5), px(2.0)),
+                                    ),
+                                    theme.cursor,
+                                )),
+                                twrite_core::CursorStyle::Bar => Some(fill(
+                                    Bounds::new(
+                                        point(text_origin_x + pos.x, current_y + pos.y),
+                                        size(px(2.0), metrics.line_height),
+                                    ),
+                                    theme.cursor,
+                                )),
+                            }
+                        } else {
+                            None
                         }
                     } else {
                         None
@@ -458,6 +468,10 @@ impl RenderOnce for EditorCanvas {
 
                     current_y += line_total_height;
                 }
+
+                editor_handle.update(cx, |editor, _| {
+                    editor.last_cursor_pixel = computed_cursor_pixel;
+                });
 
                 EditorCanvasPrepaint {
                     background_quad: fill(bounds, theme.background),
