@@ -8,9 +8,7 @@ struct AppView {
 
 impl Render for AppView {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .child(self.editor.clone())
+        div().size_full().child(self.editor.clone())
     }
 }
 
