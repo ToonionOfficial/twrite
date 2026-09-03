@@ -3,7 +3,10 @@ use twrite_core::{KeyEvent, Modifiers};
 
 pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
     let keystroke = &event.keystroke;
-    let key_str = keystroke.key.clone();
+    let key_str = match keystroke.key.as_str() {
+        "space" => " ".to_string(),
+        _ => keystroke.key.clone(),
+    };
 
     Some(KeyEvent {
         key: key_str,

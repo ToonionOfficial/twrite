@@ -36,6 +36,9 @@ impl RenderOnce for EditorCanvas {
 
         canvas(
             move |bounds, window, cx| {
+                editor_handle.update(cx, |editor, _| {
+                    editor.last_bounds = Some(bounds);
+                });
                 let editor = editor_handle.read(cx);
                 let theme = editor.theme.clone();
                 let config = editor.config.clone();
