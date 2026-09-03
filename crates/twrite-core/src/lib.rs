@@ -1,10 +1,12 @@
 pub mod buffer;
 pub mod coordinates;
 pub mod history;
+pub mod hook;
 pub mod selection;
 
 pub use buffer::EditorBuffer;
 pub use coordinates::Point;
+pub use hook::{EditorHook, HookOutcome, KeyEvent, Modifiers};
 pub use selection::Selection;
 
 #[cfg(test)]
@@ -103,5 +105,47 @@ mod tests {
 
         assert_eq!(buffer.text().to_string(), "helloworld");
         assert_eq!(buffer.cursor_offset(), 5);
+    }
+
+    #[test]
+    fn delete_range_removes_text_and_sets_cursor() {
+        let mut buffer = EditorBuffer::new("hello world");
+        buffer.delete_range(5..11);
+
+        assert_eq!(buffer.text().to_string(), "hello");
+        assert_eq!(buffer.cursor_offset(), 5);
+
+        buffer.undo();
+        assert_eq!(buffer.text().to_string(), "hello world");
+
+        buffer.redo();
+        assert_eq!(buffer.text().to_string(), "hello");
+    }
+
+    #[test]
+    fn delete_range_all() {
+        let mut buffer = EditorBuffer::new("hello world");
+        buffer.delete_range(0..buffer.len_bytes());
+
+        assert_eq!(buffer.text().to_string(), "");
+        assert_eq!(buffer.cursor_offset(), 0);
+
+        buffer.undo();
+        assert_eq!(buffer.text().to_string(), "hello world");
+    }
+
+    #[test]
+    fn replace_range_works_and_is_undoable() {
+        let mut buffer = EditorBuffer::new("hello world");
+        buffer.replace_range(6..11, "there");
+
+        assert_eq!(buffer.text().to_string(), "hello there");
+        assert_eq!(buffer.cursor_offset(), 11);
+
+        buffer.undo();
+        assert_eq!(buffer.text().to_string(), "hello world");
+
+        buffer.redo();
+        assert_eq!(buffer.text().to_string(), "hello there");
     }
 }

@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use ropey::Rope;
 
 use crate::{
@@ -184,7 +186,8 @@ impl EditorBuffer {
     /// Inserting new text after undoing clears the redo history.
     pub fn insert(&mut self, text: &str) {
         let previous_cursor = self.cursor;
-        self.text.insert(self.cursor, text);
+        let char_idx = self.text.byte_to_char(self.cursor);
+        self.text.insert(char_idx, text);
         self.cursor += text.len();
 
         let tx = Transaction {
@@ -221,7 +224,7 @@ impl EditorBuffer {
         let deleted_text = self.text.byte_slice(range_to_delete.clone()).to_string();
 
         let previous_cursor = self.cursor;
-        self.text.remove(range_to_delete.clone());
+        self.text.remove((char_idx - 1)..char_idx);
         self.cursor = previous_char_byte;
 
         let tx = Transaction {
@@ -273,6 +276,74 @@ impl EditorBuffer {
         self.history.redo_stack.clear();
     }
 
+    /// Deletes the text within `range`.
+    ///
+    /// The deletion is recorded as an undoable transaction and the cursor
+    /// is set to the start of `range`.
+    pub fn delete_range(&mut self, range: Range<usize>) {
+        let start = range.start.min(self.text.len_bytes());
+        let end = range.end.min(self.text.len_bytes());
+        if start >= end {
+            return;
+        }
+
+        let start_char = self.text.byte_to_char(start);
+        let end_char = self.text.byte_to_char(end);
+        let deleted_text = self.text.byte_slice(start..end).to_string();
+        let previous_cursor = self.cursor;
+
+        self.text.remove(start_char..end_char);
+        self.cursor = start;
+
+        let tx = Transaction {
+            edits: vec![Edit {
+                bytes_range: start..end,
+                inserted_text: String::new(),
+                deleted_text,
+            }],
+            previous_cursor,
+            resulting_cursor: self.cursor,
+        };
+
+        self.history.undo_stack.push(tx);
+        self.history.redo_stack.clear();
+    }
+
+    /// Replaces the text within `range` with `text`.
+    ///
+    /// If `range` is empty, this is equivalent to [`Self::insert`].
+    pub fn replace_range(&mut self, range: Range<usize>, text: &str) {
+        let start = range.start.min(self.text.len_bytes());
+        let end = range.end.min(self.text.len_bytes());
+        if start == end {
+            self.cursor = start;
+            self.insert(text);
+            return;
+        }
+
+        let start_char = self.text.byte_to_char(start);
+        let end_char = self.text.byte_to_char(end);
+        let deleted_text = self.text.byte_slice(start..end).to_string();
+        let previous_cursor = self.cursor;
+
+        self.text.remove(start_char..end_char);
+        self.text.insert(start_char, text);
+        self.cursor = start + text.len();
+
+        let tx = Transaction {
+            edits: vec![Edit {
+                bytes_range: start..end,
+                inserted_text: text.to_string(),
+                deleted_text,
+            }],
+            previous_cursor,
+            resulting_cursor: self.cursor,
+        };
+
+        self.history.undo_stack.push(tx);
+        self.history.redo_stack.clear();
+    }
+
     /// Undoes the most recent transaction.
     ///
     /// If there is no transaction to undo, this method does nothing.
@@ -284,10 +355,13 @@ impl EditorBuffer {
                 let end = start + edit.inserted_text.len();
 
                 if end > start {
-                    self.text.remove(start..end);
+                    let start_char = self.text.byte_to_char(start);
+                    let end_char = self.text.byte_to_char(end);
+                    self.text.remove(start_char..end_char);
                 }
                 if !edit.deleted_text.is_empty() {
-                    self.text.insert(start, &edit.deleted_text);
+                    let start_char = self.text.byte_to_char(start);
+                    self.text.insert(start_char, &edit.deleted_text);
                 }
             }
             self.cursor = tx.previous_cursor;
@@ -306,10 +380,13 @@ impl EditorBuffer {
                 let end = start + edit.deleted_text.len();
 
                 if end > start {
-                    self.text.remove(start..end);
+                    let start_char = self.text.byte_to_char(start);
+                    let end_char = self.text.byte_to_char(end);
+                    self.text.remove(start_char..end_char);
                 }
                 if !edit.inserted_text.is_empty() {
-                    self.text.insert(start, &edit.inserted_text);
+                    let start_char = self.text.byte_to_char(start);
+                    self.text.insert(start_char, &edit.inserted_text);
                 }
             }
             self.cursor = tx.resulting_cursor;

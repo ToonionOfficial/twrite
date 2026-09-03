@@ -6,3 +6,9 @@ edition = "2024"
 [dependencies]
 twrite-core = { workspace = true }
 twrite-gpui = { workspace = true }
+gpui = { workspace = true }
+gpui_platform = { workspace = true }
+
+[[example]]
+name = "simple"
+path = "../../examples/simple.rs"
