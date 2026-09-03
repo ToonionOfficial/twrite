@@ -319,9 +319,10 @@ impl Editor {
     ) {
         self.is_selecting = false;
         if let Some(sel) = self.selection
-            && sel.is_empty() {
-                self.selection = None;
-            }
+            && sel.is_empty()
+        {
+            self.selection = None;
+        }
         cx.notify();
     }
 
