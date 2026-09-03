@@ -8,6 +8,7 @@ pub struct EditorConfig {
     pub tab_size: usize,
     pub highlight_active_line: bool,
     pub block_cursor: bool,
+    pub line_wrap: bool,
 }
 
 impl Default for EditorConfig {
@@ -19,6 +20,7 @@ impl Default for EditorConfig {
             tab_size: 4,
             highlight_active_line: false,
             block_cursor: false,
+            line_wrap: true,
         }
     }
 }

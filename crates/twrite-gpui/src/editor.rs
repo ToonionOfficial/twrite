@@ -67,42 +67,77 @@ impl Editor {
         };
         let text_origin_x = bounds.left() + gutter_width + px(12.0);
 
-        let relative_y = (pos.y - bounds.top()).max(px(0.0));
-        let row_offset = (relative_y / self.config.line_height).floor() as usize;
+        let wrap_width = if self.config.line_wrap {
+            let available = bounds.size.width - gutter_width - px(24.0);
+            Some(available.max(px(50.0)))
+        } else {
+            None
+        };
+
         let total_lines = self.buffer.len_lines();
         if total_lines == 0 {
             return 0;
         }
-        let row = (self.scroll_row + row_offset).min(total_lines.saturating_sub(1));
 
-        let raw_line = self.buffer.line_to_string(row);
-        let line_text = raw_line.trim_end_matches(['\r', '\n']);
-        let line_start_byte = self.buffer.point_to_offset(BufferPoint::new(row, 0));
+        let relative_y = (pos.y - bounds.top()).max(px(0.0));
+        let mut current_y_offset = px(0.0);
+        let font = window.text_style().font();
 
-        if pos.x <= text_origin_x || line_text.is_empty() {
-            return line_start_byte;
+        for row in self.scroll_row..total_lines {
+            let raw_line = self.buffer.line_to_string(row);
+            let line_text = raw_line.trim_end_matches(['\r', '\n']);
+            let line_start_byte = self.buffer.point_to_offset(BufferPoint::new(row, 0));
+
+            let runs = if line_text.is_empty() {
+                Vec::new()
+            } else {
+                vec![TextRun {
+                    len: line_text.len(),
+                    font: font.clone(),
+                    color: self.theme.foreground,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }]
+            };
+
+            let text_line = window
+                .text_system()
+                .shape_text(
+                    line_text.to_string().into(),
+                    self.config.font_size,
+                    &runs,
+                    wrap_width,
+                    None,
+                )
+                .ok()
+                .and_then(|mut l| l.pop())
+                .unwrap_or_default();
+
+            let line_visual_lines = text_line.wrap_boundaries.len() + 1;
+            let line_h = self.config.line_height * line_visual_lines;
+
+            let is_last_line = row + 1 == total_lines;
+            if relative_y < current_y_offset + line_h || is_last_line {
+                if pos.x <= text_origin_x || line_text.is_empty() {
+                    return line_start_byte;
+                }
+
+                let line_rel_y = (relative_y - current_y_offset).max(px(0.0));
+                let line_rel_x = (pos.x - text_origin_x).max(px(0.0));
+                let rel_pos = point(line_rel_x, line_rel_y);
+
+                let col_byte = text_line
+                    .closest_index_for_position(rel_pos, self.config.line_height)
+                    .unwrap_or_else(|idx| idx);
+
+                return line_start_byte + col_byte.min(line_text.len());
+            }
+
+            current_y_offset += line_h;
         }
 
-        let rel_x = pos.x - text_origin_x;
-        let font = window.text_style().font();
-        let runs = [TextRun {
-            len: line_text.len(),
-            font,
-            color: self.theme.foreground,
-            background_color: None,
-            underline: None,
-            strikethrough: None,
-        }];
-
-        let shaped = window.text_system().shape_line(
-            line_text.to_string().into(),
-            self.config.font_size,
-            &runs,
-            None,
-        );
-
-        let col_byte = shaped.closest_index_for_x(rel_x);
-        line_start_byte + col_byte.min(line_text.len())
+        self.buffer.len_bytes()
     }
 
     fn handle_key_down(
