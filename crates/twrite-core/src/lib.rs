@@ -1,6 +1,7 @@
 pub mod buffer;
 pub mod coordinates;
 pub mod history;
+pub mod hook;
 pub mod selection;
 
 pub use buffer::EditorBuffer;
