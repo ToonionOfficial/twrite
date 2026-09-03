@@ -6,6 +6,7 @@ pub mod selection;
 
 pub use buffer::EditorBuffer;
 pub use coordinates::Point;
+pub use hook::{EditorHook, HookOutcome, KeyEvent, Modifiers};
 pub use selection::Selection;
 
 #[cfg(test)]
