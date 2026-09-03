@@ -54,6 +54,24 @@ impl Editor {
         self.buffer.insert(text);
     }
 
+    pub fn move_cursor_to(&mut self, new_offset: usize, select: bool) {
+        if select {
+            let anchor = self
+                .selection
+                .map(|s| s.anchor)
+                .unwrap_or_else(|| self.buffer.cursor_offset());
+            self.buffer.set_cursor_offset(new_offset);
+            if anchor != new_offset {
+                self.selection = Some(Selection::range(anchor, new_offset));
+            } else {
+                self.selection = None;
+            }
+        } else {
+            self.buffer.set_cursor_offset(new_offset);
+            self.selection = None;
+        }
+    }
+
     pub fn offset_for_position(&self, pos: Point<Pixels>, window: &Window) -> usize {
         let bounds = match self.last_bounds {
             Some(b) => b,
@@ -160,6 +178,7 @@ impl Editor {
         }
 
         let mut edited = false;
+        let select = key_event.modifiers.shift;
 
         // 2. Default keys
         if key_event.modifiers.ctrl || key_event.modifiers.meta {
@@ -180,6 +199,20 @@ impl Editor {
                 }
                 "a" => {
                     self.selection = Some(Selection::range(0, self.buffer.len_bytes()));
+                }
+                "left" | "arrowleft" => {
+                    let target = self.buffer.prev_word_offset();
+                    self.move_cursor_to(target, select);
+                }
+                "right" | "arrowright" => {
+                    let target = self.buffer.next_word_offset();
+                    self.move_cursor_to(target, select);
+                }
+                "home" => {
+                    self.move_cursor_to(0, select);
+                }
+                "end" => {
+                    self.move_cursor_to(self.buffer.len_bytes(), select);
                 }
                 _ => {}
             }
@@ -215,28 +248,67 @@ impl Editor {
                     edited = true;
                 }
                 "left" | "arrowleft" => {
-                    if let Some(sel) = self.selection.take().filter(|s| !s.is_empty()) {
+                    if !select && self.selection.is_some() {
+                        let sel = self.selection.take().unwrap();
                         self.buffer.set_cursor_offset(sel.byte_range().start);
                     } else {
-                        self.buffer.move_cursor_left();
+                        let target = if self.buffer.cursor_offset() > 0 {
+                            let char_idx =
+                                self.buffer.text().byte_to_char(self.buffer.cursor_offset());
+                            self.buffer.text().char_to_byte(char_idx - 1)
+                        } else {
+                            0
+                        };
+                        self.move_cursor_to(target, select);
                     }
-                    self.selection = None;
                 }
                 "right" | "arrowright" => {
-                    if let Some(sel) = self.selection.take().filter(|s| !s.is_empty()) {
+                    if !select && self.selection.is_some() {
+                        let sel = self.selection.take().unwrap();
                         self.buffer.set_cursor_offset(sel.byte_range().end);
                     } else {
-                        self.buffer.move_cursor_right();
+                        let target = if self.buffer.cursor_offset() < self.buffer.len_bytes() {
+                            let char_idx =
+                                self.buffer.text().byte_to_char(self.buffer.cursor_offset());
+                            self.buffer
+                                .text()
+                                .char_to_byte((char_idx + 1).min(self.buffer.text().len_chars()))
+                        } else {
+                            self.buffer.len_bytes()
+                        };
+                        self.move_cursor_to(target, select);
                     }
-                    self.selection = None;
                 }
                 "up" | "arrowup" => {
-                    self.buffer.move_cursor_up();
-                    self.selection = None;
+                    let point = self.buffer.cursor_point();
+                    if point.row > 0 {
+                        let target = self
+                            .buffer
+                            .point_to_offset(BufferPoint::new(point.row - 1, point.column));
+                        self.move_cursor_to(target, select);
+                    } else {
+                        self.move_cursor_to(0, select);
+                    }
                 }
                 "down" | "arrowdown" => {
-                    self.buffer.move_cursor_down();
-                    self.selection = None;
+                    let point = self.buffer.cursor_point();
+                    let total_lines = self.buffer.len_lines();
+                    if point.row + 1 < total_lines {
+                        let target = self
+                            .buffer
+                            .point_to_offset(BufferPoint::new(point.row + 1, point.column));
+                        self.move_cursor_to(target, select);
+                    } else {
+                        self.move_cursor_to(self.buffer.len_bytes(), select);
+                    }
+                }
+                "home" => {
+                    let target = self.buffer.line_start_offset();
+                    self.move_cursor_to(target, select);
+                }
+                "end" => {
+                    let target = self.buffer.line_end_offset();
+                    self.move_cursor_to(target, select);
                 }
                 key => {
                     if !key_event.modifiers.alt

@@ -2,11 +2,16 @@ pub mod buffer;
 pub mod coordinates;
 pub mod history;
 pub mod hook;
+pub mod movement;
 pub mod selection;
 
 pub use buffer::EditorBuffer;
 pub use coordinates::Point;
 pub use hook::{EditorHook, HookOutcome, KeyEvent, Modifiers};
+pub use movement::{
+    CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
+    find_prev_word_start,
+};
 pub use selection::Selection;
 
 #[cfg(test)]

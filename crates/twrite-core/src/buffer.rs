@@ -178,6 +178,46 @@ impl EditorBuffer {
         }
     }
 
+    /// Returns the byte offset of the previous word start relative to current cursor.
+    pub fn prev_word_offset(&self) -> usize {
+        crate::movement::find_prev_word_start(&self.text, self.cursor)
+    }
+
+    /// Returns the byte offset of the next word end relative to current cursor.
+    pub fn next_word_offset(&self) -> usize {
+        crate::movement::find_next_word_end(&self.text, self.cursor)
+    }
+
+    /// Returns the byte offset of the start of the current line.
+    pub fn line_start_offset(&self) -> usize {
+        crate::movement::find_line_start(&self.text, self.cursor)
+    }
+
+    /// Returns the byte offset of the end of the current line (excluding trailing newline).
+    pub fn line_end_offset(&self) -> usize {
+        crate::movement::find_line_end(&self.text, self.cursor)
+    }
+
+    /// Moves the cursor to the start of the previous word.
+    pub fn move_cursor_prev_word(&mut self) {
+        self.cursor = self.prev_word_offset();
+    }
+
+    /// Moves the cursor to the end of the next word.
+    pub fn move_cursor_next_word(&mut self) {
+        self.cursor = self.next_word_offset();
+    }
+
+    /// Moves the cursor to the beginning of the current line.
+    pub fn move_cursor_line_start(&mut self) {
+        self.cursor = self.line_start_offset();
+    }
+
+    /// Moves the cursor to the end of the current line.
+    pub fn move_cursor_line_end(&mut self) {
+        self.cursor = self.line_end_offset();
+    }
+
     /// Inserts `text` at the current cursor position.
     ///
     /// The inserted text becomes a single undoable transaction, and the
