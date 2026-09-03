@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/twrite", "crates/twrite-core", "crates/twrite-gpui"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/ToonionOfficial/twrite"
@@ -16,6 +16,6 @@ pulldown-cmark = { version = "0.12", default-features = false }
 gpui = { git = "https://github.com/zed-industries/zed", rev = "d85eade7ab475de6d11a193beccf1951be2ff371" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "d85eade7ab475de6d11a193beccf1951be2ff371", features = ["wayland", "x11", "font-kit"] }
 
-twrite = { version = "0.1.0", path = "crates/twrite" }
-twrite-core = { version = "0.1.0", path = "crates/twrite-core" }
-twrite-gpui = { version = "0.1.0", path = "crates/twrite-gpui" }
+twrite = { version = "0.2.0", path = "crates/twrite" }
+twrite-core = { version = "0.2.0", path = "crates/twrite-core" }
+twrite-gpui = { version = "0.2.0", path = "crates/twrite-gpui" }
