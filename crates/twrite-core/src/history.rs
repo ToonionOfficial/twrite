@@ -1,5 +1,6 @@
 use std::ops::Range;
 
+/// An individual textual modification within a document transaction.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Edit {
     /// The byte range in the document before this edit was applied.

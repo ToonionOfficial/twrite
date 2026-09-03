@@ -5,9 +5,13 @@ use crate::EditorBuffer;
 /// An 8-bit per channel RGBA color representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Rgba {
+    /// Red color component (0-255).
     pub r: u8,
+    /// Green color component (0-255).
     pub g: u8,
+    /// Blue color component (0-255).
     pub b: u8,
+    /// Alpha opacity component (0-255).
     pub a: u8,
 }
 

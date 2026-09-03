@@ -113,12 +113,14 @@ struct EditorCanvasPrepaint {
     lines: Vec<PreparedLine>,
 }
 
+/// The GPUI canvas element responsible for shaping and rendering text runs and quads.
 #[derive(IntoElement)]
 pub struct EditorCanvas {
     editor: Entity<Editor>,
 }
 
 impl EditorCanvas {
+    /// Creates a new canvas element linked to the given editor entity.
     pub fn new(editor: Entity<Editor>) -> Self {
         EditorCanvas { editor }
     }

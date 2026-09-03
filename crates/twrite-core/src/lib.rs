@@ -1,9 +1,18 @@
+//! Core headless text buffer, syntax, movement, selection, and hook primitives.
+
+/// Text buffer implementation backed by a Rope.
 pub mod buffer;
+/// 2D text coordinates (row and column).
 pub mod coordinates;
+/// Granular undo/redo transaction history.
 pub mod history;
+/// Extensible hook system and input interceptors.
 pub mod hook;
+/// Text movement and boundary calculation primitives.
 pub mod movement;
+/// Text selection ranges and anchor/head management.
 pub mod selection;
+/// Headless syntax highlighting, styling tokens, and interval splitting.
 pub mod syntax;
 
 pub use buffer::EditorBuffer;
@@ -195,5 +204,27 @@ mod tests {
         buffer.redo();
         assert_eq!(buffer.text().to_string(), " world");
         assert_eq!(buffer.cursor_offset(), 0);
+    }
+
+    #[test]
+    fn test_buffer_version_increments_on_edits() {
+        let mut buffer = EditorBuffer::new("initial");
+        assert_eq!(buffer.version(), 0);
+
+        buffer.insert(" text");
+        assert_eq!(buffer.version(), 1);
+
+        buffer.backspace();
+        assert_eq!(buffer.version(), 2);
+
+        buffer.set_cursor_offset(0);
+        buffer.delete();
+        assert_eq!(buffer.version(), 3);
+
+        buffer.undo();
+        assert_eq!(buffer.version(), 4);
+
+        buffer.redo();
+        assert_eq!(buffer.version(), 5);
     }
 }
