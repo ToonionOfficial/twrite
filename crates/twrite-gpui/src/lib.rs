@@ -9,12 +9,15 @@ pub mod config;
 pub mod editor;
 /// Translation helpers from GPUI key events to normalized twrite key events.
 pub mod input;
+/// Per-version viewport cache for highlight/conceal/link inputs.
+pub mod layout_cache;
 /// Color palettes, Catppuccin themes, and syntax token style resolution.
 pub mod theme;
 
 pub use canvas::{EditorCanvas, LineMetrics, build_line_text_runs};
 pub use config::EditorConfig;
 pub use editor::{Editor, VisibleLineLayout, VisibleLink};
+pub use layout_cache::{CachedInput, LayoutCache};
 pub use theme::{EditorTheme, ResolvedTokenStyle, SyntaxTheme};
 
 #[cfg(test)]

@@ -731,7 +731,10 @@ mod tests {
 
         let spans4 = highlighter.highlight_line(&buffer, 3, "---");
         assert_eq!(spans4.len(), 2);
-        assert_eq!(spans4[0].style, StyleValue::Tag(HighlightTag::HorizontalRule));
+        assert_eq!(
+            spans4[0].style,
+            StyleValue::Tag(HighlightTag::HorizontalRule)
+        );
         assert_eq!(spans4[1].style, StyleValue::Tag(HighlightTag::Dimmed));
     }
 
@@ -926,29 +929,37 @@ mod tests {
         // uses default cursor at row 0, so rows 1-3 are inactive.
         let unchecked = highlighter.highlight_line(&buffer, 0, "- [ ] Todo");
         // Row 0 is the cursor row: structural tag still emitted, no concealment.
-        assert!(unchecked
-            .iter()
-            .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskUnchecked)));
+        assert!(
+            unchecked
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskUnchecked))
+        );
 
         let mut moved = buffer;
         moved.set_cursor_offset(30);
-        let unchecked_inactive =
-            highlighter.highlight_line(&moved, 0, "- [ ] Todo");
-        assert!(unchecked_inactive
-            .iter()
-            .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskUnchecked)));
+        let unchecked_inactive = highlighter.highlight_line(&moved, 0, "- [ ] Todo");
+        assert!(
+            unchecked_inactive
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskUnchecked))
+        );
         let checked = highlighter.highlight_line(&moved, 1, "- [x] Done");
-        assert!(checked
-            .iter()
-            .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskChecked)));
+        assert!(
+            checked
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskChecked))
+        );
         let quote = highlighter.highlight_line(&moved, 2, "> Quote");
-        assert!(quote
-            .iter()
-            .any(|s| s.style == StyleValue::Tag(HighlightTag::Blockquote)));
+        assert!(
+            quote
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Blockquote))
+        );
         let hr = highlighter.highlight_line(&moved, 3, "---");
-        assert!(hr
-            .iter()
-            .any(|s| s.style == StyleValue::Tag(HighlightTag::HorizontalRule)));
+        assert!(
+            hr.iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::HorizontalRule))
+        );
     }
 
     #[test]
@@ -962,20 +973,28 @@ mod tests {
         buffer.set_cursor_offset(0);
         let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
         assert_eq!(hook.on_click(&mut ctx, 1, 0), HookOutcome::Consumed);
-        assert_eq!(ctx.buffer.text().to_string(), "- [ ] Task one\n- [ ] Task two");
+        assert_eq!(
+            ctx.buffer.text().to_string(),
+            "- [ ] Task one\n- [ ] Task two"
+        );
         assert_eq!(ctx.buffer.cursor_offset(), 0);
 
         // Click row 0 (unchecked -> checked).
         let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
         assert_eq!(hook.on_click(&mut ctx, 0, 2), HookOutcome::Consumed);
-        assert_eq!(ctx.buffer.text().to_string(), "- [x] Task one\n- [ ] Task two");
+        assert_eq!(
+            ctx.buffer.text().to_string(),
+            "- [x] Task one\n- [ ] Task two"
+        );
 
         // Uppercase [X] also toggles.
-        ctx.buffer
-            .replace_range(0..14, "- [X] Task one");
+        ctx.buffer.replace_range(0..14, "- [X] Task one");
         let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
         assert_eq!(hook.on_click(&mut ctx, 0, 3), HookOutcome::Consumed);
-        assert_eq!(ctx.buffer.text().to_string(), "- [ ] Task one\n- [ ] Task two");
+        assert_eq!(
+            ctx.buffer.text().to_string(),
+            "- [ ] Task one\n- [ ] Task two"
+        );
 
         // Plain line passes through.
         let mut plain = EditorBuffer::new("hello");

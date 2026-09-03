@@ -98,9 +98,10 @@ impl LineMetrics {
             .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::TaskChecked)))
         {
             Some(true)
-        } else if spans.iter().any(|s| {
-            matches!(s.style, StyleValue::Tag(HighlightTag::TaskUnchecked))
-        }) {
+        } else if spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::TaskUnchecked)))
+        {
             Some(false)
         } else {
             None
@@ -268,6 +269,10 @@ impl RenderOnce for EditorCanvas {
                 editor_handle.update(cx, |editor, _| {
                     editor.last_bounds = Some(bounds);
                 });
+                // Take the cache out for the frame: the read guard below borrows
+                // the editor immutably, so the cache travels as a local.
+                let mut layout_cache =
+                    editor_handle.update(cx, |editor, _| std::mem::take(&mut editor.layout_cache));
                 let editor = editor_handle.read(cx);
                 let theme = editor.theme.clone();
                 let config = editor.config.clone();
@@ -343,20 +348,25 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    let spans = if let Some(ref highlighter) = editor.highlighter {
-                        highlighter.highlight_line(&editor.buffer, row, line_text)
-                    } else {
-                        Vec::new()
-                    };
-
-                    let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
+                    let cursor_row = cursor_point.row;
+                    let highlighter_rev = editor.highlighter_rev;
+                    let cached = layout_cache.cached_input(
+                        &editor.buffer,
+                        editor.highlighter.as_deref(),
+                        highlighter_rev,
+                        cursor_row,
+                        row,
+                        line_text,
+                    );
+                    let spans = &cached.spans;
+                    let concealed = &cached.concealed;
 
                     // Pass original spans: structural tags on concealed bytes would
                     // otherwise be stripped and invisible to layout.
                     let metrics = LineMetrics::for_line(
                         line_text,
                         &concealed.display_text,
-                        &spans,
+                        spans,
                         config.font_size,
                         config.line_height,
                     );
@@ -447,27 +457,24 @@ impl RenderOnce for EditorCanvas {
 
                     #[allow(unused_mut)]
                     let mut visible_links = Vec::new();
-                    if let Some(ref highlighter) = editor.highlighter {
-                        let extracted =
-                            highlighter.extract_links(&editor.buffer, row, line_text);
-                        for (src_range, url) in extracted {
-                            let disp_start = concealed.source_to_display(src_range.start);
-                            let disp_end = concealed.source_to_display(src_range.end);
-                            if disp_start < disp_end {
-                                let start_pt =
-                                    text_line.position_for_index(disp_start, metrics.line_height);
-                                let end_pt =
-                                    text_line.position_for_index(disp_end, metrics.line_height);
-                                if let (Some(s), Some(e)) = (start_pt, end_pt) {
-                                    let width = if e.x > s.x { e.x - s.x } else { px(20.0) };
-                                    visible_links.push(crate::editor::VisibleLink {
-                                        bounds: Bounds::new(
-                                            point(line_text_origin_x + s.x, current_y + s.y),
-                                            size(width.max(px(5.0)), metrics.line_height),
-                                        ),
-                                        url,
-                                    });
-                                }
+                    // Link ranges come from the same cached input: no second parse.
+                    for (src_range, url) in &cached.link_src {
+                        let disp_start = concealed.source_to_display(src_range.start);
+                        let disp_end = concealed.source_to_display(src_range.end);
+                        if disp_start < disp_end {
+                            let start_pt =
+                                text_line.position_for_index(disp_start, metrics.line_height);
+                            let end_pt =
+                                text_line.position_for_index(disp_end, metrics.line_height);
+                            if let (Some(s), Some(e)) = (start_pt, end_pt) {
+                                let width = if e.x > s.x { e.x - s.x } else { px(20.0) };
+                                visible_links.push(crate::editor::VisibleLink {
+                                    bounds: Bounds::new(
+                                        point(line_text_origin_x + s.x, current_y + s.y),
+                                        size(width.max(px(5.0)), metrics.line_height),
+                                    ),
+                                    url: url.clone(),
+                                });
                             }
                         }
                     }
@@ -623,6 +630,7 @@ impl RenderOnce for EditorCanvas {
                 }
 
                 editor_handle.update(cx, |editor, _| {
+                    editor.layout_cache = layout_cache;
                     editor.last_cursor_pixel = computed_cursor_pixel;
                     editor.visible_lines = visible_line_layouts;
                 });
