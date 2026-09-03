@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use gpui::*;
-use twrite_core::{EditorBuffer, EditorHook, Point as BufferPoint, Selection, SyntaxHighlighter};
+use twrite_core::{
+    CursorStyle, EditorBuffer, EditorHook, HookContext, Point as BufferPoint, Selection,
+    SyntaxHighlighter,
+};
 
 use crate::{canvas::EditorCanvas, config::EditorConfig, theme::EditorTheme};
 
@@ -14,26 +17,52 @@ pub struct Editor {
     pub focus_handle: FocusHandle,
     pub scroll_row: usize,
     pub selection: Option<Selection>,
-    pub is_block_cursor: bool,
+    pub cursor_style: CursorStyle,
     pub is_selecting: bool,
     pub last_bounds: Option<Bounds<Pixels>>,
 }
 
 impl Editor {
     pub fn new(initial_text: &str, cx: &mut Context<Self>) -> Self {
+        let config = EditorConfig::default();
+        let cursor_style = if config.block_cursor {
+            CursorStyle::Block
+        } else {
+            CursorStyle::Bar
+        };
         Self {
             buffer: EditorBuffer::new(initial_text),
             theme: EditorTheme::default(),
-            config: EditorConfig::default(),
+            config,
             hooks: Vec::new(),
             highlighter: None,
             focus_handle: cx.focus_handle(),
             scroll_row: 0,
             selection: None,
-            is_block_cursor: false,
+            cursor_style,
             is_selecting: false,
             last_bounds: None,
         }
+    }
+
+    /// Adds an editor hook to the execution chain.
+    pub fn add_hook(&mut self, hook: impl EditorHook) {
+        self.hooks.push(Box::new(hook));
+    }
+
+    /// Clears all registered editor hooks.
+    pub fn clear_hooks(&mut self) {
+        self.hooks.clear();
+    }
+
+    /// Returns the active status or mode text reported by registered hooks.
+    pub fn status_text(&self) -> Option<&str> {
+        self.hooks.iter().find_map(|h| h.status_text())
+    }
+
+    /// Returns true if the cursor is currently in block mode.
+    pub fn is_block_cursor(&self) -> bool {
+        self.cursor_style == CursorStyle::Block || self.config.block_cursor
     }
 
     /// Sets the active syntax highlighter.
@@ -340,12 +369,36 @@ impl Editor {
             None => return,
         };
 
-        // 1. Run hooks
-        for hook in &mut self.hooks {
-            if hook.on_key(&mut self.buffer, &key_event) == twrite_core::HookOutcome::Consumed {
-                cx.notify();
-                return;
+        let initial_version = self.buffer.version();
+        let mut consumed = false;
+
+        let mut hook_idx = 0;
+        while hook_idx < self.hooks.len() {
+            let mut ctx = HookContext::new(
+                &mut self.buffer,
+                &mut self.selection,
+                &mut self.cursor_style,
+            );
+            let outcome = self.hooks[hook_idx].on_key(&mut ctx, &key_event);
+            if outcome == twrite_core::HookOutcome::Consumed {
+                consumed = true;
+                break;
             }
+            hook_idx += 1;
+        }
+
+        if consumed {
+            if self.buffer.version() != initial_version {
+                for hook in &mut self.hooks {
+                    hook.after_edit(&mut self.buffer);
+                }
+            }
+            for hook in &mut self.hooks {
+                hook.on_selection_change(&self.buffer, self.selection.as_ref());
+            }
+            self.scroll_to_cursor(Some(window));
+            cx.notify();
+            return;
         }
 
         let mut edited = false;
@@ -522,9 +575,28 @@ impl Editor {
                         && !key_event.modifiers.meta
                         && key.chars().count() == 1
                     {
-                        self.replace_selection_or_insert(key);
-                        self.selection = None;
-                        edited = true;
+                        let mut insert_consumed = false;
+                        let mut hook_idx = 0;
+                        while hook_idx < self.hooks.len() {
+                            let mut ctx = HookContext::new(
+                                &mut self.buffer,
+                                &mut self.selection,
+                                &mut self.cursor_style,
+                            );
+                            if self.hooks[hook_idx].before_insert(&mut ctx, key)
+                                == twrite_core::HookOutcome::Consumed
+                            {
+                                insert_consumed = true;
+                                break;
+                            }
+                            hook_idx += 1;
+                        }
+
+                        if !insert_consumed {
+                            self.replace_selection_or_insert(key);
+                            self.selection = None;
+                            edited = true;
+                        }
                     }
                 }
             }
@@ -534,6 +606,10 @@ impl Editor {
             for hook in &mut self.hooks {
                 hook.after_edit(&mut self.buffer);
             }
+        }
+
+        for hook in &mut self.hooks {
+            hook.on_selection_change(&self.buffer, self.selection.as_ref());
         }
 
         self.scroll_to_cursor(Some(window));
@@ -637,7 +713,7 @@ impl Render for Editor {
             .key_context("Editor")
             .size_full()
             .overflow_hidden()
-            .cursor(CursorStyle::IBeam)
+            .cursor(gpui::CursorStyle::IBeam)
             .bg(self.theme.background)
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))

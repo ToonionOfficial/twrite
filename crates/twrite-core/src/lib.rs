@@ -8,7 +8,9 @@ pub mod syntax;
 
 pub use buffer::EditorBuffer;
 pub use coordinates::Point;
-pub use hook::{EditorHook, HookOutcome, KeyEvent, Modifiers};
+pub use hook::{
+    AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
+};
 pub use movement::{
     CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
     find_prev_word_start,

@@ -16,3 +16,7 @@ path = "../../examples/simple.rs"
 [[example]]
 name = "syntax"
 path = "../../examples/syntax.rs"
+
+[[example]]
+name = "hooks"
+path = "../../examples/hooks.rs"

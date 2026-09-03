@@ -31,6 +31,7 @@ pub struct EditorBuffer {
     text: Rope,
     cursor: usize,
     history: History,
+    version: usize,
 }
 
 impl EditorBuffer {
@@ -43,7 +44,13 @@ impl EditorBuffer {
             text: Rope::from_str(initial_text),
             cursor: 0,
             history: History::default(),
+            version: 0,
         }
+    }
+
+    /// Returns the monotonic document version, incremented on every text modification.
+    pub fn version(&self) -> usize {
+        self.version
     }
 
     /// Returns a reference to the underlying text.
@@ -268,6 +275,7 @@ impl EditorBuffer {
 
         self.history.undo_stack.push(tx);
         self.history.redo_stack.clear();
+        self.version += 1;
     }
 
     /// Deletes the character immediately before the cursor.
@@ -305,6 +313,7 @@ impl EditorBuffer {
 
         self.history.undo_stack.push(tx);
         self.history.redo_stack.clear();
+        self.version += 1;
     }
 
     /// Deletes the character at the current cursor position.
@@ -340,6 +349,7 @@ impl EditorBuffer {
 
         self.history.undo_stack.push(tx);
         self.history.redo_stack.clear();
+        self.version += 1;
     }
 
     /// Deletes the text within `range`.
@@ -373,6 +383,7 @@ impl EditorBuffer {
 
         self.history.undo_stack.push(tx);
         self.history.redo_stack.clear();
+        self.version += 1;
     }
 
     /// Replaces the text within `range` with `text`.
@@ -408,6 +419,7 @@ impl EditorBuffer {
 
         self.history.undo_stack.push(tx);
         self.history.redo_stack.clear();
+        self.version += 1;
     }
 
     /// Undoes the most recent transaction.
@@ -432,6 +444,7 @@ impl EditorBuffer {
             }
             self.cursor = tx.previous_cursor;
             self.history.redo_stack.push(tx);
+            self.version += 1;
         }
     }
 
@@ -457,6 +470,7 @@ impl EditorBuffer {
             }
             self.cursor = tx.resulting_cursor;
             self.history.undo_stack.push(tx);
+            self.version += 1;
         }
     }
 }
