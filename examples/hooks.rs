@@ -1,8 +1,6 @@
 use gpui::*;
 use gpui_platform::application;
-use twrite::{
-    AutoPairsHook, EditorHook, HookContext, HookOutcome, KeyEvent, Selection, editor::Editor,
-};
+use twrite::{AutoPairsHook, Editor, EditorHook, HookContext, HookOutcome, KeyEvent, Selection};
 
 /// A custom hook providing formatting shortcuts and smart list continuation.
 #[derive(Default)]

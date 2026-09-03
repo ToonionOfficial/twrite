@@ -1,6 +1,13 @@
 [workspace]
 resolver = "2"
-members = ["crates/twrite","crates/twrite-core", "crates/twrite-gpui"]
+members = ["crates/twrite", "crates/twrite-core", "crates/twrite-gpui"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/ToonionOfficial/twrite"
+authors = ["Toonion"]
 
 [workspace.dependencies]
 ropey = "1.6.1"
@@ -8,5 +15,6 @@ thiserror = "1.0"
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_platform = { git = "https://github.com/zed-industries/zed", features = ["wayland", "x11", "font-kit"] }
 
+twrite = { version = "0.1.0", path = "crates/twrite" }
 twrite-core = { version = "0.1.0", path = "crates/twrite-core" }
 twrite-gpui = { version = "0.1.0", path = "crates/twrite-gpui" }

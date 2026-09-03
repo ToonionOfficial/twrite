@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_platform::application;
-use twrite::{EditorBuffer, HighlightTag, StyleSpan, SyntaxHighlighter, editor::Editor};
+use twrite::{Editor, EditorBuffer, HighlightTag, StyleSpan, SyntaxHighlighter};
 
 /// A demo syntax highlighter for Markdown headings, inline code, and story script dialogue.
 struct StoryAndMarkdownHighlighter;
