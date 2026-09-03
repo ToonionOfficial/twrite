@@ -14,7 +14,7 @@ pub mod theme;
 
 pub use canvas::{EditorCanvas, LineMetrics, build_line_text_runs};
 pub use config::EditorConfig;
-pub use editor::{Editor, VisibleLineLayout};
+pub use editor::{Editor, VisibleLineLayout, VisibleLink};
 pub use theme::{EditorTheme, ResolvedTokenStyle, SyntaxTheme};
 
 #[cfg(test)]
@@ -79,5 +79,16 @@ mod tests {
 
         let plain = LineMetrics::for_line("Plain text", "Plain text", &spans, px(16.0), px(22.0));
         assert_eq!(plain.task_state, None);
+    }
+
+    #[test]
+    fn test_visible_link_layout() {
+        let link = VisibleLink {
+            bounds: gpui::Bounds::new(gpui::point(px(50.0), px(20.0)), gpui::size(px(60.0), px(20.0))),
+            url: "https://example.com".to_string(),
+        };
+        assert!(link.bounds.contains(&gpui::point(px(60.0), px(25.0))));
+        assert!(!link.bounds.contains(&gpui::point(px(120.0), px(25.0))));
+        assert_eq!(link.url, "https://example.com");
     }
 }

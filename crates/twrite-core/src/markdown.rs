@@ -1,3 +1,4 @@
+use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
@@ -331,7 +332,29 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                     if let Some(start) = active_link.take() {
                         let end = range.end.min(line_text.len());
                         if start < end {
-                            spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
+                            if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+                                if let Some(bracket_idx) = line_text[start..end].find("](") {
+                                    let label_start = start + 1;
+                                    let label_end = start + bracket_idx;
+                                    spans.push(StyleSpan::tag(start..label_start, delim_tag));
+                                    spans.push(StyleSpan::tag(label_start..label_end, HighlightTag::Link));
+                                    spans.push(StyleSpan::tag(label_end..end, delim_tag));
+                                } else if let Some(bracket_idx) = line_text[start..end].find("][") {
+                                    let label_start = start + 1;
+                                    let label_end = start + bracket_idx;
+                                    spans.push(StyleSpan::tag(start..label_start, delim_tag));
+                                    spans.push(StyleSpan::tag(label_start..label_end, HighlightTag::Link));
+                                    spans.push(StyleSpan::tag(label_end..end, delim_tag));
+                                } else if line_text[start..end].starts_with('<') && line_text[start..end].ends_with('>') {
+                                    spans.push(StyleSpan::tag(start..start + 1, delim_tag));
+                                    spans.push(StyleSpan::tag(start + 1..end - 1, HighlightTag::Link));
+                                    spans.push(StyleSpan::tag(end - 1..end, delim_tag));
+                                } else {
+                                    spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
+                                }
+                            } else {
+                                spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
+                            }
                         }
                     }
                 }
@@ -514,6 +537,44 @@ impl EditorHook for MarkdownHook {
     }
 }
 
+/// Extracts all markdown hyperlink destinations and their label character ranges from a single line.
+pub fn extract_markdown_links(line_text: &str) -> Vec<(Range<usize>, String)> {
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+    let parser = Parser::new_ext(line_text, options).into_offset_iter();
+    let mut links = Vec::new();
+    let mut current_link: Option<(usize, String)> = None;
+
+    for (event, range) in parser {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                current_link = Some((range.start, dest_url.to_string()));
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some((start, dest_url)) = current_link.take() {
+                    let end = range.end.min(line_text.len());
+                    if let Some(bracket_idx) = line_text[start..end].find("](") {
+                        let label_start = start + 1;
+                        let label_end = start + bracket_idx;
+                        links.push((label_start..label_end, dest_url));
+                    } else if let Some(bracket_idx) = line_text[start..end].find("][") {
+                        let label_start = start + 1;
+                        let label_end = start + bracket_idx;
+                        links.push((label_start..label_end, dest_url));
+                    } else if line_text[start..end].starts_with('<') && line_text[start..end].ends_with('>') {
+                        links.push((start + 1..end - 1, dest_url));
+                    } else {
+                        links.push((start..end, dest_url));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    links
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -680,5 +741,31 @@ mod tests {
         assert_eq!(spans_task[0].style, StyleValue::Tag(HighlightTag::Hidden));
         let concealed_task = ConcealedLine::build("- [ ] Task 1", &spans_task);
         assert_eq!(concealed_task.display_text, "Task 1");
+    }
+
+    #[test]
+    fn test_markdown_link_concealment() {
+        let buffer = EditorBuffer::new("[Google](https://google.com)\nActive line");
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+
+        // Buffer cursor is at 0 (row 0), so row 0 is active, full link visible
+        let spans_active = hidden_highlighter.highlight_line(&buffer, 0, "[Google](https://google.com)");
+        let concealed_active = ConcealedLine::build("[Google](https://google.com)", &spans_active);
+        assert_eq!(concealed_active.display_text, "[Google](https://google.com)");
+
+        // Move cursor to row 1, row 0 becomes inactive
+        let mut buffer_moved = buffer;
+        buffer_moved.set_cursor_offset(30);
+        let spans_hidden = hidden_highlighter.highlight_line(&buffer_moved, 0, "[Google](https://google.com)");
+        let concealed_hidden = ConcealedLine::build("[Google](https://google.com)", &spans_hidden);
+        assert_eq!(concealed_hidden.display_text, "Google");
+
+        let extracted = extract_markdown_links("[Google](https://google.com)");
+        assert_eq!(extracted.len(), 1);
+        assert_eq!(extracted[0].0, 1..7);
+        assert_eq!(extracted[0].1, "https://google.com");
     }
 }

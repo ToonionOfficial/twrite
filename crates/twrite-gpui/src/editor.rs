@@ -36,12 +36,23 @@ pub struct Editor {
     pub is_selecting: bool,
     /// Whether the mouse cursor is currently hovering over an interactive task checkbox.
     pub is_hovering_task: bool,
+    /// Target URL if the mouse cursor is currently hovering over a hyperlink.
+    pub hovered_link: Option<String>,
     /// Last rendered bounds in window pixel coordinates.
     pub last_bounds: Option<Bounds<Pixels>>,
     /// Last rendered cursor position in window pixel coordinates, computed during canvas prepaint.
     pub last_cursor_pixel: Option<Point<Pixels>>,
     /// Layout metrics and screen coordinates of currently visible lines, cached during prepaint.
     pub visible_lines: Vec<VisibleLineLayout>,
+}
+
+/// A hyperlink visible on screen with its screen pixel bounds and target URL.
+#[derive(Debug, Clone)]
+pub struct VisibleLink {
+    /// Screen pixel bounds of the clickable link label.
+    pub bounds: Bounds<Pixels>,
+    /// The destination URL.
+    pub url: String,
 }
 
 /// Layout metrics and screen coordinates for a visible line, cached during prepaint for instant hit testing.
@@ -65,6 +76,8 @@ pub struct VisibleLineLayout {
     pub is_task_checkbox: bool,
     /// Left X position of the checkbox box.
     pub checkbox_box_x: Pixels,
+    /// Hyperlinks located on this line.
+    pub links: Vec<VisibleLink>,
 }
 
 impl Editor {
@@ -88,6 +101,7 @@ impl Editor {
             cursor_style,
             is_selecting: false,
             is_hovering_task: false,
+            hovered_link: None,
             last_bounds: None,
             last_cursor_pixel: None,
             visible_lines: Vec::new(),
@@ -730,6 +744,26 @@ impl Editor {
         cx.notify();
     }
 
+    /// Returns the target URL if `pos` is over a hyperlink.
+    pub fn link_at_position(&self, pos: Point<Pixels>) -> Option<String> {
+        let bounds = self.last_bounds?;
+        if !bounds.contains(&pos) {
+            return None;
+        }
+
+        for line in &self.visible_lines {
+            if pos.y >= line.top && pos.y < line.bottom {
+                for link in &line.links {
+                    if link.bounds.contains(&pos) {
+                        return Some(link.url.clone());
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
     fn is_position_over_task_checkbox(&self, pos: Point<Pixels>, _window: &Window) -> bool {
         let interactive_tasks = {
             #[cfg(feature = "markdown")]
@@ -788,6 +822,12 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.focus_handle.focus(window, cx);
+
+        // If clicking on a hyperlink, open the URL in the default browser
+        if !event.modifiers.shift && let Some(url) = self.link_at_position(event.position) {
+            cx.open_url(&url);
+            return;
+        }
 
         let interactive_tasks = {
             #[cfg(feature = "markdown")]
@@ -876,8 +916,13 @@ impl Editor {
             }
         } else {
             let hovering = self.is_position_over_task_checkbox(event.position, window);
-            if hovering != self.is_hovering_task {
+            let hovered_link = self.link_at_position(event.position);
+            let link_changed = hovered_link != self.hovered_link;
+            let task_changed = hovering != self.is_hovering_task;
+
+            if task_changed || link_changed {
                 self.is_hovering_task = hovering;
+                self.hovered_link = hovered_link;
                 cx.notify();
             }
         }
@@ -896,8 +941,13 @@ impl Editor {
             self.selection = None;
         }
         let hovering = self.is_position_over_task_checkbox(event.position, window);
-        if hovering != self.is_hovering_task {
+        let hovered_link = self.link_at_position(event.position);
+        let link_changed = hovered_link != self.hovered_link;
+        let task_changed = hovering != self.is_hovering_task;
+
+        if task_changed || link_changed {
             self.is_hovering_task = hovering;
+            self.hovered_link = hovered_link;
         }
         cx.notify();
     }
@@ -932,7 +982,7 @@ impl Render for Editor {
         _window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
-        let cursor_style = if self.is_hovering_task {
+        let cursor_style = if self.is_hovering_task || self.hovered_link.is_some() {
             gpui::CursorStyle::PointingHand
         } else {
             gpui::CursorStyle::IBeam
@@ -950,8 +1000,10 @@ impl Render for Editor {
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| {
                 this.is_selecting = false;
-                if this.is_hovering_task {
-                    this.is_hovering_task = false;
+                let changed = this.is_hovering_task || this.hovered_link.is_some();
+                this.is_hovering_task = false;
+                this.hovered_link = None;
+                if changed {
                     cx.notify();
                 }
             }))

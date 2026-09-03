@@ -448,6 +448,31 @@ impl RenderOnce for EditorCanvas {
                     let line_visual_lines = text_line.wrap_boundaries.len() + 1;
                     let line_total_height = metrics.line_height * line_visual_lines;
 
+                    #[allow(unused_mut)]
+                    let mut visible_links = Vec::new();
+                    #[cfg(feature = "markdown")]
+                    if line_text.contains('[') || line_text.contains('<') {
+                        let extracted = twrite_core::markdown::extract_markdown_links(line_text);
+                        for (src_range, url) in extracted {
+                            let disp_start = concealed.source_to_display(src_range.start);
+                            let disp_end = concealed.source_to_display(src_range.end);
+                            if disp_start < disp_end {
+                                let start_pt = text_line.position_for_index(disp_start, metrics.line_height);
+                                let end_pt = text_line.position_for_index(disp_end, metrics.line_height);
+                                if let (Some(s), Some(e)) = (start_pt, end_pt) {
+                                    let width = if e.x > s.x { e.x - s.x } else { px(20.0) };
+                                    visible_links.push(crate::editor::VisibleLink {
+                                        bounds: Bounds::new(
+                                            point(line_text_origin_x + s.x, current_y + s.y),
+                                            size(width.max(px(5.0)), metrics.line_height),
+                                        ),
+                                        url,
+                                    });
+                                }
+                            }
+                        }
+                    }
+
                     let quote_bar_quad = if metrics.is_quote {
                         Some(fill(
                             Bounds::new(
@@ -591,6 +616,7 @@ impl RenderOnce for EditorCanvas {
                         line_height: metrics.line_height,
                         is_task_checkbox: is_concealed_task,
                         checkbox_box_x,
+                        links: visible_links,
                     });
 
                     current_y += line_total_height;
