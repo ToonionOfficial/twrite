@@ -10,18 +10,74 @@ use crate::{
 /// Cached fence line row indices and associated document version.
 type FenceCache = Arc<RwLock<Option<(usize, Vec<usize>)>>>;
 
+/// Display mode for markdown syntax delimiters (like `# `, `**`, `*`, `~~`, `` ` ``) on inactive lines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ConcealMode {
+    /// Markdown markers are always visible with normal syntax coloring.
+    Off,
+    /// Markdown markers on inactive lines are rendered with faint opacity.
+    #[default]
+    Dimmed,
+    /// Markdown markers on inactive lines are completely hidden (invisible).
+    Hidden,
+}
+
+/// Configuration settings for Markdown editing, highlighting, and WYSIWYG rendering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MarkdownConfig {
+    /// How syntax delimiters (`#`, `**`, `*`, `~~`, `` ` ``) are displayed on inactive lines.
+    pub conceal_mode: ConcealMode,
+    /// Whether horizontal rules (`---`, `***`, `___`) are rendered as visual divider quads.
+    pub visual_thematic_breaks: bool,
+    /// Whether clicking on task checkboxes (`- [ ]` / `- [x]`) toggles their state.
+    pub interactive_tasks: bool,
+}
+
+impl Default for MarkdownConfig {
+    fn default() -> Self {
+        Self {
+            conceal_mode: ConcealMode::Dimmed,
+            visual_thematic_breaks: true,
+            interactive_tasks: true,
+        }
+    }
+}
+
 /// A syntax highlighter for CommonMark and GFM Markdown documents using `pulldown-cmark`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MarkdownHighlighter {
+    config: MarkdownConfig,
     cached_fences: FenceCache,
 }
 
+impl Default for MarkdownHighlighter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MarkdownHighlighter {
-    /// Creates a new Markdown syntax highlighter.
+    /// Creates a new Markdown syntax highlighter with default configuration.
     pub fn new() -> Self {
+        Self::with_config(MarkdownConfig::default())
+    }
+
+    /// Creates a new Markdown syntax highlighter with custom configuration.
+    pub fn with_config(config: MarkdownConfig) -> Self {
         Self {
+            config,
             cached_fences: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Returns the active Markdown configuration.
+    pub fn config(&self) -> &MarkdownConfig {
+        &self.config
+    }
+
+    /// Updates the Markdown configuration.
+    pub fn set_config(&mut self, config: MarkdownConfig) {
+        self.config = config;
     }
 
     fn is_in_fenced_code_block(&self, buffer: &EditorBuffer, current_row: usize) -> bool {
@@ -85,14 +141,23 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             return spans;
         }
 
+        let delimiter_tag = match self.config.conceal_mode {
+            ConcealMode::Off => None,
+            ConcealMode::Dimmed => Some(HighlightTag::Dimmed),
+            ConcealMode::Hidden => Some(HighlightTag::Hidden),
+        };
+
         let is_cursor_row = row == buffer.cursor_point().row;
 
-        let trimmed_break = trimmed_start.trim_end();
-        if (trimmed_break == "---" || trimmed_break == "***" || trimmed_break == "___")
-            && line_text.len() >= 3
-        {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Dimmed));
-            return spans;
+        if self.config.visual_thematic_breaks {
+            let trimmed_break = trimmed_start.trim_end();
+            if (trimmed_break == "---" || trimmed_break == "***" || trimmed_break == "___")
+                && line_text.len() >= 3
+            {
+                let tag = delimiter_tag.unwrap_or(HighlightTag::Comment);
+                spans.push(StyleSpan::tag(0..line_text.len(), tag));
+                return spans;
+            }
         }
 
         let heading_prefix = if trimmed_start.starts_with("# ") {
@@ -113,11 +178,8 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
         if let Some((prefix_len, tag)) = heading_prefix {
             let indent = line_text.len() - trimmed_start.len();
-            if !is_cursor_row {
-                spans.push(StyleSpan::tag(
-                    indent..indent + prefix_len,
-                    HighlightTag::Dimmed,
-                ));
+            if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+                spans.push(StyleSpan::tag(indent..indent + prefix_len, delim_tag));
                 if indent + prefix_len < line_text.len() {
                     spans.push(StyleSpan::tag(indent + prefix_len..line_text.len(), tag));
                 }
@@ -153,10 +215,13 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                     if let Some(start) = active_strong.take() {
                         let end = range.end.min(line_text.len());
                         if start < end {
-                            if !is_cursor_row && end >= start + 4 {
-                                spans.push(StyleSpan::tag(start..start + 2, HighlightTag::Dimmed));
+                            if !is_cursor_row
+                                && end >= start + 4
+                                && let Some(delim_tag) = delimiter_tag
+                            {
+                                spans.push(StyleSpan::tag(start..start + 2, delim_tag));
                                 spans.push(StyleSpan::tag(start + 2..end - 2, HighlightTag::Bold));
-                                spans.push(StyleSpan::tag(end - 2..end, HighlightTag::Dimmed));
+                                spans.push(StyleSpan::tag(end - 2..end, delim_tag));
                             } else {
                                 spans.push(StyleSpan::tag(start..end, HighlightTag::Bold));
                             }
@@ -170,11 +235,14 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                     if let Some(start) = active_emphasis.take() {
                         let end = range.end.min(line_text.len());
                         if start < end {
-                            if !is_cursor_row && end >= start + 2 {
-                                spans.push(StyleSpan::tag(start..start + 1, HighlightTag::Dimmed));
+                            if !is_cursor_row
+                                && end >= start + 2
+                                && let Some(delim_tag) = delimiter_tag
+                            {
+                                spans.push(StyleSpan::tag(start..start + 1, delim_tag));
                                 spans
                                     .push(StyleSpan::tag(start + 1..end - 1, HighlightTag::Italic));
-                                spans.push(StyleSpan::tag(end - 1..end, HighlightTag::Dimmed));
+                                spans.push(StyleSpan::tag(end - 1..end, delim_tag));
                             } else {
                                 spans.push(StyleSpan::tag(start..end, HighlightTag::Italic));
                             }
@@ -188,8 +256,11 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                     if let Some(start) = active_strike.take() {
                         let end = range.end.min(line_text.len());
                         if start < end {
-                            if !is_cursor_row && end >= start + 4 {
-                                spans.push(StyleSpan::tag(start..start + 2, HighlightTag::Dimmed));
+                            if !is_cursor_row
+                                && end >= start + 4
+                                && let Some(delim_tag) = delimiter_tag
+                            {
+                                spans.push(StyleSpan::tag(start..start + 2, delim_tag));
                                 spans.push(StyleSpan::direct(
                                     start + 2..end - 2,
                                     TextStyle {
@@ -197,7 +268,7 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                                         ..Default::default()
                                     },
                                 ));
-                                spans.push(StyleSpan::tag(end - 2..end, HighlightTag::Dimmed));
+                                spans.push(StyleSpan::tag(end - 2..end, delim_tag));
                             } else {
                                 spans.push(StyleSpan::direct(
                                     start..end,
@@ -212,13 +283,13 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                 }
                 Event::Code(cow) => {
                     let end = (range.start + cow.len() + 2).min(line_text.len());
-                    if !is_cursor_row && end >= range.start + 2 {
-                        spans.push(StyleSpan::tag(
-                            range.start..range.start + 1,
-                            HighlightTag::Dimmed,
-                        ));
+                    if !is_cursor_row
+                        && end >= range.start + 2
+                        && let Some(delim_tag) = delimiter_tag
+                    {
+                        spans.push(StyleSpan::tag(range.start..range.start + 1, delim_tag));
                         spans.push(StyleSpan::tag(range.start + 1..end - 1, HighlightTag::Code));
-                        spans.push(StyleSpan::tag(end - 1..end, HighlightTag::Dimmed));
+                        spans.push(StyleSpan::tag(end - 1..end, delim_tag));
                     } else {
                         spans.push(StyleSpan::tag(range.start..end, HighlightTag::Code));
                     }
@@ -518,5 +589,30 @@ mod tests {
         let outcome = hook.on_key(&mut ctx, &event);
         assert_eq!(outcome, HookOutcome::Consumed);
         assert_eq!(ctx.buffer.text().to_string(), "1. First item\n2. ");
+    }
+
+    #[test]
+    fn test_markdown_conceal_modes() {
+        let buffer = EditorBuffer::new("# Heading 1\n## Heading 2");
+
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let spans_hidden = hidden_highlighter.highlight_line(&buffer, 1, "## Heading 2");
+        assert_eq!(spans_hidden.len(), 2);
+        assert_eq!(spans_hidden[0].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(
+            spans_hidden[1].style,
+            StyleValue::Tag(HighlightTag::Heading2)
+        );
+
+        let off_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Off,
+            ..Default::default()
+        });
+        let spans_off = off_highlighter.highlight_line(&buffer, 1, "## Heading 2");
+        assert_eq!(spans_off.len(), 1);
+        assert_eq!(spans_off[0].style, StyleValue::Tag(HighlightTag::Heading2));
     }
 }

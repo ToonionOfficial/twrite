@@ -165,6 +165,11 @@ impl EditorTheme {
                 c.a = 0.25;
                 c
             }
+            HighlightTag::Hidden => {
+                let mut c = self.syntax.comment;
+                c.a = 0.0;
+                c
+            }
         }
     }
 

@@ -1,14 +1,30 @@
 use gpui::*;
 use gpui_platform::application;
 use twrite::Editor;
+use twrite::markdown::{ConcealMode, MarkdownHighlighter};
 
 struct MarkdownApp {
     editor: Entity<Editor>,
 }
 
+impl MarkdownApp {
+    fn cycle_conceal_mode(&mut self, cx: &mut Context<Self>) {
+        self.editor.update(cx, |ed, _| {
+            let next = match ed.config.markdown.conceal_mode {
+                ConcealMode::Dimmed => ConcealMode::Hidden,
+                ConcealMode::Hidden => ConcealMode::Off,
+                ConcealMode::Off => ConcealMode::Dimmed,
+            };
+            ed.config.markdown.conceal_mode = next;
+            ed.set_highlighter(MarkdownHighlighter::with_config(ed.config.markdown));
+        });
+        cx.notify();
+    }
+}
+
 impl Render for MarkdownApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (cursor_pos, pixel_pos, status_text) = {
+        let (cursor_pos, pixel_pos, status_text, conceal_mode) = {
             let ed = self.editor.read(cx);
             let pt = ed.buffer.cursor_point();
             let pixel = ed
@@ -19,10 +35,12 @@ impl Render for MarkdownApp {
                 .status_text()
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| "READY".to_string());
+            let conceal = ed.config.markdown.conceal_mode;
             (
                 format!("Ln {}, Col {}", pt.row + 1, pt.column + 1),
                 pixel,
                 status,
+                conceal,
             )
         };
 
@@ -62,6 +80,24 @@ impl Render for MarkdownApp {
                                     .bg(rgb(0x313244))
                                     .text_color(rgb(0x89dceb))
                                     .child(status_text),
+                            )
+                            .child(
+                                div()
+                                    .id("conceal-toggle")
+                                    .cursor_pointer()
+                                    .text_xs()
+                                    .px_2()
+                                    .py_0p5()
+                                    .rounded_md()
+                                    .bg(rgb(0x45475a))
+                                    .text_color(rgb(0xf9e2af))
+                                    .child(format!("Conceal: {:?} (Click to toggle)", conceal_mode))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|this, _, _, cx| {
+                                            this.cycle_conceal_mode(cx);
+                                        }),
+                                    ),
                             ),
                     )
                     .child(

@@ -17,6 +17,9 @@ pub struct EditorConfig {
     pub block_cursor: bool,
     /// Whether to soft-wrap lines at the viewport boundary.
     pub line_wrap: bool,
+    /// Markdown WYSIWYG and syntax configuration.
+    #[cfg(feature = "markdown")]
+    pub markdown: twrite_core::markdown::MarkdownConfig,
 }
 
 impl Default for EditorConfig {
@@ -29,6 +32,8 @@ impl Default for EditorConfig {
             highlight_active_line: false,
             block_cursor: false,
             line_wrap: true,
+            #[cfg(feature = "markdown")]
+            markdown: twrite_core::markdown::MarkdownConfig::default(),
         }
     }
 }

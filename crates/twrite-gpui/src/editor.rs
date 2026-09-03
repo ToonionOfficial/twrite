@@ -100,10 +100,21 @@ impl Editor {
     /// Automatically configures [`twrite_core::MarkdownHighlighter`], [`twrite_core::AutoPairsHook`],
     /// and [`twrite_core::MarkdownHook`] (for formatting shortcuts, smart list continuation,
     /// and checkbox toggles).
+    /// Enables out-of-the-box CommonMark and GFM editing using `self.config.markdown`.
+    ///
+    /// Automatically configures [`twrite_core::MarkdownHighlighter`], [`twrite_core::AutoPairsHook`],
+    /// and [`twrite_core::MarkdownHook`].
     #[cfg(feature = "markdown")]
     pub fn enable_markdown(&mut self) {
+        self.enable_markdown_with_config(self.config.markdown);
+    }
+
+    /// Enables out-of-the-box CommonMark and GFM editing with custom Markdown configuration.
+    #[cfg(feature = "markdown")]
+    pub fn enable_markdown_with_config(&mut self, config: twrite_core::markdown::MarkdownConfig) {
         use twrite_core::{AutoPairsHook, MarkdownHighlighter, MarkdownHook};
-        self.set_highlighter(MarkdownHighlighter::new());
+        self.config.markdown = config;
+        self.set_highlighter(MarkdownHighlighter::with_config(config));
         self.add_hook(AutoPairsHook::new());
         self.add_hook(MarkdownHook::new());
     }
@@ -700,7 +711,18 @@ impl Editor {
             || trimmed.starts_with("* [x] ")
             || trimmed.starts_with("- [X] ");
 
-        if !event.modifiers.shift && (is_task_empty || is_task_checked) {
+        let interactive_tasks = {
+            #[cfg(feature = "markdown")]
+            {
+                self.config.markdown.interactive_tasks
+            }
+            #[cfg(not(feature = "markdown"))]
+            {
+                true
+            }
+        };
+
+        if interactive_tasks && !event.modifiers.shift && (is_task_empty || is_task_checked) {
             let line_start = self
                 .buffer
                 .point_to_offset(BufferPoint::new(cursor_pt.row, 0));

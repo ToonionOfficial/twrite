@@ -91,6 +91,8 @@ pub enum HighlightTag {
     Choice,
     /// Dimmed or concealed syntax delimiters (e.g. inactive markdown markers).
     Dimmed,
+    /// Fully concealed / hidden syntax delimiters (transparent on inactive lines).
+    Hidden,
 }
 
 /// Direct styling attributes for a span of text.
