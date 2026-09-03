@@ -131,6 +131,14 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         let mut spans = Vec::new();
         let trimmed_start = line_text.trim_start();
 
+        let delimiter_tag = match self.config.conceal_mode {
+            ConcealMode::Off => None,
+            ConcealMode::Dimmed => Some(HighlightTag::Dimmed),
+            ConcealMode::Hidden => Some(HighlightTag::Hidden),
+        };
+
+        let is_cursor_row = row == buffer.cursor_point().row;
+
         if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
             spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Code));
             return spans;
@@ -140,14 +148,6 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Code));
             return spans;
         }
-
-        let delimiter_tag = match self.config.conceal_mode {
-            ConcealMode::Off => None,
-            ConcealMode::Dimmed => Some(HighlightTag::Dimmed),
-            ConcealMode::Hidden => Some(HighlightTag::Hidden),
-        };
-
-        let is_cursor_row = row == buffer.cursor_point().row;
 
         if self.config.visual_thematic_breaks {
             let trimmed_break = trimmed_start.trim_end();
@@ -191,7 +191,37 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
         if trimmed_start.starts_with("> ") || trimmed_start == ">" {
             let indent = line_text.len() - trimmed_start.len();
-            spans.push(StyleSpan::tag(indent..indent + 1, HighlightTag::Comment));
+            if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+                let delim_len = if trimmed_start.starts_with("> ") { 2 } else { 1 };
+                spans.push(StyleSpan::tag(indent..indent + delim_len, delim_tag));
+            } else {
+                spans.push(StyleSpan::tag(indent..indent + 1, HighlightTag::Comment));
+            }
+        }
+
+        let is_task_list = trimmed_start.starts_with("- [ ] ")
+            || trimmed_start == "- [ ]"
+            || trimmed_start.starts_with("- [x] ")
+            || trimmed_start == "- [x]"
+            || trimmed_start.starts_with("- [X] ")
+            || trimmed_start == "- [X]"
+            || trimmed_start.starts_with("* [ ] ")
+            || trimmed_start == "* [ ]"
+            || trimmed_start.starts_with("* [x] ")
+            || trimmed_start == "* [x]"
+            || trimmed_start.starts_with("* [X] ")
+            || trimmed_start == "* [X]";
+
+        if is_task_list {
+            let indent = line_text.len() - trimmed_start.len();
+            if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+                if delim_tag == HighlightTag::Hidden {
+                    let marker_len = if trimmed_start.len() >= 6 { 6 } else { trimmed_start.len() };
+                    spans.push(StyleSpan::tag(indent..indent + marker_len, HighlightTag::Hidden));
+                } else {
+                    spans.push(StyleSpan::tag(indent..indent + 2, delim_tag));
+                }
+            }
         }
 
         let mut options = Options::empty();
@@ -487,7 +517,7 @@ impl EditorHook for MarkdownHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::StyleValue;
+    use crate::{ConcealedLine, StyleValue};
 
     #[test]
     fn test_markdown_heading_spans() {
@@ -614,5 +644,41 @@ mod tests {
         let spans_off = off_highlighter.highlight_line(&buffer, 1, "## Heading 2");
         assert_eq!(spans_off.len(), 1);
         assert_eq!(spans_off[0].style, StyleValue::Tag(HighlightTag::Heading2));
+    }
+
+    #[test]
+    fn test_markdown_task_list_and_quote_concealment() {
+        let buffer = EditorBuffer::new("- [ ] Task 1\n> Quote line\n```rust\nfn main() {}\n```");
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+
+        // Row 0 is cursor row (buffer cursor is at 0)
+        // Row 1 (Quote) is inactive
+        let spans_quote = hidden_highlighter.highlight_line(&buffer, 1, "> Quote line");
+        assert!(!spans_quote.is_empty());
+        assert_eq!(spans_quote[0].range, 0..2);
+        assert_eq!(spans_quote[0].style, StyleValue::Tag(HighlightTag::Hidden));
+        let concealed_quote = ConcealedLine::build("> Quote line", &spans_quote);
+        assert_eq!(concealed_quote.display_text, "Quote line");
+
+        // Row 2 (Opening fence) remains visible with HighlightTag::Code
+        let spans_fence = hidden_highlighter.highlight_line(&buffer, 2, "```rust");
+        assert_eq!(spans_fence.len(), 1);
+        assert_eq!(spans_fence[0].range, 0..7);
+        assert_eq!(spans_fence[0].style, StyleValue::Tag(HighlightTag::Code));
+        let concealed_fence = ConcealedLine::build("```rust", &spans_fence);
+        assert_eq!(concealed_fence.display_text, "```rust");
+
+        // When buffer cursor moves to row 1, row 0 becomes inactive
+        let mut buffer_moved = buffer;
+        buffer_moved.set_cursor_offset(13); // on row 1
+        let spans_task = hidden_highlighter.highlight_line(&buffer_moved, 0, "- [ ] Task 1");
+        assert!(!spans_task.is_empty());
+        assert_eq!(spans_task[0].range, 0..6);
+        assert_eq!(spans_task[0].style, StyleValue::Tag(HighlightTag::Hidden));
+        let concealed_task = ConcealedLine::build("- [ ] Task 1", &spans_task);
+        assert_eq!(concealed_task.display_text, "Task 1");
     }
 }

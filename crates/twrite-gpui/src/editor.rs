@@ -34,6 +34,8 @@ pub struct Editor {
     pub cursor_style: CursorStyle,
     /// Whether the user is currently mouse-drag selecting text.
     pub is_selecting: bool,
+    /// Whether the mouse cursor is currently hovering over an interactive task checkbox.
+    pub is_hovering_task: bool,
     /// Last rendered bounds in window pixel coordinates.
     pub last_bounds: Option<Bounds<Pixels>>,
     /// Last rendered cursor position in window pixel coordinates, computed during canvas prepaint.
@@ -60,6 +62,7 @@ impl Editor {
             selection: None,
             cursor_style,
             is_selecting: false,
+            is_hovering_task: false,
             last_bounds: None,
             last_cursor_pixel: None,
         }
@@ -379,11 +382,16 @@ impl Editor {
             let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
 
             let metrics = LineMetrics::for_line(
+                line_text,
                 &concealed.display_text,
                 &concealed.spans,
                 self.config.font_size,
                 self.config.line_height,
             );
+
+            let is_concealed_task = metrics.task_state.is_some()
+                && line_text.len() != concealed.display_text.len();
+            let is_checked_task = is_concealed_task && metrics.task_state == Some(true);
 
             let runs = build_line_text_runs(
                 &concealed.display_text,
@@ -391,6 +399,8 @@ impl Editor {
                 None,
                 &font,
                 &self.theme,
+                metrics.is_code_block,
+                is_checked_task,
             );
 
             let text_line = window
@@ -409,15 +419,23 @@ impl Editor {
             let line_visual_lines = text_line.wrap_boundaries.len() + 1;
             let line_h = metrics.line_height * line_visual_lines;
 
+            let effective_text_origin_x = if is_concealed_task {
+                let indent = line_text.len() - line_text.trim_start().len();
+                let box_x = text_origin_x + px((indent as f32) * 8.0);
+                box_x + px(24.0)
+            } else {
+                text_origin_x
+            };
+
             let is_last_line = row + 1 == total_lines;
             if relative_y < current_y_offset + line_h || is_last_line {
-                if pos.x <= text_origin_x || line_text.is_empty() {
+                if pos.x <= effective_text_origin_x || line_text.is_empty() {
                     let col_src = concealed.display_to_source(0);
                     return line_start_byte + col_src;
                 }
 
                 let line_rel_y = (relative_y - current_y_offset).max(px(0.0));
-                let line_rel_x = (pos.x - text_origin_x).max(px(0.0));
+                let line_rel_x = (pos.x - effective_text_origin_x).max(px(0.0));
                 let rel_pos = point(line_rel_x, line_rel_y);
 
                 let col_display = text_line
@@ -700,6 +718,82 @@ impl Editor {
         cx.notify();
     }
 
+    fn is_position_over_task_checkbox(&self, pos: Point<Pixels>, window: &Window) -> bool {
+        let interactive_tasks = {
+            #[cfg(feature = "markdown")]
+            {
+                self.config.markdown.interactive_tasks
+            }
+            #[cfg(not(feature = "markdown"))]
+            {
+                false
+            }
+        };
+
+        if !interactive_tasks {
+            return false;
+        }
+
+        let bounds = match self.last_bounds {
+            Some(b) => b,
+            None => return false,
+        };
+
+        if !bounds.contains(&pos) {
+            return false;
+        }
+
+        let gutter_width = if self.config.line_numbers {
+            px(48.0)
+        } else {
+            px(0.0)
+        };
+        let text_origin_x = bounds.left() + gutter_width + px(12.0);
+
+        if pos.x < text_origin_x {
+            return false;
+        }
+
+        let offset = self.offset_for_position(pos, window);
+        let pt = self.buffer.offset_to_point(offset);
+        let line = self.buffer.line_to_string(pt.row);
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+
+        let is_task = trimmed.starts_with("- [ ] ")
+            || trimmed.starts_with("* [ ] ")
+            || trimmed.starts_with("- [x] ")
+            || trimmed.starts_with("* [x] ")
+            || trimmed.starts_with("- [X] ")
+            || trimmed.starts_with("* [X] ");
+
+        if !is_task {
+            return false;
+        }
+
+        let line_start = self.buffer.point_to_offset(BufferPoint::new(pt.row, 0));
+        let col = offset.saturating_sub(line_start);
+
+        let is_concealed_checkbox = {
+            #[cfg(feature = "markdown")]
+            {
+                self.config.markdown.conceal_mode == twrite_core::ConcealMode::Hidden
+                    && pt.row != self.buffer.cursor_point().row
+            }
+            #[cfg(not(feature = "markdown"))]
+            {
+                false
+            }
+        };
+
+        if is_concealed_checkbox {
+            let box_x = text_origin_x + px((indent as f32) * 8.0);
+            pos.x >= box_x && pos.x <= box_x + px(22.0)
+        } else {
+            col >= indent && col <= indent + 5
+        }
+    }
+
     fn handle_mouse_down(
         &mut self,
         event: &MouseDownEvent,
@@ -707,13 +801,10 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.focus_handle.focus(window, cx);
-        self.is_selecting = true;
 
         let offset = self.offset_for_position(event.position, window);
-        self.buffer.set_cursor_offset(offset);
-
-        let cursor_pt = self.buffer.cursor_point();
-        let line = self.buffer.line_to_string(cursor_pt.row);
+        let pt = self.buffer.offset_to_point(offset);
+        let line = self.buffer.line_to_string(pt.row);
         let trimmed = line.trim_start();
         let indent = line.len() - trimmed.len();
         let is_task_empty = trimmed.starts_with("- [ ] ") || trimmed.starts_with("* [ ] ");
@@ -733,26 +824,29 @@ impl Editor {
         };
 
         if interactive_tasks && !event.modifiers.shift && (is_task_empty || is_task_checked) {
-            let line_start = self
-                .buffer
-                .point_to_offset(BufferPoint::new(cursor_pt.row, 0));
-            let col = offset.saturating_sub(line_start);
-            if col >= indent && col <= indent + 5 {
+            let is_over = self.is_position_over_task_checkbox(event.position, window);
+            if is_over {
+                let line_start = self
+                    .buffer
+                    .point_to_offset(BufferPoint::new(pt.row, 0));
+                let old_cursor = self.buffer.cursor_offset();
                 let check_offset = line_start + indent + 3;
                 let new_char = if is_task_empty { "x" } else { " " };
                 self.buffer
                     .replace_range(check_offset..check_offset + 1, new_char);
-                self.buffer.set_cursor_offset(check_offset + 2);
+                self.buffer.set_cursor_offset(old_cursor);
                 self.selection = None;
                 self.is_selecting = false;
                 for hook in &mut self.hooks {
                     hook.after_edit(&mut self.buffer);
                 }
-                self.scroll_to_cursor(Some(window));
                 cx.notify();
                 return;
             }
         }
+
+        self.is_selecting = true;
+        self.buffer.set_cursor_offset(offset);
 
         if event.modifiers.shift {
             if let Some(sel) = self.selection {
@@ -786,13 +880,19 @@ impl Editor {
 
             self.scroll_to_cursor(Some(window));
             cx.notify();
+        } else {
+            let hovering = self.is_position_over_task_checkbox(event.position, window);
+            if hovering != self.is_hovering_task {
+                self.is_hovering_task = hovering;
+                cx.notify();
+            }
         }
     }
 
     fn handle_mouse_up(
         &mut self,
-        _event: &MouseUpEvent,
-        _window: &mut Window,
+        event: &MouseUpEvent,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.is_selecting = false;
@@ -800,6 +900,10 @@ impl Editor {
             && sel.is_empty()
         {
             self.selection = None;
+        }
+        let hovering = self.is_position_over_task_checkbox(event.position, window);
+        if hovering != self.is_hovering_task {
+            self.is_hovering_task = hovering;
         }
         cx.notify();
     }
@@ -834,17 +938,29 @@ impl Render for Editor {
         _window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
+        let cursor_style = if self.is_hovering_task {
+            gpui::CursorStyle::PointingHand
+        } else {
+            gpui::CursorStyle::IBeam
+        };
+
         div()
             .track_focus(&self.focus_handle)
             .key_context("Editor")
             .size_full()
             .overflow_hidden()
-            .cursor(gpui::CursorStyle::IBeam)
+            .cursor(cursor_style)
             .bg(self.theme.background)
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(Self::handle_mouse_up))
+            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                this.is_selecting = false;
+                if this.is_hovering_task {
+                    this.is_hovering_task = false;
+                    cx.notify();
+                }
+            }))
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
             .child(EditorCanvas::new(cx.entity().clone()))

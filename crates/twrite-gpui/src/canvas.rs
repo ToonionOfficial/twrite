@@ -20,12 +20,15 @@ pub struct LineMetrics {
     pub is_code_block: bool,
     /// Whether this line is a thematic divider break (---, ***, ___).
     pub is_thematic_break: bool,
+    /// Whether this line is a task list item (Some(false) for unchecked, Some(true) for checked).
+    pub task_state: Option<bool>,
 }
 
 impl LineMetrics {
     /// Calculates layout metrics and block-level decorations based on syntax spans and line text.
     pub fn for_line(
-        line_text: &str,
+        raw_line_text: &str,
+        concealed_display_text: &str,
         spans: &[StyleSpan],
         base_font_size: Pixels,
         base_line_height: Pixels,
@@ -72,21 +75,41 @@ impl LineMetrics {
             line_height = base_line_height * 0.95;
         }
 
-        let trimmed = line_text.trim_start();
-        let is_quote = trimmed.starts_with("> ") || trimmed == ">";
+        let trimmed_raw = raw_line_text.trim_start();
+        let is_quote = trimmed_raw.starts_with("> ") || trimmed_raw == ">";
 
-        let is_code_block = trimmed.starts_with("```")
-            || trimmed.starts_with("~~~")
-            || (!line_text.is_empty()
-                && spans.iter().any(|s| {
-                    s.range.len() == line_text.len()
-                        && matches!(s.style, StyleValue::Tag(HighlightTag::Code))
-                }));
+        let is_code_block = trimmed_raw.starts_with("```")
+            || trimmed_raw.starts_with("~~~")
+            || spans.iter().any(|s| {
+                (raw_line_text.is_empty() || s.range.len() == concealed_display_text.len())
+                    && matches!(s.style, StyleValue::Tag(HighlightTag::Code))
+            });
 
-        let trimmed_break = trimmed.trim_end();
+        let trimmed_break = trimmed_raw.trim_end();
         let is_thematic_break =
             (trimmed_break == "---" || trimmed_break == "***" || trimmed_break == "___")
-                && line_text.len() >= 3;
+                && raw_line_text.len() >= 3;
+
+        let is_task_empty = trimmed_raw.starts_with("- [ ] ")
+            || trimmed_raw == "- [ ]"
+            || trimmed_raw.starts_with("* [ ] ")
+            || trimmed_raw == "* [ ]";
+        let is_task_checked = trimmed_raw.starts_with("- [x] ")
+            || trimmed_raw == "- [x]"
+            || trimmed_raw.starts_with("- [X] ")
+            || trimmed_raw == "- [X]"
+            || trimmed_raw.starts_with("* [x] ")
+            || trimmed_raw == "* [x]"
+            || trimmed_raw.starts_with("* [X] ")
+            || trimmed_raw == "* [X]";
+
+        let task_state = if is_task_empty {
+            Some(false)
+        } else if is_task_checked {
+            Some(true)
+        } else {
+            None
+        };
 
         Self {
             font_size,
@@ -94,6 +117,7 @@ impl LineMetrics {
             is_quote,
             is_code_block,
             is_thematic_break,
+            task_state,
         }
     }
 }
@@ -105,6 +129,8 @@ pub fn build_line_text_runs(
     selection_line_range: Option<(usize, usize)>,
     font: &Font,
     theme: &EditorTheme,
+    is_code_block: bool,
+    is_checked_task: bool,
 ) -> Vec<TextRun> {
     if line_text.is_empty() {
         return Vec::new();
@@ -116,12 +142,19 @@ pub fn build_line_text_runs(
     for segment in segments {
         let resolved = segment.style.map(|s| theme.resolve_style(s));
 
-        let color = resolved
-            .as_ref()
-            .map(|r| r.color)
-            .unwrap_or(theme.foreground);
+        let color = if is_checked_task && !segment.is_selected {
+            theme.syntax.comment
+        } else {
+            resolved
+                .as_ref()
+                .map(|r| r.color)
+                .unwrap_or(theme.foreground)
+        };
+
         let background_color = if segment.is_selected {
             Some(theme.selection)
+        } else if is_code_block {
+            None
         } else {
             resolved.as_ref().and_then(|r| r.background)
         };
@@ -152,16 +185,23 @@ pub fn build_line_text_runs(
                 },
             });
 
-        let strikethrough = resolved.as_ref().and_then(|r| {
-            if r.strikethrough {
-                Some(StrikethroughStyle {
-                    color: Some(color),
-                    thickness: px(1.0),
-                })
-            } else {
-                None
-            }
-        });
+        let strikethrough = if is_checked_task {
+            Some(StrikethroughStyle {
+                thickness: px(1.0),
+                color: Some(theme.syntax.comment),
+            })
+        } else {
+            resolved.as_ref().and_then(|r| {
+                if r.strikethrough {
+                    Some(StrikethroughStyle {
+                        color: Some(color),
+                        thickness: px(1.0),
+                    })
+                } else {
+                    None
+                }
+            })
+        };
 
         runs.push(TextRun {
             len: segment.range.end - segment.range.start,
@@ -202,6 +242,7 @@ struct PreparedLine {
     thematic_break_quad: Option<PaintQuad>,
     empty_selection_quad: Option<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
+    task_checkbox_quad: Option<PaintQuad>,
 }
 
 /// The state struct (T) passed from `prepaint` to `paint`.
@@ -315,6 +356,7 @@ impl RenderOnce for EditorCanvas {
                     let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
 
                     let metrics = LineMetrics::for_line(
+                        line_text,
                         &concealed.display_text,
                         &concealed.spans,
                         config.font_size,
@@ -343,12 +385,50 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
+                    let is_concealed_task = metrics.task_state.is_some()
+                        && line_text.len() != concealed.display_text.len();
+                    let is_checked_task = is_concealed_task && metrics.task_state == Some(true);
+
+                    let (task_checkbox_quad, line_text_origin_x) =
+                        if is_concealed_task {
+                            let checked = metrics.task_state.unwrap();
+                            let indent = line_text.len() - line_text.trim_start().len();
+                            let box_size = px(15.0);
+                            let box_x = text_origin_x + px((indent as f32) * 8.0);
+                            let box_y = current_y + (metrics.line_height - box_size) / 2.0;
+
+                            if checked {
+                                let quad = fill(
+                                    Bounds::new(point(box_x, box_y), size(box_size, box_size)),
+                                    theme.syntax.function,
+                                )
+                                .corner_radii(px(3.5))
+                                .border_widths(px(1.5))
+                                .border_color(theme.syntax.function);
+
+                                (Some(quad), box_x + px(24.0))
+                            } else {
+                                let quad = fill(
+                                    Bounds::new(point(box_x, box_y), size(box_size, box_size)),
+                                    gpui::hsla(0.65, 0.4, 0.6, 0.1),
+                                )
+                                .corner_radii(px(3.5))
+                                .border_widths(px(1.5))
+                                .border_color(theme.syntax.comment);
+                                (Some(quad), box_x + px(24.0))
+                            }
+                        } else {
+                            (None, text_origin_x)
+                        };
+
                     let runs = build_line_text_runs(
                         &concealed.display_text,
                         &concealed.spans,
                         selection_line_range,
                         &font,
                         &theme,
+                        metrics.is_code_block,
+                        is_checked_task,
                     );
 
                     let text_line = window
@@ -482,7 +562,7 @@ impl RenderOnce for EditorCanvas {
 
                     lines.push(PreparedLine {
                         gutter_num,
-                        text_origin: point(text_origin_x, current_y),
+                        text_origin: point(line_text_origin_x, current_y),
                         text_line,
                         line_height: metrics.line_height,
                         quote_bar_quad,
@@ -490,6 +570,7 @@ impl RenderOnce for EditorCanvas {
                         thematic_break_quad,
                         empty_selection_quad,
                         cursor_quad,
+                        task_checkbox_quad,
                     });
 
                     current_y += line_total_height;
@@ -518,6 +599,9 @@ impl RenderOnce for EditorCanvas {
                     }
                     if let Some(thematic_break) = line.thematic_break_quad {
                         window.paint_quad(thematic_break);
+                    }
+                    if let Some(cb_quad) = line.task_checkbox_quad {
+                        window.paint_quad(cb_quad);
                     }
 
                     if let Some((origin, shaped_num)) = line.gutter_num {
