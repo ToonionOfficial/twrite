@@ -160,6 +160,11 @@ impl EditorTheme {
             HighlightTag::Speaker => self.syntax.speaker,
             HighlightTag::Dialogue => self.syntax.dialogue,
             HighlightTag::Choice => self.syntax.choice,
+            HighlightTag::Dimmed => {
+                let mut c = self.syntax.comment;
+                c.a = 0.25;
+                c
+            }
         }
     }
 

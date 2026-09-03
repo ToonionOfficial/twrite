@@ -85,23 +85,45 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             return spans;
         }
 
-        if trimmed_start.starts_with("# ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading1));
+        let is_cursor_row = row == buffer.cursor_point().row;
+
+        let trimmed_break = trimmed_start.trim_end();
+        if (trimmed_break == "---" || trimmed_break == "***" || trimmed_break == "___")
+            && line_text.len() >= 3
+        {
+            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Dimmed));
             return spans;
+        }
+
+        let heading_prefix = if trimmed_start.starts_with("# ") {
+            Some((2, HighlightTag::Heading1))
         } else if trimmed_start.starts_with("## ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading2));
-            return spans;
+            Some((3, HighlightTag::Heading2))
         } else if trimmed_start.starts_with("### ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading3));
-            return spans;
+            Some((4, HighlightTag::Heading3))
         } else if trimmed_start.starts_with("#### ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading4));
-            return spans;
+            Some((5, HighlightTag::Heading4))
         } else if trimmed_start.starts_with("##### ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading5));
-            return spans;
+            Some((6, HighlightTag::Heading5))
         } else if trimmed_start.starts_with("###### ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading6));
+            Some((7, HighlightTag::Heading6))
+        } else {
+            None
+        };
+
+        if let Some((prefix_len, tag)) = heading_prefix {
+            let indent = line_text.len() - trimmed_start.len();
+            if !is_cursor_row {
+                spans.push(StyleSpan::tag(
+                    indent..indent + prefix_len,
+                    HighlightTag::Dimmed,
+                ));
+                if indent + prefix_len < line_text.len() {
+                    spans.push(StyleSpan::tag(indent + prefix_len..line_text.len(), tag));
+                }
+            } else {
+                spans.push(StyleSpan::tag(0..line_text.len(), tag));
+            }
             return spans;
         }
 
@@ -131,7 +153,13 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                     if let Some(start) = active_strong.take() {
                         let end = range.end.min(line_text.len());
                         if start < end {
-                            spans.push(StyleSpan::tag(start..end, HighlightTag::Bold));
+                            if !is_cursor_row && end >= start + 4 {
+                                spans.push(StyleSpan::tag(start..start + 2, HighlightTag::Dimmed));
+                                spans.push(StyleSpan::tag(start + 2..end - 2, HighlightTag::Bold));
+                                spans.push(StyleSpan::tag(end - 2..end, HighlightTag::Dimmed));
+                            } else {
+                                spans.push(StyleSpan::tag(start..end, HighlightTag::Bold));
+                            }
                         }
                     }
                 }
@@ -142,7 +170,14 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                     if let Some(start) = active_emphasis.take() {
                         let end = range.end.min(line_text.len());
                         if start < end {
-                            spans.push(StyleSpan::tag(start..end, HighlightTag::Italic));
+                            if !is_cursor_row && end >= start + 2 {
+                                spans.push(StyleSpan::tag(start..start + 1, HighlightTag::Dimmed));
+                                spans
+                                    .push(StyleSpan::tag(start + 1..end - 1, HighlightTag::Italic));
+                                spans.push(StyleSpan::tag(end - 1..end, HighlightTag::Dimmed));
+                            } else {
+                                spans.push(StyleSpan::tag(start..end, HighlightTag::Italic));
+                            }
                         }
                     }
                 }
@@ -153,19 +188,40 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                     if let Some(start) = active_strike.take() {
                         let end = range.end.min(line_text.len());
                         if start < end {
-                            spans.push(StyleSpan::direct(
-                                start..end,
-                                TextStyle {
-                                    strikethrough: true,
-                                    ..Default::default()
-                                },
-                            ));
+                            if !is_cursor_row && end >= start + 4 {
+                                spans.push(StyleSpan::tag(start..start + 2, HighlightTag::Dimmed));
+                                spans.push(StyleSpan::direct(
+                                    start + 2..end - 2,
+                                    TextStyle {
+                                        strikethrough: true,
+                                        ..Default::default()
+                                    },
+                                ));
+                                spans.push(StyleSpan::tag(end - 2..end, HighlightTag::Dimmed));
+                            } else {
+                                spans.push(StyleSpan::direct(
+                                    start..end,
+                                    TextStyle {
+                                        strikethrough: true,
+                                        ..Default::default()
+                                    },
+                                ));
+                            }
                         }
                     }
                 }
                 Event::Code(cow) => {
                     let end = (range.start + cow.len() + 2).min(line_text.len());
-                    spans.push(StyleSpan::tag(range.start..end, HighlightTag::Code));
+                    if !is_cursor_row && end >= range.start + 2 {
+                        spans.push(StyleSpan::tag(
+                            range.start..range.start + 1,
+                            HighlightTag::Dimmed,
+                        ));
+                        spans.push(StyleSpan::tag(range.start + 1..end - 1, HighlightTag::Code));
+                        spans.push(StyleSpan::tag(end - 1..end, HighlightTag::Dimmed));
+                    } else {
+                        spans.push(StyleSpan::tag(range.start..end, HighlightTag::Code));
+                    }
                 }
                 Event::Start(Tag::Link { .. }) => {
                     active_link = Some(range.start);
@@ -364,7 +420,7 @@ mod tests {
 
     #[test]
     fn test_markdown_heading_spans() {
-        let buffer = EditorBuffer::new("# Heading 1\n## Heading 2\nplain text");
+        let buffer = EditorBuffer::new("# Heading 1\n## Heading 2\nplain text\n---");
         let highlighter = MarkdownHighlighter::new();
 
         let spans1 = highlighter.highlight_line(&buffer, 0, "# Heading 1");
@@ -372,11 +428,16 @@ mod tests {
         assert_eq!(spans1[0].style, StyleValue::Tag(HighlightTag::Heading1));
 
         let spans2 = highlighter.highlight_line(&buffer, 1, "## Heading 2");
-        assert_eq!(spans2.len(), 1);
-        assert_eq!(spans2[0].style, StyleValue::Tag(HighlightTag::Heading2));
+        assert_eq!(spans2.len(), 2);
+        assert_eq!(spans2[0].style, StyleValue::Tag(HighlightTag::Dimmed));
+        assert_eq!(spans2[1].style, StyleValue::Tag(HighlightTag::Heading2));
 
         let spans3 = highlighter.highlight_line(&buffer, 2, "plain text");
         assert!(spans3.is_empty());
+
+        let spans4 = highlighter.highlight_line(&buffer, 3, "---");
+        assert_eq!(spans4.len(), 1);
+        assert_eq!(spans4[0].style, StyleValue::Tag(HighlightTag::Dimmed));
     }
 
     #[test]

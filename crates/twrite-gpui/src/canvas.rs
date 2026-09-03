@@ -18,6 +18,8 @@ pub struct LineMetrics {
     pub is_quote: bool,
     /// Whether this line is part of a fenced code block.
     pub is_code_block: bool,
+    /// Whether this line is a thematic divider break (---, ***, ___).
+    pub is_thematic_break: bool,
 }
 
 impl LineMetrics {
@@ -81,11 +83,17 @@ impl LineMetrics {
                         && matches!(s.style, StyleValue::Tag(HighlightTag::Code))
                 }));
 
+        let trimmed_break = trimmed.trim_end();
+        let is_thematic_break =
+            (trimmed_break == "---" || trimmed_break == "***" || trimmed_break == "___")
+                && line_text.len() >= 3;
+
         Self {
             font_size,
             line_height,
             is_quote,
             is_code_block,
+            is_thematic_break,
         }
     }
 }
@@ -191,6 +199,7 @@ struct PreparedLine {
     line_height: Pixels,
     quote_bar_quad: Option<PaintQuad>,
     code_block_bg_quad: Option<PaintQuad>,
+    thematic_break_quad: Option<PaintQuad>,
     empty_selection_quad: Option<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
 }
@@ -379,6 +388,17 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
+                    let thematic_break_quad = if metrics.is_thematic_break {
+                        let width = (bounds.size.width - gutter_width - px(24.0)).max(px(0.0));
+                        let line_y = current_y + metrics.line_height / 2.0;
+                        Some(fill(
+                            Bounds::new(point(text_origin_x, line_y), size(width, px(1.0))),
+                            theme.syntax.punctuation,
+                        ))
+                    } else {
+                        None
+                    };
+
                     let cursor_quad = if cursor_point.row == row {
                         let col_in_line = cursor_offset
                             .saturating_sub(line_start_byte)
@@ -462,6 +482,7 @@ impl RenderOnce for EditorCanvas {
                         line_height: metrics.line_height,
                         quote_bar_quad,
                         code_block_bg_quad,
+                        thematic_break_quad,
                         empty_selection_quad,
                         cursor_quad,
                     });
@@ -482,11 +503,16 @@ impl RenderOnce for EditorCanvas {
                 window.paint_quad(prepaint.background_quad);
 
                 for line in prepaint.lines {
+                    let is_break = line.thematic_break_quad.is_some();
+
                     if let Some(code_bg) = line.code_block_bg_quad {
                         window.paint_quad(code_bg);
                     }
                     if let Some(quote_bar) = line.quote_bar_quad {
                         window.paint_quad(quote_bar);
+                    }
+                    if let Some(thematic_break) = line.thematic_break_quad {
+                        window.paint_quad(thematic_break);
                     }
 
                     if let Some((origin, shaped_num)) = line.gutter_num {
@@ -500,14 +526,17 @@ impl RenderOnce for EditorCanvas {
                         );
                     }
 
-                    let _ = line.text_line.paint_background(
-                        line.text_origin,
-                        line.line_height,
-                        TextAlign::Left,
-                        None,
-                        window,
-                        cx,
-                    );
+                    if !is_break {
+                        let _ = line.text_line.paint_background(
+                            line.text_origin,
+                            line.line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
+                    }
+
                     if let Some(empty_sel) = line.empty_selection_quad {
                         window.paint_quad(empty_sel);
                     }
@@ -516,14 +545,16 @@ impl RenderOnce for EditorCanvas {
                         window.paint_quad(cursor_quad);
                     }
 
-                    let _ = line.text_line.paint(
-                        line.text_origin,
-                        line.line_height,
-                        TextAlign::Left,
-                        None,
-                        window,
-                        cx,
-                    );
+                    if !is_break {
+                        let _ = line.text_line.paint(
+                            line.text_origin,
+                            line.line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
+                    }
                 }
             },
         )

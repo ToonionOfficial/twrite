@@ -140,15 +140,13 @@ Welcome to the **TWrite Markdown** editor engine!
 - Links like [TWrite GitHub](https://github.com/ToonionOfficial/twrite) with `Ctrl + K`
 - Inline code spans with `code background chips`
 
-### Interactive Task Lists (Press Ctrl+Enter to toggle)
+### Interactive Task Lists (Click checkbox or press Ctrl+Enter)
 - [x] Fast rope-backed text buffer
-- [x] Extensible hook architecture
-- [ ] Try toggling this task with Ctrl+Enter!
-- [ ] Press Enter on this item to auto-continue the list
+- [x] Focus-aware marker dimming
+- [ ] Click this checkbox directly with your mouse!
+- [ ] Try toggling with Ctrl+Enter!
 
-### Numbered Lists (Smart auto-increment)
-1. First item (press Enter at the end of this line)
-2. Second item
+---
 
 ### Code Blocks
 ```rust
@@ -157,7 +155,7 @@ fn main() {
 }
 ```
 
-> Blockquotes are supported and rendered with distinct styling.
+> Blockquotes are rendered with a sleek vertical accent bar.
 ";
 
                 let editor = cx.new(|cx| {

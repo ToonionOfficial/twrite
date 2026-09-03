@@ -89,6 +89,8 @@ pub enum HighlightTag {
     Dialogue,
     /// Story scene or branch navigation choice.
     Choice,
+    /// Dimmed or concealed syntax delimiters (e.g. inactive markdown markers).
+    Dimmed,
 }
 
 /// Direct styling attributes for a span of text.

@@ -691,6 +691,37 @@ impl Editor {
         let offset = self.offset_for_position(event.position, window);
         self.buffer.set_cursor_offset(offset);
 
+        let cursor_pt = self.buffer.cursor_point();
+        let line = self.buffer.line_to_string(cursor_pt.row);
+        let trimmed = line.trim_start();
+        let indent = line.len() - trimmed.len();
+        let is_task_empty = trimmed.starts_with("- [ ] ") || trimmed.starts_with("* [ ] ");
+        let is_task_checked = trimmed.starts_with("- [x] ")
+            || trimmed.starts_with("* [x] ")
+            || trimmed.starts_with("- [X] ");
+
+        if !event.modifiers.shift && (is_task_empty || is_task_checked) {
+            let line_start = self
+                .buffer
+                .point_to_offset(BufferPoint::new(cursor_pt.row, 0));
+            let col = offset.saturating_sub(line_start);
+            if col >= indent && col <= indent + 5 {
+                let check_offset = line_start + indent + 3;
+                let new_char = if is_task_empty { "x" } else { " " };
+                self.buffer
+                    .replace_range(check_offset..check_offset + 1, new_char);
+                self.buffer.set_cursor_offset(check_offset + 2);
+                self.selection = None;
+                self.is_selecting = false;
+                for hook in &mut self.hooks {
+                    hook.after_edit(&mut self.buffer);
+                }
+                self.scroll_to_cursor(Some(window));
+                cx.notify();
+                return;
+            }
+        }
+
         if event.modifiers.shift {
             if let Some(sel) = self.selection {
                 self.selection = Some(Selection::range(sel.anchor, offset));
