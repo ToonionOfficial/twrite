@@ -59,9 +59,9 @@ impl Default for SyntaxTheme {
             comment: rgb(0x6c7086).into(),
             operator: rgb(0x89dceb).into(),
             punctuation: rgb(0x9399b2).into(),
-            heading1: rgb(0xf38ba8).into(),
-            heading2: rgb(0xfab387).into(),
-            heading3: rgb(0xf9e2af).into(),
+            heading1: rgb(0xffb959).into(),
+            heading2: rgb(0xffb959).into(),
+            heading3: rgb(0xffb959).into(),
             bold: rgb(0xcdd6f4).into(),
             italic: rgb(0xb4befe).into(),
             code: rgb(0xf5c2e7).into(),
@@ -147,12 +147,12 @@ impl EditorTheme {
             HighlightTag::Comment => self.syntax.comment,
             HighlightTag::Operator => self.syntax.operator,
             HighlightTag::Punctuation => self.syntax.punctuation,
-            HighlightTag::Heading1 => self.syntax.heading1,
-            HighlightTag::Heading2 => self.syntax.heading2,
-            HighlightTag::Heading3
+            HighlightTag::Heading1
+            | HighlightTag::Heading2
+            | HighlightTag::Heading3
             | HighlightTag::Heading4
             | HighlightTag::Heading5
-            | HighlightTag::Heading6 => self.syntax.heading3,
+            | HighlightTag::Heading6 => self.syntax.heading1,
             HighlightTag::Bold => self.syntax.bold,
             HighlightTag::Italic => self.syntax.italic,
             HighlightTag::Code => self.syntax.code,
