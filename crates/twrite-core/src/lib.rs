@@ -4,6 +4,7 @@ pub mod history;
 pub mod hook;
 pub mod movement;
 pub mod selection;
+pub mod syntax;
 
 pub use buffer::EditorBuffer;
 pub use coordinates::Point;
@@ -13,6 +14,10 @@ pub use movement::{
     find_prev_word_start,
 };
 pub use selection::Selection;
+pub use syntax::{
+    HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment, SyntaxHighlighter, TextStyle,
+    UnderlineDecoration, split_line_intervals,
+};
 
 #[cfg(test)]
 mod tests {

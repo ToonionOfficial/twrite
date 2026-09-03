@@ -1,7 +1,101 @@
 use gpui::*;
-use twrite_core::Point as BufferPoint;
+use twrite_core::{Point as BufferPoint, StyleSpan, UnderlineDecoration, split_line_intervals};
 
 use crate::editor::Editor;
+use crate::theme::EditorTheme;
+
+/// Builds styled text runs for a single line by blending syntax spans and active selection.
+pub fn build_line_text_runs(
+    line_text: &str,
+    spans: &[StyleSpan],
+    selection_line_range: Option<(usize, usize)>,
+    font: &Font,
+    theme: &EditorTheme,
+) -> Vec<TextRun> {
+    if line_text.is_empty() {
+        return Vec::new();
+    }
+
+    let segments = split_line_intervals(line_text.len(), spans, selection_line_range);
+    let mut runs = Vec::with_capacity(segments.len());
+
+    for segment in segments {
+        let resolved = segment.style.map(|s| theme.resolve_style(s));
+
+        let color = resolved
+            .as_ref()
+            .map(|r| r.color)
+            .unwrap_or(theme.foreground);
+        let background_color = if segment.is_selected {
+            Some(theme.selection)
+        } else {
+            resolved.as_ref().and_then(|r| r.background)
+        };
+
+        let mut run_font = font.clone();
+        if let Some(r) = resolved.as_ref() {
+            if r.bold {
+                run_font.weight = FontWeight::BOLD;
+            }
+            if r.italic {
+                run_font.style = FontStyle::Italic;
+            }
+        }
+
+        let underline = resolved
+            .as_ref()
+            .and_then(|r| r.underline)
+            .map(|u| match u {
+                UnderlineDecoration::Solid => UnderlineStyle {
+                    color: Some(color),
+                    thickness: px(1.0),
+                    wavy: false,
+                },
+                UnderlineDecoration::Wavy => UnderlineStyle {
+                    color: Some(theme.syntax.error),
+                    thickness: px(1.2),
+                    wavy: true,
+                },
+            });
+
+        let strikethrough = resolved.as_ref().and_then(|r| {
+            if r.strikethrough {
+                Some(StrikethroughStyle {
+                    color: Some(color),
+                    thickness: px(1.0),
+                })
+            } else {
+                None
+            }
+        });
+
+        runs.push(TextRun {
+            len: segment.range.end - segment.range.start,
+            font: run_font,
+            color,
+            background_color,
+            underline,
+            strikethrough,
+        });
+    }
+
+    let mut merged: Vec<TextRun> = Vec::with_capacity(runs.len());
+    for run in runs {
+        if let Some(last) = merged.last_mut()
+            && last.font == run.font
+            && last.color == run.color
+            && last.background_color == run.background_color
+            && last.underline == run.underline
+            && last.strikethrough == run.strikethrough
+        {
+            last.len += run.len;
+            continue;
+        }
+        merged.push(run);
+    }
+
+    merged
+}
 
 /// Data computed during prepaint for each visible line
 struct PreparedLine {
@@ -86,7 +180,6 @@ impl RenderOnce for EditorCanvas {
                     let line_start_byte = editor.buffer.point_to_offset(BufferPoint::new(row, 0));
                     let line_end_byte = line_start_byte + line_text.len();
 
-                    // Line number
                     let gutter_num = if config.line_numbers {
                         let is_cursor_row = cursor_point.row == row;
                         let line_num_str = format!("{:>3}", row + 1);
@@ -115,67 +208,39 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    // Shape line content with selection background
-                    let mut runs = Vec::new();
-                    if !line_text.is_empty() {
-                        let mut selected_range_in_line = None;
-                        if let Some(sel) = selection {
-                            let selection_range = sel.byte_range();
-                            if selection_range.end > line_start_byte
-                                && selection_range.start < line_end_byte
-                            {
-                                let sel_start = selection_range
-                                    .start
-                                    .saturating_sub(line_start_byte)
-                                    .min(line_text.len());
-                                let sel_end =
-                                    (selection_range.end - line_start_byte).min(line_text.len());
-                                if sel_end > sel_start {
-                                    selected_range_in_line = Some((sel_start, sel_end));
-                                }
-                            }
-                        }
+                    let spans = if let Some(ref highlighter) = editor.highlighter {
+                        highlighter.highlight_line(&editor.buffer, row, line_text)
+                    } else {
+                        Vec::new()
+                    };
 
-                        if let Some((sel_start, sel_end)) = selected_range_in_line {
-                            if sel_start > 0 {
-                                runs.push(TextRun {
-                                    len: sel_start,
-                                    font: font.clone(),
-                                    color: theme.foreground,
-                                    background_color: None,
-                                    underline: None,
-                                    strikethrough: None,
-                                });
-                            }
-                            runs.push(TextRun {
-                                len: sel_end - sel_start,
-                                font: font.clone(),
-                                color: theme.foreground,
-                                background_color: Some(theme.selection),
-                                underline: None,
-                                strikethrough: None,
-                            });
-                            if sel_end < line_text.len() {
-                                runs.push(TextRun {
-                                    len: line_text.len() - sel_end,
-                                    font: font.clone(),
-                                    color: theme.foreground,
-                                    background_color: None,
-                                    underline: None,
-                                    strikethrough: None,
-                                });
+                    let selection_line_range = if let Some(sel) = selection {
+                        let sel_range = sel.byte_range();
+                        if sel_range.end > line_start_byte && sel_range.start < line_end_byte {
+                            let sel_start = sel_range
+                                .start
+                                .saturating_sub(line_start_byte)
+                                .min(line_text.len());
+                            let sel_end = (sel_range.end - line_start_byte).min(line_text.len());
+                            if sel_end > sel_start {
+                                Some((sel_start, sel_end))
+                            } else {
+                                None
                             }
                         } else {
-                            runs.push(TextRun {
-                                len: line_text.len(),
-                                font: font.clone(),
-                                color: theme.foreground,
-                                background_color: None,
-                                underline: None,
-                                strikethrough: None,
-                            });
+                            None
                         }
-                    }
+                    } else {
+                        None
+                    };
+
+                    let runs = build_line_text_runs(
+                        line_text,
+                        &spans,
+                        selection_line_range,
+                        &font,
+                        &theme,
+                    );
 
                     let text_line = window
                         .text_system()
@@ -217,7 +282,6 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    // Empty line selection highlight
                     let empty_selection_quad = if line_text.is_empty() {
                         if let Some(sel) = selection {
                             let sel_range = sel.byte_range();
@@ -258,11 +322,9 @@ impl RenderOnce for EditorCanvas {
                 }
             },
             move |_bounds, prepaint, window, cx| {
-                // Background
                 window.paint_quad(prepaint.background_quad);
 
                 for line in prepaint.lines {
-                    // Line number
                     if let Some((origin, shaped_num)) = line.gutter_num {
                         let _ = shaped_num.paint(
                             origin,
@@ -274,7 +336,6 @@ impl RenderOnce for EditorCanvas {
                         );
                     }
 
-                    // Selection highlight (under text)
                     let _ = line.text_line.paint_background(
                         line.text_origin,
                         prepaint.line_height,
@@ -287,12 +348,10 @@ impl RenderOnce for EditorCanvas {
                         window.paint_quad(empty_sel);
                     }
 
-                    // Cursor
                     if let Some(cursor_quad) = line.cursor_quad {
                         window.paint_quad(cursor_quad);
                     }
 
-                    // Text
                     let _ = line.text_line.paint(
                         line.text_origin,
                         prepaint.line_height,
