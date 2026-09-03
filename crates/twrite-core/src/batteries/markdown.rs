@@ -168,17 +168,17 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         }
 
         let heading_prefix = if trimmed_start.starts_with("# ") {
-            Some((2, HighlightTag::Heading1))
+            Some((2, HighlightTag::Heading(1)))
         } else if trimmed_start.starts_with("## ") {
-            Some((3, HighlightTag::Heading2))
+            Some((3, HighlightTag::Heading(2)))
         } else if trimmed_start.starts_with("### ") {
-            Some((4, HighlightTag::Heading3))
+            Some((4, HighlightTag::Heading(3)))
         } else if trimmed_start.starts_with("#### ") {
-            Some((5, HighlightTag::Heading4))
+            Some((5, HighlightTag::Heading(4)))
         } else if trimmed_start.starts_with("##### ") {
-            Some((6, HighlightTag::Heading5))
+            Some((6, HighlightTag::Heading(5)))
         } else if trimmed_start.starts_with("###### ") {
-            Some((7, HighlightTag::Heading6))
+            Some((7, HighlightTag::Heading(6)))
         } else {
             None
         };
@@ -719,12 +719,12 @@ mod tests {
 
         let spans1 = highlighter.highlight_line(&buffer, 0, "# Heading 1");
         assert_eq!(spans1.len(), 1);
-        assert_eq!(spans1[0].style, StyleValue::Tag(HighlightTag::Heading1));
+        assert_eq!(spans1[0].style, StyleValue::Tag(HighlightTag::Heading(1)));
 
         let spans2 = highlighter.highlight_line(&buffer, 1, "## Heading 2");
         assert_eq!(spans2.len(), 2);
         assert_eq!(spans2[0].style, StyleValue::Tag(HighlightTag::Dimmed));
-        assert_eq!(spans2[1].style, StyleValue::Tag(HighlightTag::Heading2));
+        assert_eq!(spans2[1].style, StyleValue::Tag(HighlightTag::Heading(2)));
 
         let spans3 = highlighter.highlight_line(&buffer, 2, "plain text");
         assert!(spans3.is_empty());
@@ -736,6 +736,26 @@ mod tests {
             StyleValue::Tag(HighlightTag::HorizontalRule)
         );
         assert_eq!(spans4[1].style, StyleValue::Tag(HighlightTag::Dimmed));
+    }
+
+    #[test]
+    fn test_markdown_heading_levels_4_to_6() {
+        let buffer = EditorBuffer::new("#### H4\n##### H5\n###### H6");
+        let highlighter = MarkdownHighlighter::new();
+
+        for (row, text, level) in [
+            (0, "#### H4", 4u8),
+            (1, "##### H5", 5u8),
+            (2, "###### H6", 6u8),
+        ] {
+            let spans = highlighter.highlight_line(&buffer, row, text);
+            assert!(
+                spans
+                    .iter()
+                    .any(|s| s.style == StyleValue::Tag(HighlightTag::Heading(level))),
+                "row {row} must emit Heading({level})"
+            );
+        }
     }
 
     #[test]
@@ -831,7 +851,7 @@ mod tests {
         assert_eq!(spans_hidden[0].style, StyleValue::Tag(HighlightTag::Hidden));
         assert_eq!(
             spans_hidden[1].style,
-            StyleValue::Tag(HighlightTag::Heading2)
+            StyleValue::Tag(HighlightTag::Heading(2))
         );
 
         let off_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
@@ -840,7 +860,10 @@ mod tests {
         });
         let spans_off = off_highlighter.highlight_line(&buffer, 1, "## Heading 2");
         assert_eq!(spans_off.len(), 1);
-        assert_eq!(spans_off[0].style, StyleValue::Tag(HighlightTag::Heading2));
+        assert_eq!(
+            spans_off[0].style,
+            StyleValue::Tag(HighlightTag::Heading(2))
+        );
     }
 
     #[test]

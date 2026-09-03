@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use gpui::{Hsla, hsla, rgb};
 use twrite_core::{HighlightTag, Rgba, StyleValue, UnderlineDecoration};
 
@@ -36,12 +38,9 @@ pub struct SyntaxTheme {
     pub code_bg: Hsla,
     /// Color for hyperlink text.
     pub link: Hsla,
-    /// Color for character speakers in story scripts.
-    pub speaker: Hsla,
-    /// Color for dialogue text in story scripts.
-    pub dialogue: Hsla,
-    /// Color for choice / branching prompts in story scripts.
-    pub choice: Hsla,
+    /// Registered colors for `HighlightTag::Custom` names. Unregistered names
+    /// fall back to the editor foreground.
+    pub custom: HashMap<&'static str, Hsla>,
     /// Color for diagnostic error underlines and squiggles.
     pub error: Hsla,
     /// Color for diagnostic warning underlines and squiggles.
@@ -67,12 +66,17 @@ impl Default for SyntaxTheme {
             code: rgb(0xf5c2e7).into(),
             code_bg: hsla(0.65, 0.4, 0.6, 0.15),
             link: rgb(0x89b4fa).into(),
-            speaker: rgb(0xf9e2af).into(),
-            dialogue: rgb(0xa6e3a1).into(),
-            choice: rgb(0xcba6f7).into(),
+            custom: HashMap::new(),
             error: rgb(0xf38ba8).into(),
             warning: rgb(0xf9e2af).into(),
         }
+    }
+}
+
+impl SyntaxTheme {
+    /// Registers a color for a `HighlightTag::Custom` name (e.g. `"speaker"`).
+    pub fn set_custom_tag_color(&mut self, name: &'static str, color: Hsla) {
+        self.custom.insert(name, color);
     }
 }
 
@@ -147,19 +151,19 @@ impl EditorTheme {
             HighlightTag::Comment => self.syntax.comment,
             HighlightTag::Operator => self.syntax.operator,
             HighlightTag::Punctuation => self.syntax.punctuation,
-            HighlightTag::Heading1
-            | HighlightTag::Heading2
-            | HighlightTag::Heading3
-            | HighlightTag::Heading4
-            | HighlightTag::Heading5
-            | HighlightTag::Heading6 => self.syntax.heading1,
+            HighlightTag::Heading(1) => self.syntax.heading1,
+            HighlightTag::Heading(2) => self.syntax.heading2,
+            HighlightTag::Heading(_) => self.syntax.heading3,
             HighlightTag::Bold => self.syntax.bold,
             HighlightTag::Italic => self.syntax.italic,
             HighlightTag::Code => self.syntax.code,
             HighlightTag::Link => self.syntax.link,
-            HighlightTag::Speaker => self.syntax.speaker,
-            HighlightTag::Dialogue => self.syntax.dialogue,
-            HighlightTag::Choice => self.syntax.choice,
+            HighlightTag::Custom(name) => self
+                .syntax
+                .custom
+                .get(name)
+                .copied()
+                .unwrap_or(self.foreground),
             HighlightTag::Dimmed => {
                 let mut c = self.syntax.comment;
                 c.a = 0.25;
@@ -182,16 +186,7 @@ impl EditorTheme {
         match style_value {
             StyleValue::Tag(tag) => {
                 let color = self.tag_color(*tag);
-                let bold = matches!(
-                    tag,
-                    HighlightTag::Heading1
-                        | HighlightTag::Heading2
-                        | HighlightTag::Heading3
-                        | HighlightTag::Heading4
-                        | HighlightTag::Heading5
-                        | HighlightTag::Heading6
-                        | HighlightTag::Bold
-                );
+                let bold = matches!(tag, HighlightTag::Heading(_) | HighlightTag::Bold);
                 let italic = matches!(tag, HighlightTag::Italic | HighlightTag::Comment);
                 let background = if matches!(tag, HighlightTag::Code) {
                     Some(self.syntax.code_bg)

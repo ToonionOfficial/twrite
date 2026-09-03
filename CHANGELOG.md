@@ -21,11 +21,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `pick_family` choosing the first candidate with bold + italic faces at paint
   time; explicit `font_family` is trusted verbatim; `Editor::selected_font_family`
   and family-aware status reporting; examples use the default auto-select path.
+- **Tag extensibility**: `HighlightTag::Heading(u8)` levels and open
+  `HighlightTag::Custom(&'static str)` extension point with
+  `SyntaxTheme::set_custom_tag_color` (unregistered names fall back to the
+  foreground); heading metrics use a single min-level scan.
 
 ### Changed
 - **BREAKING**: `Editor::offset_for_position` now takes `&mut self`.
 - **BREAKING**: `VisibleLineLayout` gains `task_state`; `Editor` gains `layout_cache` and `highlighter_rev` (struct literals need updating).
 - **BREAKING**: new `HighlightTag` variants (exhaustive matches need new arms); theme maps them to comment/punctuation/string.
+- **BREAKING**: `HighlightTag::{Heading1..Heading6, Speaker, Dialogue, Choice}` removed
+  in favor of `Heading(u8)` and `Custom(&'static str)`; `SyntaxTheme::{speaker, dialogue, choice}`
+  fields removed (register custom colors instead).
 - `LineMetrics::for_line` derives quote/divider/task state solely from tags (no raw string checks); code-block detection via full-line `Code` spans.
 - Hit-testing (`offset_for_position`, link and checkbox lookup) uses binary search over visible lines.
 - Click handling dispatches task toggles to hooks with `after_edit` / `on_selection_change` notifications; cursor offset preserved.

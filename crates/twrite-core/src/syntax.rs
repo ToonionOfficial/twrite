@@ -45,6 +45,11 @@ pub enum UnderlineDecoration {
 }
 
 /// Semantic categorization for syntax tokens.
+///
+/// The enum is split into namespaces: standard code tokens, universal document
+/// markup understood by the canvas (sizing, decorations), visual concealment
+/// mechanics, and an open extension point for custom languages. Batteries and
+/// custom highlighters must only emit these variants — never add new ones.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum HighlightTag {
     /// Programming language keywords.
@@ -63,18 +68,9 @@ pub enum HighlightTag {
     Operator,
     /// Punctuation symbols.
     Punctuation,
-    /// Markdown heading level 1.
-    Heading1,
-    /// Markdown heading level 2.
-    Heading2,
-    /// Markdown heading level 3.
-    Heading3,
-    /// Markdown heading level 4.
-    Heading4,
-    /// Markdown heading level 5.
-    Heading5,
-    /// Markdown heading level 6.
-    Heading6,
+    /// Document heading; level is `1..=6`. Out-of-range levels render bold at
+    /// the base size (no scaling).
+    Heading(u8),
     /// Bold text.
     Bold,
     /// Italic text.
@@ -83,16 +79,6 @@ pub enum HighlightTag {
     Code,
     /// Hyperlinks.
     Link,
-    /// Story character or speaker identifier.
-    Speaker,
-    /// Story dialogue text.
-    Dialogue,
-    /// Story scene or branch navigation choice.
-    Choice,
-    /// Dimmed or concealed syntax delimiters (e.g. inactive markdown markers).
-    Dimmed,
-    /// Fully concealed / hidden syntax delimiters (transparent on inactive lines).
-    Hidden,
     /// Structural tag: line is a blockquote (e.g. `> `). Used for decorations, not text color.
     Blockquote,
     /// Structural tag: line is a thematic break / horizontal rule. Used for decorations.
@@ -101,6 +87,15 @@ pub enum HighlightTag {
     TaskUnchecked,
     /// Structural tag: line contains a checked task marker.
     TaskChecked,
+    /// Dimmed or concealed syntax delimiters (e.g. inactive document markers).
+    Dimmed,
+    /// Fully concealed / hidden syntax delimiters (transparent on inactive lines).
+    Hidden,
+    /// Open extension for custom languages and parsers (dotted names such as
+    /// `"speaker"` or `"sql.table"`). Unregistered names fall back to the
+    /// theme foreground; register colors via
+    /// `SyntaxTheme::set_custom_tag_color`.
+    Custom(&'static str),
 }
 
 /// Direct styling attributes for a span of text.
@@ -424,7 +419,7 @@ mod tests {
             line_text: &str,
         ) -> Vec<StyleSpan> {
             if line_text.starts_with("# ") {
-                vec![StyleSpan::tag(0..line_text.len(), HighlightTag::Heading1)]
+                vec![StyleSpan::tag(0..line_text.len(), HighlightTag::Heading(1))]
             } else {
                 vec![]
             }
@@ -439,7 +434,7 @@ mod tests {
         let spans_0 = highlighter.highlight_line(&buffer, 0, "# Title");
         assert_eq!(spans_0.len(), 1);
         assert_eq!(spans_0[0].range, 0..7);
-        assert_eq!(spans_0[0].style, StyleValue::Tag(HighlightTag::Heading1));
+        assert_eq!(spans_0[0].style, StyleValue::Tag(HighlightTag::Heading(1)));
 
         let spans_1 = highlighter.highlight_line(&buffer, 1, "Body");
         assert!(spans_1.is_empty());
@@ -522,7 +517,7 @@ mod tests {
         let line1 = "# hello";
         let spans1 = vec![
             StyleSpan::tag(0..2, HighlightTag::Hidden),
-            StyleSpan::tag(2..7, HighlightTag::Heading1),
+            StyleSpan::tag(2..7, HighlightTag::Heading(1)),
         ];
         let concealed1 = ConcealedLine::build(line1, &spans1);
         assert_eq!(concealed1.display_text, "hello");
@@ -530,7 +525,7 @@ mod tests {
         assert_eq!(concealed1.spans[0].range, 0..5);
         assert_eq!(
             concealed1.spans[0].style,
-            StyleValue::Tag(HighlightTag::Heading1)
+            StyleValue::Tag(HighlightTag::Heading(1))
         );
         assert_eq!(concealed1.display_to_source(0), 2);
         assert_eq!(concealed1.source_to_display(2), 0);
@@ -538,7 +533,7 @@ mod tests {
         let line2 = "## hello";
         let spans2 = vec![
             StyleSpan::tag(0..3, HighlightTag::Hidden),
-            StyleSpan::tag(3..8, HighlightTag::Heading2),
+            StyleSpan::tag(3..8, HighlightTag::Heading(2)),
         ];
         let concealed2 = ConcealedLine::build(line2, &spans2);
         assert_eq!(concealed2.display_text, "hello");
@@ -546,7 +541,7 @@ mod tests {
         assert_eq!(concealed2.spans[0].range, 0..5);
         assert_eq!(
             concealed2.spans[0].style,
-            StyleValue::Tag(HighlightTag::Heading2)
+            StyleValue::Tag(HighlightTag::Heading(2))
         );
         assert_eq!(concealed2.display_to_source(0), 3);
         assert_eq!(concealed2.source_to_display(3), 0);
