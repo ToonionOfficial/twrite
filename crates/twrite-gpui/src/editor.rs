@@ -403,7 +403,11 @@ impl Editor {
             }
 
             // Find the visible line containing pos.y
-            let target_line = match self.visible_lines.iter().find(|l| pos.y >= l.top && pos.y < l.bottom) {
+            let target_line = match self
+                .visible_lines
+                .iter()
+                .find(|l| pos.y >= l.top && pos.y < l.bottom)
+            {
                 Some(l) => l,
                 None => last,
             };
@@ -444,7 +448,8 @@ impl Editor {
             );
 
             let wrap_width = if self.config.line_wrap {
-                let available = bounds.size.width - (target_line.text_origin_x - bounds.left()) - px(12.0);
+                let available =
+                    bounds.size.width - (target_line.text_origin_x - bounds.left()) - px(12.0);
                 Some(available.max(px(50.0)))
             } else {
                 None
@@ -824,7 +829,9 @@ impl Editor {
         self.focus_handle.focus(window, cx);
 
         // If clicking on a hyperlink, open the URL in the default browser
-        if !event.modifiers.shift && let Some(url) = self.link_at_position(event.position) {
+        if !event.modifiers.shift
+            && let Some(url) = self.link_at_position(event.position)
+        {
             cx.open_url(&url);
             return;
         }
@@ -841,9 +848,10 @@ impl Editor {
         };
 
         if interactive_tasks && !event.modifiers.shift {
-            let clicked_task_line = self.visible_lines.iter().find(|l| {
-                event.position.y >= l.top && event.position.y < l.bottom
-            });
+            let clicked_task_line = self
+                .visible_lines
+                .iter()
+                .find(|l| event.position.y >= l.top && event.position.y < l.bottom);
 
             if let Some(target_line) = clicked_task_line {
                 let is_over = self.is_position_over_task_checkbox(event.position, window);
@@ -851,7 +859,8 @@ impl Editor {
                     let raw_line = self.buffer.line_to_string(target_line.row);
                     let trimmed = raw_line.trim_start();
                     let indent = raw_line.len() - trimmed.len();
-                    let is_task_empty = trimmed.starts_with("- [ ] ") || trimmed.starts_with("* [ ] ");
+                    let is_task_empty =
+                        trimmed.starts_with("- [ ] ") || trimmed.starts_with("* [ ] ");
                     let is_task_checked = trimmed.starts_with("- [x] ")
                         || trimmed.starts_with("* [x] ")
                         || trimmed.starts_with("- [X] ")
@@ -998,15 +1007,18 @@ impl Render for Editor {
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, _, cx| {
-                this.is_selecting = false;
-                let changed = this.is_hovering_task || this.hovered_link.is_some();
-                this.is_hovering_task = false;
-                this.hovered_link = None;
-                if changed {
-                    cx.notify();
-                }
-            }))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    this.is_selecting = false;
+                    let changed = this.is_hovering_task || this.hovered_link.is_some();
+                    this.is_hovering_task = false;
+                    this.hovered_link = None;
+                    if changed {
+                        cx.notify();
+                    }
+                }),
+            )
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
             .child(EditorCanvas::new(cx.entity().clone()))

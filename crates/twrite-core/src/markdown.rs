@@ -193,7 +193,11 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         if trimmed_start.starts_with("> ") || trimmed_start == ">" {
             let indent = line_text.len() - trimmed_start.len();
             if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
-                let delim_len = if trimmed_start.starts_with("> ") { 2 } else { 1 };
+                let delim_len = if trimmed_start.starts_with("> ") {
+                    2
+                } else {
+                    1
+                };
                 spans.push(StyleSpan::tag(indent..indent + delim_len, delim_tag));
             } else {
                 spans.push(StyleSpan::tag(indent..indent + 1, HighlightTag::Comment));
@@ -217,8 +221,15 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             let indent = line_text.len() - trimmed_start.len();
             if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
                 if delim_tag == HighlightTag::Hidden {
-                    let marker_len = if trimmed_start.len() >= 6 { 6 } else { trimmed_start.len() };
-                    spans.push(StyleSpan::tag(indent..indent + marker_len, HighlightTag::Hidden));
+                    let marker_len = if trimmed_start.len() >= 6 {
+                        6
+                    } else {
+                        trimmed_start.len()
+                    };
+                    spans.push(StyleSpan::tag(
+                        indent..indent + marker_len,
+                        HighlightTag::Hidden,
+                    ));
                 } else {
                     spans.push(StyleSpan::tag(indent..indent + 2, delim_tag));
                 }
@@ -337,17 +348,28 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                                     let label_start = start + 1;
                                     let label_end = start + bracket_idx;
                                     spans.push(StyleSpan::tag(start..label_start, delim_tag));
-                                    spans.push(StyleSpan::tag(label_start..label_end, HighlightTag::Link));
+                                    spans.push(StyleSpan::tag(
+                                        label_start..label_end,
+                                        HighlightTag::Link,
+                                    ));
                                     spans.push(StyleSpan::tag(label_end..end, delim_tag));
                                 } else if let Some(bracket_idx) = line_text[start..end].find("][") {
                                     let label_start = start + 1;
                                     let label_end = start + bracket_idx;
                                     spans.push(StyleSpan::tag(start..label_start, delim_tag));
-                                    spans.push(StyleSpan::tag(label_start..label_end, HighlightTag::Link));
+                                    spans.push(StyleSpan::tag(
+                                        label_start..label_end,
+                                        HighlightTag::Link,
+                                    ));
                                     spans.push(StyleSpan::tag(label_end..end, delim_tag));
-                                } else if line_text[start..end].starts_with('<') && line_text[start..end].ends_with('>') {
+                                } else if line_text[start..end].starts_with('<')
+                                    && line_text[start..end].ends_with('>')
+                                {
                                     spans.push(StyleSpan::tag(start..start + 1, delim_tag));
-                                    spans.push(StyleSpan::tag(start + 1..end - 1, HighlightTag::Link));
+                                    spans.push(StyleSpan::tag(
+                                        start + 1..end - 1,
+                                        HighlightTag::Link,
+                                    ));
                                     spans.push(StyleSpan::tag(end - 1..end, delim_tag));
                                 } else {
                                     spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
@@ -562,7 +584,9 @@ pub fn extract_markdown_links(line_text: &str) -> Vec<(Range<usize>, String)> {
                         let label_start = start + 1;
                         let label_end = start + bracket_idx;
                         links.push((label_start..label_end, dest_url));
-                    } else if line_text[start..end].starts_with('<') && line_text[start..end].ends_with('>') {
+                    } else if line_text[start..end].starts_with('<')
+                        && line_text[start..end].ends_with('>')
+                    {
                         links.push((start + 1..end - 1, dest_url));
                     } else {
                         links.push((start..end, dest_url));
@@ -752,14 +776,19 @@ mod tests {
         });
 
         // Buffer cursor is at 0 (row 0), so row 0 is active, full link visible
-        let spans_active = hidden_highlighter.highlight_line(&buffer, 0, "[Google](https://google.com)");
+        let spans_active =
+            hidden_highlighter.highlight_line(&buffer, 0, "[Google](https://google.com)");
         let concealed_active = ConcealedLine::build("[Google](https://google.com)", &spans_active);
-        assert_eq!(concealed_active.display_text, "[Google](https://google.com)");
+        assert_eq!(
+            concealed_active.display_text,
+            "[Google](https://google.com)"
+        );
 
         // Move cursor to row 1, row 0 becomes inactive
         let mut buffer_moved = buffer;
         buffer_moved.set_cursor_offset(30);
-        let spans_hidden = hidden_highlighter.highlight_line(&buffer_moved, 0, "[Google](https://google.com)");
+        let spans_hidden =
+            hidden_highlighter.highlight_line(&buffer_moved, 0, "[Google](https://google.com)");
         let concealed_hidden = ConcealedLine::build("[Google](https://google.com)", &spans_hidden);
         assert_eq!(concealed_hidden.display_text, "Google");
 

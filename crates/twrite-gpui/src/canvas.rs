@@ -390,37 +390,36 @@ impl RenderOnce for EditorCanvas {
                         && line_text.len() != concealed.display_text.len();
                     let is_checked_task = is_concealed_task && metrics.task_state == Some(true);
 
-                    let (task_checkbox_quad, line_text_origin_x) =
-                        if is_concealed_task {
-                            let checked = metrics.task_state.unwrap();
-                            let indent = line_text.len() - line_text.trim_start().len();
-                            let box_size = px(15.0);
-                            let box_x = text_origin_x + px((indent as f32) * 8.0);
-                            let box_y = current_y + (metrics.line_height - box_size) / 2.0;
+                    let (task_checkbox_quad, line_text_origin_x) = if is_concealed_task {
+                        let checked = metrics.task_state.unwrap();
+                        let indent = line_text.len() - line_text.trim_start().len();
+                        let box_size = px(15.0);
+                        let box_x = text_origin_x + px((indent as f32) * 8.0);
+                        let box_y = current_y + (metrics.line_height - box_size) / 2.0;
 
-                            if checked {
-                                let quad = fill(
-                                    Bounds::new(point(box_x, box_y), size(box_size, box_size)),
-                                    theme.syntax.function,
-                                )
-                                .corner_radii(px(3.5))
-                                .border_widths(px(1.5))
-                                .border_color(theme.syntax.function);
+                        if checked {
+                            let quad = fill(
+                                Bounds::new(point(box_x, box_y), size(box_size, box_size)),
+                                theme.syntax.function,
+                            )
+                            .corner_radii(px(3.5))
+                            .border_widths(px(1.5))
+                            .border_color(theme.syntax.function);
 
-                                (Some(quad), box_x + px(24.0))
-                            } else {
-                                let quad = fill(
-                                    Bounds::new(point(box_x, box_y), size(box_size, box_size)),
-                                    gpui::hsla(0.65, 0.4, 0.6, 0.1),
-                                )
-                                .corner_radii(px(3.5))
-                                .border_widths(px(1.5))
-                                .border_color(theme.syntax.comment);
-                                (Some(quad), box_x + px(24.0))
-                            }
+                            (Some(quad), box_x + px(24.0))
                         } else {
-                            (None, text_origin_x)
-                        };
+                            let quad = fill(
+                                Bounds::new(point(box_x, box_y), size(box_size, box_size)),
+                                gpui::hsla(0.65, 0.4, 0.6, 0.1),
+                            )
+                            .corner_radii(px(3.5))
+                            .border_widths(px(1.5))
+                            .border_color(theme.syntax.comment);
+                            (Some(quad), box_x + px(24.0))
+                        }
+                    } else {
+                        (None, text_origin_x)
+                    };
 
                     let runs = build_line_text_runs(
                         &concealed.display_text,
@@ -457,8 +456,10 @@ impl RenderOnce for EditorCanvas {
                             let disp_start = concealed.source_to_display(src_range.start);
                             let disp_end = concealed.source_to_display(src_range.end);
                             if disp_start < disp_end {
-                                let start_pt = text_line.position_for_index(disp_start, metrics.line_height);
-                                let end_pt = text_line.position_for_index(disp_end, metrics.line_height);
+                                let start_pt =
+                                    text_line.position_for_index(disp_start, metrics.line_height);
+                                let end_pt =
+                                    text_line.position_for_index(disp_end, metrics.line_height);
                                 if let (Some(s), Some(e)) = (start_pt, end_pt) {
                                     let width = if e.x > s.x { e.x - s.x } else { px(20.0) };
                                     visible_links.push(crate::editor::VisibleLink {

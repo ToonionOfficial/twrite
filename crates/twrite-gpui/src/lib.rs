@@ -63,7 +63,8 @@ mod tests {
         assert_eq!(runs_inline.len(), 1);
         assert_eq!(runs_inline[0].background_color, Some(theme.syntax.code_bg));
 
-        let runs_task_checked = build_line_text_runs("test", &spans, None, &font, &theme, false, true);
+        let runs_task_checked =
+            build_line_text_runs("test", &spans, None, &font, &theme, false, true);
         assert_eq!(runs_task_checked.len(), 1);
         assert!(runs_task_checked[0].strikethrough.is_some());
     }
@@ -84,7 +85,10 @@ mod tests {
     #[test]
     fn test_visible_link_layout() {
         let link = VisibleLink {
-            bounds: gpui::Bounds::new(gpui::point(px(50.0), px(20.0)), gpui::size(px(60.0), px(20.0))),
+            bounds: gpui::Bounds::new(
+                gpui::point(px(50.0), px(20.0)),
+                gpui::size(px(60.0), px(20.0)),
+            ),
             url: "https://example.com".to_string(),
         };
         assert!(link.bounds.contains(&gpui::point(px(60.0), px(25.0))));
