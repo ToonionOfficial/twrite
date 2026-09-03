@@ -61,11 +61,17 @@ impl RenderOnce for EditorCanvas {
                 };
 
                 let total_lines = editor.buffer.len_lines();
+                let total_bytes = editor.buffer.len_bytes();
                 let scroll_row = editor.scroll_row;
 
                 let cursor_offset = editor.buffer.cursor_offset();
                 let cursor_point = editor.buffer.cursor_point();
                 let selection = editor.selection;
+
+                let is_all_selected = selection.is_some_and(|s| {
+                    let range = s.byte_range();
+                    !s.is_empty() && range.start == 0 && range.end == total_bytes
+                });
 
                 let mut lines: Vec<PreparedLine> = Vec::new();
                 let mut current_y = bounds.top();
@@ -187,8 +193,7 @@ impl RenderOnce for EditorCanvas {
                     let line_visual_lines = text_line.wrap_boundaries.len() + 1;
                     let line_total_height = line_height * line_visual_lines;
 
-                    // Cursor Quad
-                    let cursor_quad = if cursor_point.row == row {
+                    let cursor_quad = if cursor_point.row == row && !is_all_selected {
                         let col_in_line = cursor_offset
                             .saturating_sub(line_start_byte)
                             .min(line_text.len());

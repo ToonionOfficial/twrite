@@ -96,6 +96,17 @@ impl Editor {
         false
     }
 
+    /// Scrolls the viewport upward by a given number of lines.
+    pub fn scroll_up(&mut self, count: usize) {
+        self.scroll_row = self.scroll_row.saturating_sub(count);
+    }
+
+    /// Scrolls the viewport downward by a given number of lines.
+    pub fn scroll_down(&mut self, count: usize) {
+        let total_lines = self.buffer.len_lines();
+        self.scroll_row = (self.scroll_row + count).min(total_lines.saturating_sub(1));
+    }
+
     pub fn move_cursor_to(&mut self, new_offset: usize, select: bool) {
         if select {
             let anchor = self
@@ -384,6 +395,16 @@ impl Editor {
                 }
                 "end" => {
                     self.move_cursor_to(self.buffer.len_bytes(), select);
+                }
+                "up" | "arrowup" => {
+                    self.scroll_up(1);
+                    cx.notify();
+                    return;
+                }
+                "down" | "arrowdown" => {
+                    self.scroll_down(1);
+                    cx.notify();
+                    return;
                 }
                 _ => {}
             }
