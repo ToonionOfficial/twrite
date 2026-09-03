@@ -93,6 +93,14 @@ pub enum HighlightTag {
     Dimmed,
     /// Fully concealed / hidden syntax delimiters (transparent on inactive lines).
     Hidden,
+    /// Structural tag: line is a blockquote (e.g. `> `). Used for decorations, not text color.
+    Blockquote,
+    /// Structural tag: line is a thematic break / horizontal rule. Used for decorations.
+    HorizontalRule,
+    /// Structural tag: line contains an unchecked task marker.
+    TaskUnchecked,
+    /// Structural tag: line contains a checked task marker.
+    TaskChecked,
 }
 
 /// Direct styling attributes for a span of text.
@@ -224,6 +232,19 @@ pub trait SyntaxHighlighter: Send + Sync + 'static {
     ///
     /// Ranges in the returned `StyleSpan`s are byte offsets relative to `line_text`.
     fn highlight_line(&self, buffer: &EditorBuffer, row: usize, line_text: &str) -> Vec<StyleSpan>;
+
+    /// Optional extraction of hyperlinks on this line (source byte range -> URL).
+    ///
+    /// The default implementation returns no links. Language plugins (e.g. Markdown)
+    /// override this to expose clickable ranges without the canvas knowing the syntax.
+    fn extract_links(
+        &self,
+        _buffer: &EditorBuffer,
+        _row: usize,
+        _line_text: &str,
+    ) -> Vec<(Range<usize>, String)> {
+        Vec::new()
+    }
 }
 
 /// A contiguous segment of text on a line with its resolved style and selection status.

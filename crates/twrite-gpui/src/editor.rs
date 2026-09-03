@@ -76,6 +76,9 @@ pub struct VisibleLineLayout {
     pub is_task_checkbox: bool,
     /// Left X position of the checkbox box.
     pub checkbox_box_x: Pixels,
+    /// Task state for this line, if the highlighter reports one.
+    /// `Some(false)` = unchecked, `Some(true)` = checked.
+    pub task_state: Option<bool>,
     /// Hyperlinks located on this line.
     pub links: Vec<VisibleLink>,
 }
@@ -159,7 +162,7 @@ impl Editor {
         self.config.markdown = config;
         self.set_highlighter(MarkdownHighlighter::with_config(config));
         self.add_hook(AutoPairsHook::new());
-        self.add_hook(MarkdownHook::new());
+        self.add_hook(MarkdownHook::with_config(config));
     }
 
     /// Loads document text from a file into the editor, resetting cursor and undo history.
@@ -429,12 +432,8 @@ impl Editor {
 
             let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
 
-            let is_concealed_task = target_line.is_task_checkbox;
-            let is_checked_task = is_concealed_task
-                && (line_text.trim_start().starts_with("- [x]")
-                    || line_text.trim_start().starts_with("- [X]")
-                    || line_text.trim_start().starts_with("* [x]")
-                    || line_text.trim_start().starts_with("* [X]"));
+            let is_checked_task = target_line.task_state == Some(true)
+                && line_text.len() != concealed.display_text.len();
 
             let font = window.text_style().font();
             let runs = build_line_text_runs(
@@ -770,21 +769,6 @@ impl Editor {
     }
 
     fn is_position_over_task_checkbox(&self, pos: Point<Pixels>, _window: &Window) -> bool {
-        let interactive_tasks = {
-            #[cfg(feature = "markdown")]
-            {
-                self.config.markdown.interactive_tasks
-            }
-            #[cfg(not(feature = "markdown"))]
-            {
-                false
-            }
-        };
-
-        if !interactive_tasks {
-            return false;
-        }
-
         let bounds = match self.last_bounds {
             Some(b) => b,
             None => return false,
@@ -798,22 +782,8 @@ impl Editor {
             if pos.y >= line.top && pos.y < line.bottom {
                 if line.is_task_checkbox {
                     return pos.x >= line.checkbox_box_x && pos.x <= line.checkbox_box_x + px(22.0);
-                } else {
-                    let raw_line = self.buffer.line_to_string(line.row);
-                    let trimmed = raw_line.trim_start();
-                    let is_task = trimmed.starts_with("- [ ] ")
-                        || trimmed.starts_with("* [ ] ")
-                        || trimmed.starts_with("- [x] ")
-                        || trimmed.starts_with("* [x] ")
-                        || trimmed.starts_with("- [X] ")
-                        || trimmed.starts_with("* [X] ");
-                    if !is_task {
-                        return false;
-                    }
-                    let indent = raw_line.len() - trimmed.len();
-                    let box_x = line.text_origin_x + px((indent as f32) * 8.0);
-                    return pos.x >= box_x && pos.x <= box_x + px(50.0);
                 }
+                return false;
             }
         }
 
@@ -836,51 +806,53 @@ impl Editor {
             return;
         }
 
-        let interactive_tasks = {
-            #[cfg(feature = "markdown")]
-            {
-                self.config.markdown.interactive_tasks
-            }
-            #[cfg(not(feature = "markdown"))]
-            {
-                true
-            }
-        };
-
-        if interactive_tasks && !event.modifiers.shift {
+        // Dispatch clicks to hooks first (e.g. MarkdownHook toggles task checkboxes).
+        // Hooks operate on buffer (row, col) coordinates and decide interactivity
+        // themselves via their own config.
+        if !event.modifiers.shift {
             let clicked_task_line = self
                 .visible_lines
                 .iter()
                 .find(|l| event.position.y >= l.top && event.position.y < l.bottom);
 
-            if let Some(target_line) = clicked_task_line {
-                let is_over = self.is_position_over_task_checkbox(event.position, window);
-                if is_over {
-                    let raw_line = self.buffer.line_to_string(target_line.row);
-                    let trimmed = raw_line.trim_start();
-                    let indent = raw_line.len() - trimmed.len();
-                    let is_task_empty =
-                        trimmed.starts_with("- [ ] ") || trimmed.starts_with("* [ ] ");
-                    let is_task_checked = trimmed.starts_with("- [x] ")
-                        || trimmed.starts_with("* [x] ")
-                        || trimmed.starts_with("- [X] ")
-                        || trimmed.starts_with("* [X] ");
-
-                    if is_task_empty || is_task_checked {
-                        let old_cursor = self.buffer.cursor_offset();
-                        let check_offset = target_line.line_start_byte + indent + 3;
-                        let new_char = if is_task_empty { "x" } else { " " };
-                        self.buffer
-                            .replace_range(check_offset..check_offset + 1, new_char);
-                        self.buffer.set_cursor_offset(old_cursor);
-                        self.selection = None;
-                        self.is_selecting = false;
+            if let Some(target_line) = clicked_task_line
+                && self.is_position_over_task_checkbox(event.position, window)
+            {
+                let row = target_line.row;
+                let offset = self.offset_for_position(event.position, window);
+                let col = offset
+                    .saturating_sub(target_line.line_start_byte)
+                    .min(target_line.line_len_bytes);
+                let initial_version = self.buffer.version();
+                let mut consumed = false;
+                let mut hook_idx = 0;
+                while hook_idx < self.hooks.len() {
+                    let mut ctx = HookContext::new(
+                        &mut self.buffer,
+                        &mut self.selection,
+                        &mut self.cursor_style,
+                    );
+                    if self.hooks[hook_idx].on_click(&mut ctx, row, col)
+                        == twrite_core::HookOutcome::Consumed
+                    {
+                        consumed = true;
+                        break;
+                    }
+                    hook_idx += 1;
+                }
+                if consumed {
+                    if self.buffer.version() != initial_version {
                         for hook in &mut self.hooks {
                             hook.after_edit(&mut self.buffer);
                         }
-                        cx.notify();
-                        return;
                     }
+                    for hook in &mut self.hooks {
+                        hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                    }
+                    self.selection = None;
+                    self.is_selecting = false;
+                    cx.notify();
+                    return;
                 }
             }
         }

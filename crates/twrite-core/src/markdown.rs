@@ -155,6 +155,12 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             if (trimmed_break == "---" || trimmed_break == "***" || trimmed_break == "___")
                 && line_text.len() >= 3
             {
+                // Structural tag first so tag-driven layout survives concealment;
+                // visual span last so text colors are unchanged.
+                spans.push(StyleSpan::tag(
+                    0..line_text.len(),
+                    HighlightTag::HorizontalRule,
+                ));
                 let tag = delimiter_tag.unwrap_or(HighlightTag::Comment);
                 spans.push(StyleSpan::tag(0..line_text.len(), tag));
                 return spans;
@@ -192,6 +198,16 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
         if trimmed_start.starts_with("> ") || trimmed_start == ">" {
             let indent = line_text.len() - trimmed_start.len();
+            let quote_len = if trimmed_start.starts_with("> ") {
+                2
+            } else {
+                1
+            };
+            // Structural tag first; visual span last so colors are unchanged.
+            spans.push(StyleSpan::tag(
+                indent..indent + quote_len,
+                HighlightTag::Blockquote,
+            ));
             if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
                 let delim_len = if trimmed_start.starts_with("> ") {
                     2
@@ -204,28 +220,37 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             }
         }
 
-        let is_task_list = trimmed_start.starts_with("- [ ] ")
+        let is_task_unchecked = trimmed_start.starts_with("- [ ] ")
             || trimmed_start == "- [ ]"
-            || trimmed_start.starts_with("- [x] ")
+            || trimmed_start.starts_with("* [ ] ")
+            || trimmed_start == "* [ ]";
+        let is_task_checked = trimmed_start.starts_with("- [x] ")
             || trimmed_start == "- [x]"
             || trimmed_start.starts_with("- [X] ")
             || trimmed_start == "- [X]"
-            || trimmed_start.starts_with("* [ ] ")
-            || trimmed_start == "* [ ]"
             || trimmed_start.starts_with("* [x] ")
             || trimmed_start == "* [x]"
             || trimmed_start.starts_with("* [X] ")
             || trimmed_start == "* [X]";
+        let is_task_list = is_task_unchecked || is_task_checked;
 
         if is_task_list {
             let indent = line_text.len() - trimmed_start.len();
+            // Structural tag first so tag-driven layout works even when the
+            // marker bytes are concealed; visual span last so colors stay.
+            let marker_len = if trimmed_start.len() >= 6 {
+                6
+            } else {
+                trimmed_start.len()
+            };
+            let task_tag = if is_task_checked {
+                HighlightTag::TaskChecked
+            } else {
+                HighlightTag::TaskUnchecked
+            };
+            spans.push(StyleSpan::tag(indent..indent + marker_len, task_tag));
             if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
                 if delim_tag == HighlightTag::Hidden {
-                    let marker_len = if trimmed_start.len() >= 6 {
-                        6
-                    } else {
-                        trimmed_start.len()
-                    };
                     spans.push(StyleSpan::tag(
                         indent..indent + marker_len,
                         HighlightTag::Hidden,
@@ -394,16 +419,89 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
         spans
     }
+
+    fn extract_links(
+        &self,
+        _buffer: &EditorBuffer,
+        _row: usize,
+        line_text: &str,
+    ) -> Vec<(Range<usize>, String)> {
+        if !(line_text.contains('[') || line_text.contains('<')) {
+            return Vec::new();
+        }
+        extract_markdown_links(line_text)
+    }
 }
 
 /// An editor hook providing Markdown shortcuts (Ctrl+B, Ctrl+I, Ctrl+K), smart list continuation, and task list toggles.
-#[derive(Debug, Clone, Default)]
-pub struct MarkdownHook;
+#[derive(Debug, Clone)]
+pub struct MarkdownHook {
+    interactive_tasks: bool,
+}
+
+impl Default for MarkdownHook {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl MarkdownHook {
     /// Creates a new Markdown editing hook.
     pub fn new() -> Self {
-        Self
+        Self {
+            interactive_tasks: true,
+        }
+    }
+
+    /// Creates a hook honoring the given Markdown configuration.
+    pub fn with_config(config: MarkdownConfig) -> Self {
+        Self {
+            interactive_tasks: config.interactive_tasks,
+        }
+    }
+
+    /// Updates whether mouse clicks toggle task checkboxes.
+    pub fn set_interactive_tasks(&mut self, interactive: bool) {
+        self.interactive_tasks = interactive;
+    }
+
+    /// Returns whether mouse clicks toggle task checkboxes.
+    pub fn interactive_tasks(&self) -> bool {
+        self.interactive_tasks
+    }
+
+    fn toggle_marker_at_row(ctx: &mut HookContext, row: usize) -> bool {
+        if row >= ctx.buffer.len_lines() {
+            return false;
+        }
+        let line = ctx.buffer.line_to_string(row);
+        let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
+        let old_cursor = ctx.buffer.cursor_offset();
+
+        // Unchecked -> checked (lowercase x, matching Ctrl+Enter behavior).
+        for (empty, checked) in [("- [ ] ", "- [x] "), ("* [ ] ", "* [x] ")] {
+            if let Some(idx) = line.find(empty) {
+                let s = line_start + idx;
+                ctx.buffer.replace_range(s..s + 6, checked);
+                ctx.buffer.set_cursor_offset(old_cursor);
+                return true;
+            }
+        }
+        // Checked (x or X) -> unchecked.
+        for (checked, empty) in [
+            ("- [x] ", "- [ ] "),
+            ("- [X] ", "- [ ] "),
+            ("* [x] ", "* [ ] "),
+            ("* [X] ", "* [ ] "),
+        ] {
+            if let Some(idx) = line.find(checked) {
+                let s = line_start + idx;
+                ctx.buffer.replace_range(s..s + 6, empty);
+                ctx.buffer.set_cursor_offset(old_cursor);
+                return true;
+            }
+        }
+        false
     }
 
     fn toggle_checkbox(ctx: &mut HookContext) -> bool {
@@ -554,6 +652,16 @@ impl EditorHook for MarkdownHook {
         HookOutcome::PassThrough
     }
 
+    fn on_click(&mut self, ctx: &mut HookContext, row: usize, _col: usize) -> HookOutcome {
+        if !self.interactive_tasks {
+            return HookOutcome::PassThrough;
+        }
+        if Self::toggle_marker_at_row(ctx, row) {
+            return HookOutcome::Consumed;
+        }
+        HookOutcome::PassThrough
+    }
+
     fn status_text(&self) -> Option<&str> {
         Some("MARKDOWN")
     }
@@ -622,8 +730,9 @@ mod tests {
         assert!(spans3.is_empty());
 
         let spans4 = highlighter.highlight_line(&buffer, 3, "---");
-        assert_eq!(spans4.len(), 1);
-        assert_eq!(spans4[0].style, StyleValue::Tag(HighlightTag::Dimmed));
+        assert_eq!(spans4.len(), 2);
+        assert_eq!(spans4[0].style, StyleValue::Tag(HighlightTag::HorizontalRule));
+        assert_eq!(spans4[1].style, StyleValue::Tag(HighlightTag::Dimmed));
     }
 
     #[test]
@@ -743,8 +852,14 @@ mod tests {
         // Row 1 (Quote) is inactive
         let spans_quote = hidden_highlighter.highlight_line(&buffer, 1, "> Quote line");
         assert!(!spans_quote.is_empty());
+        // Structural tag first, visual concealment last.
         assert_eq!(spans_quote[0].range, 0..2);
-        assert_eq!(spans_quote[0].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(
+            spans_quote[0].style,
+            StyleValue::Tag(HighlightTag::Blockquote)
+        );
+        assert_eq!(spans_quote[1].range, 0..2);
+        assert_eq!(spans_quote[1].style, StyleValue::Tag(HighlightTag::Hidden));
         let concealed_quote = ConcealedLine::build("> Quote line", &spans_quote);
         assert_eq!(concealed_quote.display_text, "Quote line");
 
@@ -762,7 +877,12 @@ mod tests {
         let spans_task = hidden_highlighter.highlight_line(&buffer_moved, 0, "- [ ] Task 1");
         assert!(!spans_task.is_empty());
         assert_eq!(spans_task[0].range, 0..6);
-        assert_eq!(spans_task[0].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(
+            spans_task[0].style,
+            StyleValue::Tag(HighlightTag::TaskUnchecked)
+        );
+        assert_eq!(spans_task[1].range, 0..6);
+        assert_eq!(spans_task[1].style, StyleValue::Tag(HighlightTag::Hidden));
         let concealed_task = ConcealedLine::build("- [ ] Task 1", &spans_task);
         assert_eq!(concealed_task.display_text, "Task 1");
     }
@@ -796,5 +916,98 @@ mod tests {
         assert_eq!(extracted.len(), 1);
         assert_eq!(extracted[0].0, 1..7);
         assert_eq!(extracted[0].1, "https://google.com");
+    }
+
+    #[test]
+    fn test_markdown_structural_tags_in_dimmed_mode() {
+        let buffer = EditorBuffer::new("- [ ] Todo\n- [x] Done\n> Quote\n---");
+        let highlighter = MarkdownHighlighter::new();
+        // Move cursor away so no row is the active cursor row side-effect... row 3 check
+        // uses default cursor at row 0, so rows 1-3 are inactive.
+        let unchecked = highlighter.highlight_line(&buffer, 0, "- [ ] Todo");
+        // Row 0 is the cursor row: structural tag still emitted, no concealment.
+        assert!(unchecked
+            .iter()
+            .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskUnchecked)));
+
+        let mut moved = buffer;
+        moved.set_cursor_offset(30);
+        let unchecked_inactive =
+            highlighter.highlight_line(&moved, 0, "- [ ] Todo");
+        assert!(unchecked_inactive
+            .iter()
+            .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskUnchecked)));
+        let checked = highlighter.highlight_line(&moved, 1, "- [x] Done");
+        assert!(checked
+            .iter()
+            .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskChecked)));
+        let quote = highlighter.highlight_line(&moved, 2, "> Quote");
+        assert!(quote
+            .iter()
+            .any(|s| s.style == StyleValue::Tag(HighlightTag::Blockquote)));
+        let hr = highlighter.highlight_line(&moved, 3, "---");
+        assert!(hr
+            .iter()
+            .any(|s| s.style == StyleValue::Tag(HighlightTag::HorizontalRule)));
+    }
+
+    #[test]
+    fn test_markdown_hook_on_click_toggles_task() {
+        let mut buffer = EditorBuffer::new("- [ ] Task one\n- [x] Task two");
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut hook = MarkdownHook::new();
+
+        // Click row 1 (checked -> unchecked), cursor stays put.
+        buffer.set_cursor_offset(0);
+        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        assert_eq!(hook.on_click(&mut ctx, 1, 0), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- [ ] Task one\n- [ ] Task two");
+        assert_eq!(ctx.buffer.cursor_offset(), 0);
+
+        // Click row 0 (unchecked -> checked).
+        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        assert_eq!(hook.on_click(&mut ctx, 0, 2), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- [x] Task one\n- [ ] Task two");
+
+        // Uppercase [X] also toggles.
+        ctx.buffer
+            .replace_range(0..14, "- [X] Task one");
+        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        assert_eq!(hook.on_click(&mut ctx, 0, 3), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- [ ] Task one\n- [ ] Task two");
+
+        // Plain line passes through.
+        let mut plain = EditorBuffer::new("hello");
+        let mut ctx = HookContext::new(&mut plain, &mut selection, &mut cursor_style);
+        assert_eq!(hook.on_click(&mut ctx, 0, 0), HookOutcome::PassThrough);
+    }
+
+    #[test]
+    fn test_markdown_hook_on_click_respects_config() {
+        let mut buffer = EditorBuffer::new("- [ ] Task");
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut hook = MarkdownHook::with_config(MarkdownConfig {
+            interactive_tasks: false,
+            ..Default::default()
+        });
+        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        assert_eq!(hook.on_click(&mut ctx, 0, 0), HookOutcome::PassThrough);
+        assert_eq!(ctx.buffer.text().to_string(), "- [ ] Task");
+    }
+
+    #[test]
+    fn test_markdown_highlighter_extract_links_trait() {
+        use crate::SyntaxHighlighter;
+        let buffer = EditorBuffer::new("[Google](https://google.com)");
+        let highlighter = MarkdownHighlighter::new();
+        let links = highlighter.extract_links(&buffer, 0, "[Google](https://google.com)");
+        assert_eq!(links.len(), 1);
+        assert_eq!(links[0].0, 1..7);
+        assert_eq!(links[0].1, "https://google.com");
+
+        let none = highlighter.extract_links(&buffer, 0, "plain text");
+        assert!(none.is_empty());
     }
 }

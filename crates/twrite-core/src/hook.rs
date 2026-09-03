@@ -110,6 +110,17 @@ pub trait EditorHook: 'static {
     /// Called whenever the cursor offset or selection range changes.
     fn on_selection_change(&mut self, _buffer: &EditorBuffer, _selection: Option<&Selection>) {}
 
+    /// Intercepts a mouse click at a given buffer line and source byte column.
+    ///
+    /// `row` is the zero-based buffer row. `col` is the source byte offset within
+    /// that line's text (pre-concealment coordinates, clamped to the line length).
+    /// Hooks handling interactive elements (e.g. Markdown task checkboxes) should
+    /// operate on `row` directly rather than the current cursor row, preserve the
+    /// cursor offset when appropriate, and return `Consumed` to halt propagation.
+    fn on_click(&mut self, _ctx: &mut HookContext, _row: usize, _col: usize) -> HookOutcome {
+        HookOutcome::PassThrough
+    }
+
     /// Returns a human-readable status or active mode name, if any.
     fn status_text(&self) -> Option<&str> {
         None
