@@ -2,11 +2,16 @@ pub mod buffer;
 pub mod coordinates;
 pub mod history;
 pub mod hook;
+pub mod movement;
 pub mod selection;
 
 pub use buffer::EditorBuffer;
 pub use coordinates::Point;
 pub use hook::{EditorHook, HookOutcome, KeyEvent, Modifiers};
+pub use movement::{
+    CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
+    find_prev_word_start,
+};
 pub use selection::Selection;
 
 #[cfg(test)]
@@ -147,5 +152,41 @@ mod tests {
 
         buffer.redo();
         assert_eq!(buffer.text().to_string(), "hello there");
+    }
+
+    #[test]
+    fn delete_prev_word_removes_word_and_is_undoable() {
+        let mut buffer = EditorBuffer::new("hello world");
+        buffer.set_cursor_offset(11);
+
+        assert!(buffer.delete_prev_word());
+        assert_eq!(buffer.text().to_string(), "hello ");
+        assert_eq!(buffer.cursor_offset(), 6);
+
+        buffer.undo();
+        assert_eq!(buffer.text().to_string(), "hello world");
+        assert_eq!(buffer.cursor_offset(), 11);
+
+        buffer.redo();
+        assert_eq!(buffer.text().to_string(), "hello ");
+        assert_eq!(buffer.cursor_offset(), 6);
+    }
+
+    #[test]
+    fn delete_next_word_removes_word_and_is_undoable() {
+        let mut buffer = EditorBuffer::new("hello world");
+        buffer.set_cursor_offset(0);
+
+        assert!(buffer.delete_next_word());
+        assert_eq!(buffer.text().to_string(), " world");
+        assert_eq!(buffer.cursor_offset(), 0);
+
+        buffer.undo();
+        assert_eq!(buffer.text().to_string(), "hello world");
+        assert_eq!(buffer.cursor_offset(), 0);
+
+        buffer.redo();
+        assert_eq!(buffer.text().to_string(), " world");
+        assert_eq!(buffer.cursor_offset(), 0);
     }
 }

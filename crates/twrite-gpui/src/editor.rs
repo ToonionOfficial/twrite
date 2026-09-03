@@ -54,6 +54,181 @@ impl Editor {
         self.buffer.insert(text);
     }
 
+    /// Copies the currently selected text to the system clipboard.
+    pub fn copy(&self, cx: &App) {
+        if let Some(sel) = self.selection {
+            let range = sel.byte_range();
+            if !range.is_empty() {
+                let text = self.buffer.text().byte_slice(range).to_string();
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+            }
+        }
+    }
+
+    /// Cuts the currently selected text and copies it to the system clipboard.
+    ///
+    /// Returns `true` if text was cut, or `false` if there was no selection.
+    pub fn cut(&mut self, cx: &App) -> bool {
+        if let Some(sel) = self.selection.take() {
+            let range = sel.byte_range();
+            if !range.is_empty() {
+                let text = self.buffer.text().byte_slice(range.clone()).to_string();
+                cx.write_to_clipboard(ClipboardItem::new_string(text));
+                self.buffer.delete_range(range);
+                self.selection = None;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Pastes text from the system clipboard, replacing the current selection or inserting at cursor.
+    ///
+    /// Returns `true` if text was pasted, or `false` if the clipboard was empty.
+    pub fn paste(&mut self, cx: &App) -> bool {
+        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text())
+            && !text.is_empty()
+        {
+            self.replace_selection_or_insert(&text);
+            self.selection = None;
+            return true;
+        }
+        false
+    }
+
+    /// Scrolls the viewport upward by a given number of lines.
+    pub fn scroll_up(&mut self, count: usize) {
+        self.scroll_row = self.scroll_row.saturating_sub(count);
+    }
+
+    /// Scrolls the viewport downward by a given number of lines.
+    pub fn scroll_down(&mut self, count: usize) {
+        let total_lines = self.buffer.len_lines();
+        self.scroll_row = (self.scroll_row + count).min(total_lines.saturating_sub(1));
+    }
+
+    pub fn move_cursor_to(&mut self, new_offset: usize, select: bool) {
+        if select {
+            let anchor = self
+                .selection
+                .map(|s| s.anchor)
+                .unwrap_or_else(|| self.buffer.cursor_offset());
+            self.buffer.set_cursor_offset(new_offset);
+            if anchor != new_offset {
+                self.selection = Some(Selection::range(anchor, new_offset));
+            } else {
+                self.selection = None;
+            }
+        } else {
+            self.buffer.set_cursor_offset(new_offset);
+            self.selection = None;
+        }
+    }
+
+    /// Scrolls the viewport so that the cursor is visible.
+    ///
+    /// Ensures a 1-line margin above and below the cursor when possible.
+    pub fn scroll_to_cursor(&mut self, window: Option<&Window>) {
+        let total_lines = self.buffer.len_lines();
+        if total_lines == 0 {
+            self.scroll_row = 0;
+            return;
+        }
+
+        let cursor_row = self
+            .buffer
+            .cursor_point()
+            .row
+            .min(total_lines.saturating_sub(1));
+
+        // 1. Upward scroll check: if cursor is above scroll_row (with 1-line margin)
+        let margin_lines = 1;
+        if cursor_row < self.scroll_row + margin_lines {
+            self.scroll_row = cursor_row.saturating_sub(margin_lines);
+            return;
+        }
+
+        // 2. Downward scroll check
+        let bounds = match self.last_bounds {
+            Some(b) => b,
+            None => return,
+        };
+
+        let viewport_height = bounds.size.height;
+        if viewport_height <= px(0.0) {
+            return;
+        }
+
+        let line_height = self.config.line_height;
+        let margin = line_height * margin_lines as f32;
+
+        if self.config.line_wrap
+            && let Some(win) = window
+        {
+            let gutter_width = if self.config.line_numbers {
+                px(48.0)
+            } else {
+                px(0.0)
+            };
+            let wrap_width = Some((bounds.size.width - gutter_width - px(24.0)).max(px(50.0)));
+            let font = win.text_style().font();
+
+            let get_row_visual_lines = |row: usize| -> usize {
+                let raw_line = self.buffer.line_to_string(row);
+                let line_text = raw_line.trim_end_matches(['\r', '\n']);
+                if line_text.is_empty() {
+                    return 1;
+                }
+                let runs = [TextRun {
+                    len: line_text.len(),
+                    font: font.clone(),
+                    color: self.theme.foreground,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }];
+                win.text_system()
+                    .shape_text(
+                        line_text.to_string().into(),
+                        self.config.font_size,
+                        &runs,
+                        wrap_width,
+                        None,
+                    )
+                    .ok()
+                    .and_then(|mut l| l.pop())
+                    .map(|l| l.wrap_boundaries.len() + 1)
+                    .unwrap_or(1)
+            };
+
+            // Work backwards from cursor_row to find the earliest row that fits in viewport
+            let mut accumulated = line_height * get_row_visual_lines(cursor_row) as f32;
+            let mut new_scroll_row = cursor_row;
+
+            while new_scroll_row > 0 {
+                let prev_lines = get_row_visual_lines(new_scroll_row - 1);
+                let prev_height = line_height * prev_lines as f32;
+                if accumulated + prev_height + margin > viewport_height {
+                    break;
+                }
+                accumulated += prev_height;
+                new_scroll_row -= 1;
+            }
+
+            if new_scroll_row > self.scroll_row {
+                self.scroll_row = new_scroll_row;
+            }
+        } else {
+            // Unwrapped / fast path
+            let visible_lines = (viewport_height / line_height).floor() as usize;
+            let effective_visible = visible_lines.saturating_sub(margin_lines).max(1);
+
+            if cursor_row >= self.scroll_row + effective_visible {
+                self.scroll_row = cursor_row.saturating_sub(effective_visible.saturating_sub(1));
+            }
+        }
+    }
+
     pub fn offset_for_position(&self, pos: Point<Pixels>, window: &Window) -> usize {
         let bounds = match self.last_bounds {
             Some(b) => b,
@@ -143,7 +318,7 @@ impl Editor {
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let key_event = match crate::input::translate_key_down(event) {
@@ -160,6 +335,7 @@ impl Editor {
         }
 
         let mut edited = false;
+        let select = key_event.modifiers.shift;
 
         // 2. Default keys
         if key_event.modifiers.ctrl || key_event.modifiers.meta {
@@ -180,6 +356,55 @@ impl Editor {
                 }
                 "a" => {
                     self.selection = Some(Selection::range(0, self.buffer.len_bytes()));
+                }
+                "c" => {
+                    self.copy(cx);
+                }
+                "x" => {
+                    edited = self.cut(cx);
+                }
+                "v" => {
+                    edited = self.paste(cx);
+                }
+                "backspace" => {
+                    if !self.delete_selection() {
+                        edited = self.buffer.delete_prev_word();
+                    } else {
+                        edited = true;
+                    }
+                    self.selection = None;
+                }
+                "delete" => {
+                    if !self.delete_selection() {
+                        edited = self.buffer.delete_next_word();
+                    } else {
+                        edited = true;
+                    }
+                    self.selection = None;
+                }
+                "left" | "arrowleft" => {
+                    let target = self.buffer.prev_word_offset();
+                    self.move_cursor_to(target, select);
+                }
+                "right" | "arrowright" => {
+                    let target = self.buffer.next_word_offset();
+                    self.move_cursor_to(target, select);
+                }
+                "home" => {
+                    self.move_cursor_to(0, select);
+                }
+                "end" => {
+                    self.move_cursor_to(self.buffer.len_bytes(), select);
+                }
+                "up" | "arrowup" => {
+                    self.scroll_up(1);
+                    cx.notify();
+                    return;
+                }
+                "down" | "arrowdown" => {
+                    self.scroll_down(1);
+                    cx.notify();
+                    return;
                 }
                 _ => {}
             }
@@ -215,28 +440,67 @@ impl Editor {
                     edited = true;
                 }
                 "left" | "arrowleft" => {
-                    if let Some(sel) = self.selection.take().filter(|s| !s.is_empty()) {
+                    if !select && self.selection.is_some() {
+                        let sel = self.selection.take().unwrap();
                         self.buffer.set_cursor_offset(sel.byte_range().start);
                     } else {
-                        self.buffer.move_cursor_left();
+                        let target = if self.buffer.cursor_offset() > 0 {
+                            let char_idx =
+                                self.buffer.text().byte_to_char(self.buffer.cursor_offset());
+                            self.buffer.text().char_to_byte(char_idx - 1)
+                        } else {
+                            0
+                        };
+                        self.move_cursor_to(target, select);
                     }
-                    self.selection = None;
                 }
                 "right" | "arrowright" => {
-                    if let Some(sel) = self.selection.take().filter(|s| !s.is_empty()) {
+                    if !select && self.selection.is_some() {
+                        let sel = self.selection.take().unwrap();
                         self.buffer.set_cursor_offset(sel.byte_range().end);
                     } else {
-                        self.buffer.move_cursor_right();
+                        let target = if self.buffer.cursor_offset() < self.buffer.len_bytes() {
+                            let char_idx =
+                                self.buffer.text().byte_to_char(self.buffer.cursor_offset());
+                            self.buffer
+                                .text()
+                                .char_to_byte((char_idx + 1).min(self.buffer.text().len_chars()))
+                        } else {
+                            self.buffer.len_bytes()
+                        };
+                        self.move_cursor_to(target, select);
                     }
-                    self.selection = None;
                 }
                 "up" | "arrowup" => {
-                    self.buffer.move_cursor_up();
-                    self.selection = None;
+                    let point = self.buffer.cursor_point();
+                    if point.row > 0 {
+                        let target = self
+                            .buffer
+                            .point_to_offset(BufferPoint::new(point.row - 1, point.column));
+                        self.move_cursor_to(target, select);
+                    } else {
+                        self.move_cursor_to(0, select);
+                    }
                 }
                 "down" | "arrowdown" => {
-                    self.buffer.move_cursor_down();
-                    self.selection = None;
+                    let point = self.buffer.cursor_point();
+                    let total_lines = self.buffer.len_lines();
+                    if point.row + 1 < total_lines {
+                        let target = self
+                            .buffer
+                            .point_to_offset(BufferPoint::new(point.row + 1, point.column));
+                        self.move_cursor_to(target, select);
+                    } else {
+                        self.move_cursor_to(self.buffer.len_bytes(), select);
+                    }
+                }
+                "home" => {
+                    let target = self.buffer.line_start_offset();
+                    self.move_cursor_to(target, select);
+                }
+                "end" => {
+                    let target = self.buffer.line_end_offset();
+                    self.move_cursor_to(target, select);
                 }
                 key => {
                     if !key_event.modifiers.alt
@@ -258,11 +522,7 @@ impl Editor {
             }
         }
 
-        let cursor_row = self.buffer.cursor_point().row;
-        if cursor_row < self.scroll_row {
-            self.scroll_row = cursor_row;
-        }
-
+        self.scroll_to_cursor(Some(window));
         cx.notify();
     }
 
@@ -288,6 +548,7 @@ impl Editor {
             self.selection = Some(Selection::point(offset));
         }
 
+        self.scroll_to_cursor(Some(window));
         cx.notify();
     }
 
@@ -307,6 +568,7 @@ impl Editor {
                 self.selection = Some(Selection::point(offset));
             }
 
+            self.scroll_to_cursor(Some(window));
             cx.notify();
         }
     }
