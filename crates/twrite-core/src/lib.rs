@@ -8,6 +8,9 @@ pub mod coordinates;
 pub mod history;
 /// Extensible hook system and input interceptors.
 pub mod hook;
+/// CommonMark and GitHub Flavored Markdown highlighter and interactive hook.
+#[cfg(feature = "markdown")]
+pub mod markdown;
 /// Text movement and boundary calculation primitives.
 pub mod movement;
 /// Text selection ranges and anchor/head management.
@@ -20,6 +23,8 @@ pub use coordinates::Point;
 pub use hook::{
     AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
 };
+#[cfg(feature = "markdown")]
+pub use markdown::{MarkdownHighlighter, MarkdownHook};
 pub use movement::{
     CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
     find_prev_word_start,

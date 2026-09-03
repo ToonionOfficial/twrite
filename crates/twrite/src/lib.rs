@@ -8,3 +8,9 @@ pub use twrite_core::*;
 
 /// GPUI canvas rendering, theming, configuration, and editor view.
 pub use twrite_gpui::*;
+
+/// CommonMark and GitHub Flavored Markdown highlighter and interactive hook.
+#[cfg(feature = "markdown")]
+pub mod markdown {
+    pub use twrite_core::markdown::*;
+}

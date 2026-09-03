@@ -88,6 +88,19 @@ impl Editor {
         self.highlighter = None;
     }
 
+    /// Enables out-of-the-box CommonMark and GFM editing.
+    ///
+    /// Automatically configures [`twrite_core::MarkdownHighlighter`], [`twrite_core::AutoPairsHook`],
+    /// and [`twrite_core::MarkdownHook`] (for formatting shortcuts, smart list continuation,
+    /// and checkbox toggles).
+    #[cfg(feature = "markdown")]
+    pub fn enable_markdown(&mut self) {
+        use twrite_core::{AutoPairsHook, MarkdownHighlighter, MarkdownHook};
+        self.set_highlighter(MarkdownHighlighter::new());
+        self.add_hook(AutoPairsHook::new());
+        self.add_hook(MarkdownHook::new());
+    }
+
     /// Deletes the currently selected text, returning true if text was deleted.
     pub fn delete_selection(&mut self) -> bool {
         if let Some(selection) = self.selection.take() {

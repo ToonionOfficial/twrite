@@ -12,6 +12,10 @@ twrite-gpui = { workspace = true }
 gpui = { workspace = true }
 gpui_platform = { workspace = true }
 
+[features]
+default = []
+markdown = ["twrite-core/markdown", "twrite-gpui/markdown"]
+
 [[example]]
 name = "simple"
 path = "../../examples/simple.rs"
@@ -27,3 +31,8 @@ path = "../../examples/hooks.rs"
 [[example]]
 name = "vim"
 path = "../../examples/vim.rs"
+
+[[example]]
+name = "markdown"
+path = "../../examples/markdown.rs"
+required-features = ["markdown"]
