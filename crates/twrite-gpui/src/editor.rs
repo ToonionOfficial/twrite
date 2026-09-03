@@ -108,6 +108,26 @@ impl Editor {
         self.add_hook(MarkdownHook::new());
     }
 
+    /// Loads document text from a file into the editor, resetting cursor and undo history.
+    pub fn load_file<P: AsRef<std::path::Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<(), twrite_core::EditorError> {
+        let new_buffer = EditorBuffer::from_file(path)?;
+        self.buffer = new_buffer;
+        self.scroll_row = 0;
+        self.selection = None;
+        Ok(())
+    }
+
+    /// Saves the current editor document contents to a file.
+    pub fn save_file<P: AsRef<std::path::Path>>(
+        &self,
+        path: P,
+    ) -> Result<(), twrite_core::EditorError> {
+        self.buffer.save_to_file(path)
+    }
+
     /// Deletes the currently selected text, returning true if text was deleted.
     pub fn delete_selection(&mut self) -> bool {
         if let Some(selection) = self.selection.take() {

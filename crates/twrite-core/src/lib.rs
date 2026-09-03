@@ -4,6 +4,8 @@
 pub mod buffer;
 /// 2D text coordinates (row and column).
 pub mod coordinates;
+/// Strongly-typed error types and results for editor operations.
+pub mod error;
 /// Granular undo/redo transaction history.
 pub mod history;
 /// Extensible hook system and input interceptors.
@@ -20,6 +22,7 @@ pub mod syntax;
 
 pub use buffer::EditorBuffer;
 pub use coordinates::Point;
+pub use error::{EditorError, Result as EditorResult};
 pub use hook::{
     AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
 };
@@ -231,5 +234,73 @@ mod tests {
 
         buffer.redo();
         assert_eq!(buffer.version(), 5);
+    }
+
+    #[test]
+    fn test_error_handling_validation() {
+        let mut buffer = EditorBuffer::new("hello\nworld");
+
+        assert!(buffer.validate_offset(0).is_ok());
+        assert!(buffer.validate_offset(11).is_ok());
+        assert!(matches!(
+            buffer.validate_offset(12),
+            Err(EditorError::OutOfBounds {
+                offset: 12,
+                len: 11
+            })
+        ));
+
+        assert!(buffer.validate_range(&(0..5)).is_ok());
+        let (inverted_start, inverted_end) = (5, 3);
+        assert!(matches!(
+            buffer.validate_range(&(inverted_start..inverted_end)),
+            Err(EditorError::InvalidRange { .. })
+        ));
+        assert!(matches!(
+            buffer.validate_range(&(0..20)),
+            Err(EditorError::InvalidRange { .. })
+        ));
+
+        assert_eq!(buffer.try_line_to_string(0).unwrap(), "hello\n");
+        assert_eq!(buffer.try_line_to_string(1).unwrap(), "world");
+        assert!(matches!(
+            buffer.try_line_to_string(2),
+            Err(EditorError::InvalidRow {
+                row: 2,
+                total_lines: 2
+            })
+        ));
+
+        assert!(buffer.try_replace_range(0..5, "hi").is_ok());
+        assert_eq!(buffer.text().to_string(), "hi\nworld");
+        assert!(buffer.try_delete_range(0..3).is_ok());
+        assert_eq!(buffer.text().to_string(), "world");
+    }
+
+    #[test]
+    fn test_file_io_roundtrip() {
+        let temp_dir = std::env::temp_dir();
+        let file_path = temp_dir.join(format!("twrite_test_{}.txt", buffer_version_rand()));
+
+        let buffer = EditorBuffer::new("Persistent story content\nLine 2");
+        assert!(buffer.save_to_file(&file_path).is_ok());
+
+        let loaded = EditorBuffer::from_file(&file_path);
+        assert!(loaded.is_ok());
+        let loaded = loaded.unwrap();
+        assert_eq!(
+            loaded.text().to_string(),
+            "Persistent story content\nLine 2"
+        );
+
+        let _ = std::fs::remove_file(&file_path);
+    }
+
+    fn buffer_version_rand() -> u64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as u64
     }
 }
