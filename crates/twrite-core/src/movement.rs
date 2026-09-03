@@ -41,7 +41,6 @@ pub fn find_prev_word_start(text: &Rope, cursor_byte: usize) -> usize {
         return 0;
     }
 
-    // If cursor is immediately after a newline, stop at that line boundary
     let prev_c = text.char(char_idx - 1);
     if prev_c == '\n' {
         if char_idx >= 2 && text.char(char_idx - 2) == '\r' {
@@ -50,7 +49,6 @@ pub fn find_prev_word_start(text: &Rope, cursor_byte: usize) -> usize {
         return text.char_to_byte(char_idx - 1);
     }
 
-    // Skip any non-newline whitespace going backward
     while char_idx > 0 {
         let c = text.char(char_idx - 1);
         if c == '\n' || c == '\r' {
@@ -66,10 +64,8 @@ pub fn find_prev_word_start(text: &Rope, cursor_byte: usize) -> usize {
         return 0;
     }
 
-    // Classify target token (Word or Punctuation)
     let target_kind = classify_char(text.char(char_idx - 1));
 
-    // Consume all consecutive characters of the same kind going backward
     while char_idx > 0 {
         let c = text.char(char_idx - 1);
         if c == '\n' || c == '\r' || classify_char(c) != target_kind {
@@ -102,7 +98,6 @@ pub fn find_next_word_end(text: &Rope, cursor_byte: usize) -> usize {
         return total_bytes;
     }
 
-    // If on a newline, jump past it
     let c = text.char(char_idx);
     if c == '\r' {
         if char_idx + 1 < total_chars && text.char(char_idx + 1) == '\n' {
@@ -114,7 +109,6 @@ pub fn find_next_word_end(text: &Rope, cursor_byte: usize) -> usize {
         return text.char_to_byte(char_idx + 1);
     }
 
-    // Skip any non-newline whitespace going forward
     while char_idx < total_chars {
         let c = text.char(char_idx);
         if c == '\n' || c == '\r' {
@@ -130,10 +124,8 @@ pub fn find_next_word_end(text: &Rope, cursor_byte: usize) -> usize {
         return total_bytes;
     }
 
-    // Classify target token (Word or Punctuation)
     let target_kind = classify_char(text.char(char_idx));
 
-    // Consume all consecutive characters of the same kind going forward
     while char_idx < total_chars {
         let c = text.char(char_idx);
         if c == '\n' || c == '\r' || classify_char(c) != target_kind {
@@ -196,14 +188,13 @@ mod tests {
     fn test_find_prev_word_start() {
         let text = Rope::from_str("hello world, foo.bar();");
 
-        // From end of document
-        assert_eq!(find_prev_word_start(&text, 23), 20); // "();" at 20
-        assert_eq!(find_prev_word_start(&text, 20), 17); // "bar" start at 17
-        assert_eq!(find_prev_word_start(&text, 17), 16); // "." at 16
-        assert_eq!(find_prev_word_start(&text, 16), 13); // "foo" at 13
-        assert_eq!(find_prev_word_start(&text, 13), 11); // "," at 11
-        assert_eq!(find_prev_word_start(&text, 11), 6); // "world" at 6
-        assert_eq!(find_prev_word_start(&text, 6), 0); // "hello" at 0
+        assert_eq!(find_prev_word_start(&text, 23), 20);
+        assert_eq!(find_prev_word_start(&text, 20), 17);
+        assert_eq!(find_prev_word_start(&text, 17), 16);
+        assert_eq!(find_prev_word_start(&text, 16), 13);
+        assert_eq!(find_prev_word_start(&text, 13), 11);
+        assert_eq!(find_prev_word_start(&text, 11), 6);
+        assert_eq!(find_prev_word_start(&text, 6), 0);
         assert_eq!(find_prev_word_start(&text, 0), 0);
     }
 
@@ -217,22 +208,22 @@ mod tests {
     #[test]
     fn test_find_prev_word_across_lines() {
         let text = Rope::from_str("hello\nworld");
-        assert_eq!(find_prev_word_start(&text, 11), 6); // start of "world"
-        assert_eq!(find_prev_word_start(&text, 6), 5); // newline
-        assert_eq!(find_prev_word_start(&text, 5), 0); // "hello"
+        assert_eq!(find_prev_word_start(&text, 11), 6);
+        assert_eq!(find_prev_word_start(&text, 6), 5);
+        assert_eq!(find_prev_word_start(&text, 5), 0);
     }
 
     #[test]
     fn test_find_next_word_end() {
         let text = Rope::from_str("hello world, foo.bar();");
 
-        assert_eq!(find_next_word_end(&text, 0), 5); // "hello|"
-        assert_eq!(find_next_word_end(&text, 5), 11); // " world|"
-        assert_eq!(find_next_word_end(&text, 11), 12); // ",|"
-        assert_eq!(find_next_word_end(&text, 12), 16); // " foo|"
-        assert_eq!(find_next_word_end(&text, 16), 17); // ".|"
-        assert_eq!(find_next_word_end(&text, 17), 20); // "bar|"
-        assert_eq!(find_next_word_end(&text, 20), 23); // "();|"
+        assert_eq!(find_next_word_end(&text, 0), 5);
+        assert_eq!(find_next_word_end(&text, 5), 11);
+        assert_eq!(find_next_word_end(&text, 11), 12);
+        assert_eq!(find_next_word_end(&text, 12), 16);
+        assert_eq!(find_next_word_end(&text, 16), 17);
+        assert_eq!(find_next_word_end(&text, 17), 20);
+        assert_eq!(find_next_word_end(&text, 20), 23);
         assert_eq!(find_next_word_end(&text, 23), 23);
     }
 
@@ -247,15 +238,12 @@ mod tests {
     fn test_find_line_boundaries() {
         let text = Rope::from_str("first line\nsecond line\nthird");
 
-        // In first line
         assert_eq!(find_line_start(&text, 5), 0);
         assert_eq!(find_line_end(&text, 5), 10);
 
-        // In second line (starts at 11, length 11 -> ends at 22)
         assert_eq!(find_line_start(&text, 15), 11);
         assert_eq!(find_line_end(&text, 15), 22);
 
-        // In third line
         assert_eq!(find_line_start(&text, 25), 23);
         assert_eq!(find_line_end(&text, 25), 28);
     }

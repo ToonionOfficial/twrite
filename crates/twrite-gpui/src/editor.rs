@@ -8,21 +8,34 @@ use twrite_core::{
 
 use crate::{canvas::EditorCanvas, config::EditorConfig, theme::EditorTheme};
 
+/// The main GPUI text editor view and controller.
 pub struct Editor {
+    /// The underlying text buffer managing document contents and undo/redo history.
     pub buffer: EditorBuffer,
+    /// Visual color palette for canvas background, text, cursor, and syntax tokens.
     pub theme: EditorTheme,
+    /// Display and layout configurations (font size, line height, line numbers, wrapping).
     pub config: EditorConfig,
+    /// Extensible hooks chain intercepting keystrokes, edits, and selection changes.
     pub hooks: Vec<Box<dyn EditorHook>>,
+    /// Active syntax highlighter computing semantic and direct style spans.
     pub highlighter: Option<Arc<dyn SyntaxHighlighter>>,
+    /// Focus handle for keyboard input tracking within GPUI.
     pub focus_handle: FocusHandle,
+    /// First visible row index in the viewport.
     pub scroll_row: usize,
+    /// Active selection range, if any.
     pub selection: Option<Selection>,
+    /// Active visual cursor style (Bar, Block, Underline, Hidden).
     pub cursor_style: CursorStyle,
+    /// Whether the user is currently mouse-drag selecting text.
     pub is_selecting: bool,
+    /// Last rendered bounds in window pixel coordinates.
     pub last_bounds: Option<Bounds<Pixels>>,
 }
 
 impl Editor {
+    /// Creates a new editor entity with `initial_text`.
     pub fn new(initial_text: &str, cx: &mut Context<Self>) -> Self {
         let config = EditorConfig::default();
         let cursor_style = if config.block_cursor {
@@ -75,6 +88,7 @@ impl Editor {
         self.highlighter = None;
     }
 
+    /// Deletes the currently selected text, returning true if text was deleted.
     pub fn delete_selection(&mut self) -> bool {
         if let Some(selection) = self.selection.take() {
             let range = selection.byte_range();
@@ -86,6 +100,7 @@ impl Editor {
         false
     }
 
+    /// Replaces the active selection with `text`, or inserts `text` at the cursor position.
     pub fn replace_selection_or_insert(&mut self, text: &str) {
         if let Some(selection) = self.selection.take() {
             let range = selection.byte_range();
@@ -150,6 +165,7 @@ impl Editor {
         self.scroll_row = (self.scroll_row + count).min(total_lines.saturating_sub(1));
     }
 
+    /// Moves the cursor to `new_offset`, expanding or creating a selection if `select` is true.
     pub fn move_cursor_to(&mut self, new_offset: usize, select: bool) {
         if select {
             let anchor = self
@@ -184,14 +200,12 @@ impl Editor {
             .row
             .min(total_lines.saturating_sub(1));
 
-        // 1. Upward scroll check: if cursor is above scroll_row (with 1-line margin)
         let margin_lines = 1;
         if cursor_row < self.scroll_row + margin_lines {
             self.scroll_row = cursor_row.saturating_sub(margin_lines);
             return;
         }
 
-        // 2. Downward scroll check
         let bounds = match self.last_bounds {
             Some(b) => b,
             None => return,
@@ -244,7 +258,6 @@ impl Editor {
                     .unwrap_or(1)
             };
 
-            // Work backwards from cursor_row to find the earliest row that fits in viewport
             let mut accumulated = line_height * get_row_visual_lines(cursor_row) as f32;
             let mut new_scroll_row = cursor_row;
 
@@ -262,7 +275,6 @@ impl Editor {
                 self.scroll_row = new_scroll_row;
             }
         } else {
-            // Unwrapped / fast path
             let visible_lines = (viewport_height / line_height).floor() as usize;
             let effective_visible = visible_lines.saturating_sub(margin_lines).max(1);
 
@@ -272,6 +284,7 @@ impl Editor {
         }
     }
 
+    /// Calculates the byte offset in the text buffer corresponding to a window pixel position.
     pub fn offset_for_position(&self, pos: Point<Pixels>, window: &Window) -> usize {
         let bounds = match self.last_bounds {
             Some(b) => b,
@@ -404,7 +417,6 @@ impl Editor {
         let mut edited = false;
         let select = key_event.modifiers.shift;
 
-        // 2. Default keys
         if key_event.modifiers.ctrl || key_event.modifiers.meta {
             match key_event.key.to_lowercase().as_str() {
                 "z" => {

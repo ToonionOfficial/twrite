@@ -1,7 +1,7 @@
 use gpui::*;
 use gpui_platform::application;
 use twrite::{
-    CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Point, Selection, editor::Editor,
+    CursorStyle, Editor, EditorHook, HookContext, HookOutcome, KeyEvent, Point, Selection,
 };
 
 /// The operating mode of the Vim state machine.

@@ -3,9 +3,13 @@ use crate::{EditorBuffer, Selection};
 /// Keyboard modifier keys state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Modifiers {
+    /// Whether the Control key is pressed.
     pub ctrl: bool,
+    /// Whether the Alt key is pressed.
     pub alt: bool,
+    /// Whether the Shift key is pressed.
     pub shift: bool,
+    /// Whether the Meta / Command / Windows key is pressed.
     pub meta: bool,
 }
 
@@ -24,7 +28,9 @@ impl Modifiers {
 /// A normalized keyboard event passed to editor hooks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEvent {
+    /// The normalized key string (e.g. "a", "enter", "backspace", "escape").
     pub key: String,
+    /// The active keyboard modifiers during the key event.
     pub modifiers: Modifiers,
 }
 

@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_platform::application;
-use twrite::editor::Editor;
+use twrite::Editor;
 
 struct AppView {
     editor: Entity<Editor>,

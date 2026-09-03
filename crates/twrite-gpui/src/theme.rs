@@ -4,26 +4,47 @@ use twrite_core::{HighlightTag, Rgba, StyleValue, UnderlineDecoration};
 /// Color configuration for syntax elements.
 #[derive(Clone, Debug)]
 pub struct SyntaxTheme {
+    /// Color for language keywords.
     pub keyword: Hsla,
+    /// Color for function and method names.
     pub function: Hsla,
+    /// Color for type and struct names.
     pub type_name: Hsla,
+    /// Color for string literals.
     pub string: Hsla,
+    /// Color for numeric literals.
     pub number: Hsla,
+    /// Color for comments.
     pub comment: Hsla,
+    /// Color for mathematical and logical operators.
     pub operator: Hsla,
+    /// Color for punctuation and delimiter characters.
     pub punctuation: Hsla,
+    /// Color for top-level headers (# Header).
     pub heading1: Hsla,
+    /// Color for second-level headers (## Header).
     pub heading2: Hsla,
+    /// Color for third-level headers (### Header).
     pub heading3: Hsla,
+    /// Color for bold text.
     pub bold: Hsla,
+    /// Color for italic text.
     pub italic: Hsla,
+    /// Color for inline code spans.
     pub code: Hsla,
+    /// Background pill fill color for inline code spans.
     pub code_bg: Hsla,
+    /// Color for hyperlink text.
     pub link: Hsla,
+    /// Color for character speakers in story scripts.
     pub speaker: Hsla,
+    /// Color for dialogue text in story scripts.
     pub dialogue: Hsla,
+    /// Color for choice / branching prompts in story scripts.
     pub choice: Hsla,
+    /// Color for diagnostic error underlines and squiggles.
     pub error: Hsla,
+    /// Color for diagnostic warning underlines and squiggles.
     pub warning: Hsla,
 }
 
@@ -58,12 +79,19 @@ impl Default for SyntaxTheme {
 /// Complete theme configuration for the editor.
 #[derive(Clone, Debug)]
 pub struct EditorTheme {
+    /// Background color of the text canvas.
     pub background: Hsla,
+    /// Default text color.
     pub foreground: Hsla,
+    /// Text insertion cursor color.
     pub cursor: Hsla,
+    /// Background highlight color for selected text ranges.
     pub selection: Hsla,
+    /// Gutter line number color for inactive lines.
     pub line_number: Hsla,
+    /// Gutter line number color for the line containing the cursor.
     pub line_number_active: Hsla,
+    /// Palette for syntax highlighting tokens.
     pub syntax: SyntaxTheme,
 }
 
@@ -84,11 +112,17 @@ impl Default for EditorTheme {
 /// Fully resolved style ready for canvas text run construction.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ResolvedTokenStyle {
+    /// Foreground text color.
     pub color: Hsla,
+    /// Optional background highlight or pill fill color.
     pub background: Option<Hsla>,
+    /// Whether the text is rendered with bold font weight.
     pub bold: bool,
+    /// Whether the text is rendered with italic font style.
     pub italic: bool,
+    /// Optional underline decoration (solid or wavy).
     pub underline: Option<UnderlineDecoration>,
+    /// Whether the text is rendered with a strikethrough line.
     pub strikethrough: bool,
 }
 
