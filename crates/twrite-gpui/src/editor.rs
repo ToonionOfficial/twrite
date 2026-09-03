@@ -72,6 +72,110 @@ impl Editor {
         }
     }
 
+    /// Scrolls the viewport so that the cursor is visible.
+    ///
+    /// Ensures a 1-line margin above and below the cursor when possible.
+    pub fn scroll_to_cursor(&mut self, window: Option<&Window>) {
+        let total_lines = self.buffer.len_lines();
+        if total_lines == 0 {
+            self.scroll_row = 0;
+            return;
+        }
+
+        let cursor_row = self
+            .buffer
+            .cursor_point()
+            .row
+            .min(total_lines.saturating_sub(1));
+
+        // 1. Upward scroll check: if cursor is above scroll_row (with 1-line margin)
+        let margin_lines = 1;
+        if cursor_row < self.scroll_row + margin_lines {
+            self.scroll_row = cursor_row.saturating_sub(margin_lines);
+            return;
+        }
+
+        // 2. Downward scroll check
+        let bounds = match self.last_bounds {
+            Some(b) => b,
+            None => return,
+        };
+
+        let viewport_height = bounds.size.height;
+        if viewport_height <= px(0.0) {
+            return;
+        }
+
+        let line_height = self.config.line_height;
+        let margin = line_height * margin_lines as f32;
+
+        if self.config.line_wrap
+            && let Some(win) = window
+        {
+            let gutter_width = if self.config.line_numbers {
+                px(48.0)
+            } else {
+                px(0.0)
+            };
+            let wrap_width = Some((bounds.size.width - gutter_width - px(24.0)).max(px(50.0)));
+            let font = win.text_style().font();
+
+            let get_row_visual_lines = |row: usize| -> usize {
+                let raw_line = self.buffer.line_to_string(row);
+                let line_text = raw_line.trim_end_matches(['\r', '\n']);
+                if line_text.is_empty() {
+                    return 1;
+                }
+                let runs = [TextRun {
+                    len: line_text.len(),
+                    font: font.clone(),
+                    color: self.theme.foreground,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                }];
+                win.text_system()
+                    .shape_text(
+                        line_text.to_string().into(),
+                        self.config.font_size,
+                        &runs,
+                        wrap_width,
+                        None,
+                    )
+                    .ok()
+                    .and_then(|mut l| l.pop())
+                    .map(|l| l.wrap_boundaries.len() + 1)
+                    .unwrap_or(1)
+            };
+
+            // Work backwards from cursor_row to find the earliest row that fits in viewport
+            let mut accumulated = line_height * get_row_visual_lines(cursor_row) as f32;
+            let mut new_scroll_row = cursor_row;
+
+            while new_scroll_row > 0 {
+                let prev_lines = get_row_visual_lines(new_scroll_row - 1);
+                let prev_height = line_height * prev_lines as f32;
+                if accumulated + prev_height + margin > viewport_height {
+                    break;
+                }
+                accumulated += prev_height;
+                new_scroll_row -= 1;
+            }
+
+            if new_scroll_row > self.scroll_row {
+                self.scroll_row = new_scroll_row;
+            }
+        } else {
+            // Unwrapped / fast path
+            let visible_lines = (viewport_height / line_height).floor() as usize;
+            let effective_visible = visible_lines.saturating_sub(margin_lines).max(1);
+
+            if cursor_row >= self.scroll_row + effective_visible {
+                self.scroll_row = cursor_row.saturating_sub(effective_visible.saturating_sub(1));
+            }
+        }
+    }
+
     pub fn offset_for_position(&self, pos: Point<Pixels>, window: &Window) -> usize {
         let bounds = match self.last_bounds {
             Some(b) => b,
@@ -161,7 +265,7 @@ impl Editor {
     fn handle_key_down(
         &mut self,
         event: &KeyDownEvent,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         let key_event = match crate::input::translate_key_down(event) {
@@ -330,11 +434,7 @@ impl Editor {
             }
         }
 
-        let cursor_row = self.buffer.cursor_point().row;
-        if cursor_row < self.scroll_row {
-            self.scroll_row = cursor_row;
-        }
-
+        self.scroll_to_cursor(Some(window));
         cx.notify();
     }
 
@@ -360,6 +460,7 @@ impl Editor {
             self.selection = Some(Selection::point(offset));
         }
 
+        self.scroll_to_cursor(Some(window));
         cx.notify();
     }
 
@@ -379,6 +480,7 @@ impl Editor {
                 self.selection = Some(Selection::point(offset));
             }
 
+            self.scroll_to_cursor(Some(window));
             cx.notify();
         }
     }
