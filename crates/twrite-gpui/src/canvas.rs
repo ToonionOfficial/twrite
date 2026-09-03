@@ -1,8 +1,126 @@
 use gpui::*;
-use twrite_core::{Point as BufferPoint, StyleSpan, UnderlineDecoration, split_line_intervals};
+use twrite_core::{
+    HighlightTag, Point as BufferPoint, StyleSpan, StyleValue, UnderlineDecoration,
+    split_line_intervals,
+};
 
 use crate::editor::Editor;
 use crate::theme::EditorTheme;
+
+/// Visual layout metrics and block-level decorations for a single rendered line.
+#[derive(Debug, Clone)]
+pub struct LineMetrics {
+    /// Font size in pixels for this line.
+    pub font_size: Pixels,
+    /// Vertical line height in pixels for this line.
+    pub line_height: Pixels,
+    /// Whether this line is a blockquote.
+    pub is_quote: bool,
+    /// Whether this line is part of a fenced code block.
+    pub is_code_block: bool,
+    /// Whether this line is a thematic divider break (---, ***, ___).
+    pub is_thematic_break: bool,
+    /// Whether this line is a task list item (Some(false) for unchecked, Some(true) for checked).
+    pub task_state: Option<bool>,
+}
+
+impl LineMetrics {
+    /// Calculates layout metrics and block-level decorations based on syntax spans and line text.
+    pub fn for_line(
+        raw_line_text: &str,
+        concealed_display_text: &str,
+        spans: &[StyleSpan],
+        base_font_size: Pixels,
+        base_line_height: Pixels,
+    ) -> Self {
+        let mut font_size = base_font_size;
+        let mut line_height = base_line_height;
+
+        let has_h1 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading1)));
+        let has_h2 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading2)));
+        let has_h3 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading3)));
+        let has_h4 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading4)));
+        let has_h5 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading5)));
+        let has_h6 = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading6)));
+
+        if has_h1 {
+            font_size = base_font_size * 2.0;
+            line_height = base_line_height * 1.8;
+        } else if has_h2 {
+            font_size = base_font_size * 1.5;
+            line_height = base_line_height * 1.4;
+        } else if has_h3 {
+            font_size = base_font_size * 1.25;
+            line_height = base_line_height * 1.2;
+        } else if has_h4 {
+            font_size = base_font_size * 1.125;
+            line_height = base_line_height * 1.1;
+        } else if has_h5 {
+            font_size = base_font_size * 1.0;
+            line_height = base_line_height * 1.0;
+        } else if has_h6 {
+            font_size = base_font_size * 0.875;
+            line_height = base_line_height * 0.95;
+        }
+
+        let trimmed_raw = raw_line_text.trim_start();
+        let is_quote = trimmed_raw.starts_with("> ") || trimmed_raw == ">";
+
+        let is_code_block = trimmed_raw.starts_with("```")
+            || trimmed_raw.starts_with("~~~")
+            || spans.iter().any(|s| {
+                (raw_line_text.is_empty() || s.range.len() == concealed_display_text.len())
+                    && matches!(s.style, StyleValue::Tag(HighlightTag::Code))
+            });
+
+        let trimmed_break = trimmed_raw.trim_end();
+        let is_thematic_break =
+            (trimmed_break == "---" || trimmed_break == "***" || trimmed_break == "___")
+                && raw_line_text.len() >= 3;
+
+        let is_task_empty = trimmed_raw.starts_with("- [ ] ")
+            || trimmed_raw == "- [ ]"
+            || trimmed_raw.starts_with("* [ ] ")
+            || trimmed_raw == "* [ ]";
+        let is_task_checked = trimmed_raw.starts_with("- [x] ")
+            || trimmed_raw == "- [x]"
+            || trimmed_raw.starts_with("- [X] ")
+            || trimmed_raw == "- [X]"
+            || trimmed_raw.starts_with("* [x] ")
+            || trimmed_raw == "* [x]"
+            || trimmed_raw.starts_with("* [X] ")
+            || trimmed_raw == "* [X]";
+
+        let task_state = if is_task_empty {
+            Some(false)
+        } else if is_task_checked {
+            Some(true)
+        } else {
+            None
+        };
+
+        Self {
+            font_size,
+            line_height,
+            is_quote,
+            is_code_block,
+            is_thematic_break,
+            task_state,
+        }
+    }
+}
 
 /// Builds styled text runs for a single line by blending syntax spans and active selection.
 pub fn build_line_text_runs(
@@ -11,6 +129,8 @@ pub fn build_line_text_runs(
     selection_line_range: Option<(usize, usize)>,
     font: &Font,
     theme: &EditorTheme,
+    is_code_block: bool,
+    is_checked_task: bool,
 ) -> Vec<TextRun> {
     if line_text.is_empty() {
         return Vec::new();
@@ -22,12 +142,19 @@ pub fn build_line_text_runs(
     for segment in segments {
         let resolved = segment.style.map(|s| theme.resolve_style(s));
 
-        let color = resolved
-            .as_ref()
-            .map(|r| r.color)
-            .unwrap_or(theme.foreground);
+        let color = if is_checked_task && !segment.is_selected {
+            theme.syntax.comment
+        } else {
+            resolved
+                .as_ref()
+                .map(|r| r.color)
+                .unwrap_or(theme.foreground)
+        };
+
         let background_color = if segment.is_selected {
             Some(theme.selection)
+        } else if is_code_block {
+            None
         } else {
             resolved.as_ref().and_then(|r| r.background)
         };
@@ -58,16 +185,23 @@ pub fn build_line_text_runs(
                 },
             });
 
-        let strikethrough = resolved.as_ref().and_then(|r| {
-            if r.strikethrough {
-                Some(StrikethroughStyle {
-                    color: Some(color),
-                    thickness: px(1.0),
-                })
-            } else {
-                None
-            }
-        });
+        let strikethrough = if is_checked_task {
+            Some(StrikethroughStyle {
+                thickness: px(1.0),
+                color: Some(theme.syntax.comment),
+            })
+        } else {
+            resolved.as_ref().and_then(|r| {
+                if r.strikethrough {
+                    Some(StrikethroughStyle {
+                        color: Some(color),
+                        thickness: px(1.0),
+                    })
+                } else {
+                    None
+                }
+            })
+        };
 
         runs.push(TextRun {
             len: segment.range.end - segment.range.start,
@@ -97,19 +231,23 @@ pub fn build_line_text_runs(
     merged
 }
 
-/// Data computed during prepaint for each visible line
+/// Data computed during prepaint for each visible line.
 struct PreparedLine {
     gutter_num: Option<(Point<Pixels>, ShapedLine)>,
     text_origin: Point<Pixels>,
     text_line: WrappedLine,
+    line_height: Pixels,
+    quote_bar_quad: Option<PaintQuad>,
+    code_block_bg_quad: Option<PaintQuad>,
+    thematic_break_quad: Option<PaintQuad>,
     empty_selection_quad: Option<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
+    task_checkbox_quad: Option<PaintQuad>,
 }
 
 /// The state struct (T) passed from `prepaint` to `paint`.
 struct EditorCanvasPrepaint {
     background_quad: PaintQuad,
-    line_height: Pixels,
     lines: Vec<PreparedLine>,
 }
 
@@ -139,8 +277,6 @@ impl RenderOnce for EditorCanvas {
                 let theme = editor.theme.clone();
                 let config = editor.config.clone();
                 let font = window.text_style().font();
-                let font_size = config.font_size;
-                let line_height = config.line_height;
 
                 let gutter_width = if config.line_numbers {
                     px(48.0)
@@ -170,7 +306,9 @@ impl RenderOnce for EditorCanvas {
                 });
 
                 let mut lines: Vec<PreparedLine> = Vec::new();
+                let mut visible_line_layouts: Vec<crate::editor::VisibleLineLayout> = Vec::new();
                 let mut current_y = bounds.top();
+                let mut computed_cursor_pixel = None;
 
                 for row in scroll_row..total_lines {
                     if current_y >= bounds.bottom() {
@@ -193,7 +331,7 @@ impl RenderOnce for EditorCanvas {
 
                         let shaped = window.text_system().shape_line(
                             line_num_str.into(),
-                            font_size,
+                            config.font_size,
                             &[TextRun {
                                 len: 3,
                                 font: font.clone(),
@@ -216,14 +354,26 @@ impl RenderOnce for EditorCanvas {
                         Vec::new()
                     };
 
+                    let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
+
+                    let metrics = LineMetrics::for_line(
+                        line_text,
+                        &concealed.display_text,
+                        &concealed.spans,
+                        config.font_size,
+                        config.line_height,
+                    );
+
                     let selection_line_range = if let Some(sel) = selection {
                         let sel_range = sel.byte_range();
                         if sel_range.end > line_start_byte && sel_range.start < line_end_byte {
-                            let sel_start = sel_range
+                            let raw_start = sel_range
                                 .start
                                 .saturating_sub(line_start_byte)
                                 .min(line_text.len());
-                            let sel_end = (sel_range.end - line_start_byte).min(line_text.len());
+                            let raw_end = (sel_range.end - line_start_byte).min(line_text.len());
+                            let sel_start = concealed.source_to_display(raw_start);
+                            let sel_end = concealed.source_to_display(raw_end);
                             if sel_end > sel_start {
                                 Some((sel_start, sel_end))
                             } else {
@@ -236,19 +386,56 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
+                    let is_concealed_task = metrics.task_state.is_some()
+                        && line_text.len() != concealed.display_text.len();
+                    let is_checked_task = is_concealed_task && metrics.task_state == Some(true);
+
+                    let (task_checkbox_quad, line_text_origin_x) = if is_concealed_task {
+                        let checked = metrics.task_state.unwrap();
+                        let indent = line_text.len() - line_text.trim_start().len();
+                        let box_size = px(15.0);
+                        let box_x = text_origin_x + px((indent as f32) * 8.0);
+                        let box_y = current_y + (metrics.line_height - box_size) / 2.0;
+
+                        if checked {
+                            let quad = fill(
+                                Bounds::new(point(box_x, box_y), size(box_size, box_size)),
+                                theme.syntax.function,
+                            )
+                            .corner_radii(px(3.5))
+                            .border_widths(px(1.5))
+                            .border_color(theme.syntax.function);
+
+                            (Some(quad), box_x + px(24.0))
+                        } else {
+                            let quad = fill(
+                                Bounds::new(point(box_x, box_y), size(box_size, box_size)),
+                                gpui::hsla(0.65, 0.4, 0.6, 0.1),
+                            )
+                            .corner_radii(px(3.5))
+                            .border_widths(px(1.5))
+                            .border_color(theme.syntax.comment);
+                            (Some(quad), box_x + px(24.0))
+                        }
+                    } else {
+                        (None, text_origin_x)
+                    };
+
                     let runs = build_line_text_runs(
-                        line_text,
-                        &spans,
+                        &concealed.display_text,
+                        &concealed.spans,
                         selection_line_range,
                         &font,
                         &theme,
+                        metrics.is_code_block,
+                        is_checked_task,
                     );
 
                     let text_line = window
                         .text_system()
                         .shape_text(
-                            line_text.to_string().into(),
-                            font_size,
+                            concealed.display_text.clone().into(),
+                            metrics.font_size,
                             &runs,
                             wrap_width,
                             None,
@@ -258,48 +445,121 @@ impl RenderOnce for EditorCanvas {
                         .unwrap_or_default();
 
                     let line_visual_lines = text_line.wrap_boundaries.len() + 1;
-                    let line_total_height = line_height * line_visual_lines;
+                    let line_total_height = metrics.line_height * line_visual_lines;
 
-                    let cursor_quad = if cursor_point.row == row && !is_all_selected {
+                    #[allow(unused_mut)]
+                    let mut visible_links = Vec::new();
+                    #[cfg(feature = "markdown")]
+                    if line_text.contains('[') || line_text.contains('<') {
+                        let extracted = twrite_core::markdown::extract_markdown_links(line_text);
+                        for (src_range, url) in extracted {
+                            let disp_start = concealed.source_to_display(src_range.start);
+                            let disp_end = concealed.source_to_display(src_range.end);
+                            if disp_start < disp_end {
+                                let start_pt =
+                                    text_line.position_for_index(disp_start, metrics.line_height);
+                                let end_pt =
+                                    text_line.position_for_index(disp_end, metrics.line_height);
+                                if let (Some(s), Some(e)) = (start_pt, end_pt) {
+                                    let width = if e.x > s.x { e.x - s.x } else { px(20.0) };
+                                    visible_links.push(crate::editor::VisibleLink {
+                                        bounds: Bounds::new(
+                                            point(line_text_origin_x + s.x, current_y + s.y),
+                                            size(width.max(px(5.0)), metrics.line_height),
+                                        ),
+                                        url,
+                                    });
+                                }
+                            }
+                        }
+                    }
+
+                    let quote_bar_quad = if metrics.is_quote {
+                        Some(fill(
+                            Bounds::new(
+                                point(bounds.left() + gutter_width + px(4.0), current_y),
+                                size(px(3.0), line_total_height),
+                            ),
+                            theme.syntax.comment,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    let code_block_bg_quad = if metrics.is_code_block {
+                        let bg_width = (bounds.size.width - gutter_width - px(8.0)).max(px(0.0));
+                        Some(fill(
+                            Bounds::new(
+                                point(bounds.left() + gutter_width + px(4.0), current_y),
+                                size(bg_width, line_total_height),
+                            ),
+                            theme.syntax.code_bg,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    let thematic_break_quad = if metrics.is_thematic_break {
+                        let width = (bounds.size.width - gutter_width - px(24.0)).max(px(0.0));
+                        let line_y = current_y + metrics.line_height / 2.0;
+                        Some(fill(
+                            Bounds::new(point(text_origin_x, line_y), size(width, px(1.0))),
+                            theme.syntax.punctuation,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    let cursor_quad = if cursor_point.row == row {
                         let col_in_line = cursor_offset
                             .saturating_sub(line_start_byte)
                             .min(line_text.len());
+                        let col_in_display = concealed.source_to_display(col_in_line);
                         let pos = text_line
-                            .position_for_index(col_in_line, line_height)
+                            .position_for_index(col_in_display, metrics.line_height)
                             .unwrap_or(point(px(0.0), px(0.0)));
 
-                        let style = if config.block_cursor {
-                            twrite_core::CursorStyle::Block
-                        } else {
-                            editor.cursor_style
-                        };
+                        computed_cursor_pixel = Some(point(
+                            text_origin_x + pos.x,
+                            current_y + pos.y + metrics.line_height,
+                        ));
 
-                        match style {
-                            twrite_core::CursorStyle::Hidden => None,
-                            twrite_core::CursorStyle::Block => Some(fill(
-                                Bounds::new(
-                                    point(text_origin_x + pos.x, current_y + pos.y),
-                                    size(px(8.5), line_height),
-                                ),
-                                theme.cursor,
-                            )),
-                            twrite_core::CursorStyle::Underline => Some(fill(
-                                Bounds::new(
-                                    point(
-                                        text_origin_x + pos.x,
-                                        current_y + pos.y + line_height - px(2.0),
+                        if !is_all_selected {
+                            let style = if config.block_cursor {
+                                twrite_core::CursorStyle::Block
+                            } else {
+                                editor.cursor_style
+                            };
+
+                            match style {
+                                twrite_core::CursorStyle::Hidden => None,
+                                twrite_core::CursorStyle::Block => Some(fill(
+                                    Bounds::new(
+                                        point(text_origin_x + pos.x, current_y + pos.y),
+                                        size(px(8.5), metrics.line_height),
                                     ),
-                                    size(px(8.5), px(2.0)),
-                                ),
-                                theme.cursor,
-                            )),
-                            twrite_core::CursorStyle::Bar => Some(fill(
-                                Bounds::new(
-                                    point(text_origin_x + pos.x, current_y + pos.y),
-                                    size(px(2.0), line_height),
-                                ),
-                                theme.cursor,
-                            )),
+                                    theme.cursor,
+                                )),
+                                twrite_core::CursorStyle::Underline => Some(fill(
+                                    Bounds::new(
+                                        point(
+                                            text_origin_x + pos.x,
+                                            current_y + pos.y + metrics.line_height - px(2.0),
+                                        ),
+                                        size(px(8.5), px(2.0)),
+                                    ),
+                                    theme.cursor,
+                                )),
+                                twrite_core::CursorStyle::Bar => Some(fill(
+                                    Bounds::new(
+                                        point(text_origin_x + pos.x, current_y + pos.y),
+                                        size(px(2.0), metrics.line_height),
+                                    ),
+                                    theme.cursor,
+                                )),
+                            }
+                        } else {
+                            None
                         }
                     } else {
                         None
@@ -313,7 +573,7 @@ impl RenderOnce for EditorCanvas {
                                 Some(fill(
                                     Bounds::new(
                                         point(text_origin_x, current_y),
-                                        size(px(6.0), line_height),
+                                        size(px(6.0), metrics.line_height),
                                     ),
                                     theme.selection,
                                 ))
@@ -329,18 +589,47 @@ impl RenderOnce for EditorCanvas {
 
                     lines.push(PreparedLine {
                         gutter_num,
-                        text_origin: point(text_origin_x, current_y),
+                        text_origin: point(line_text_origin_x, current_y),
                         text_line,
+                        line_height: metrics.line_height,
+                        quote_bar_quad,
+                        code_block_bg_quad,
+                        thematic_break_quad,
                         empty_selection_quad,
                         cursor_quad,
+                        task_checkbox_quad,
+                    });
+
+                    let checkbox_box_x = if is_concealed_task {
+                        let indent = line_text.len() - line_text.trim_start().len();
+                        text_origin_x + px((indent as f32) * 8.0)
+                    } else {
+                        px(0.0)
+                    };
+
+                    visible_line_layouts.push(crate::editor::VisibleLineLayout {
+                        row,
+                        top: current_y,
+                        bottom: current_y + line_total_height,
+                        line_start_byte,
+                        line_len_bytes: line_text.len(),
+                        text_origin_x: line_text_origin_x,
+                        line_height: metrics.line_height,
+                        is_task_checkbox: is_concealed_task,
+                        checkbox_box_x,
+                        links: visible_links,
                     });
 
                     current_y += line_total_height;
                 }
 
+                editor_handle.update(cx, |editor, _| {
+                    editor.last_cursor_pixel = computed_cursor_pixel;
+                    editor.visible_lines = visible_line_layouts;
+                });
+
                 EditorCanvasPrepaint {
                     background_quad: fill(bounds, theme.background),
-                    line_height,
                     lines,
                 }
             },
@@ -348,10 +637,25 @@ impl RenderOnce for EditorCanvas {
                 window.paint_quad(prepaint.background_quad);
 
                 for line in prepaint.lines {
+                    let is_break = line.thematic_break_quad.is_some();
+
+                    if let Some(code_bg) = line.code_block_bg_quad {
+                        window.paint_quad(code_bg);
+                    }
+                    if let Some(quote_bar) = line.quote_bar_quad {
+                        window.paint_quad(quote_bar);
+                    }
+                    if let Some(thematic_break) = line.thematic_break_quad {
+                        window.paint_quad(thematic_break);
+                    }
+                    if let Some(cb_quad) = line.task_checkbox_quad {
+                        window.paint_quad(cb_quad);
+                    }
+
                     if let Some((origin, shaped_num)) = line.gutter_num {
                         let _ = shaped_num.paint(
                             origin,
-                            prepaint.line_height,
+                            line.line_height,
                             TextAlign::Left,
                             None,
                             window,
@@ -359,14 +663,17 @@ impl RenderOnce for EditorCanvas {
                         );
                     }
 
-                    let _ = line.text_line.paint_background(
-                        line.text_origin,
-                        prepaint.line_height,
-                        TextAlign::Left,
-                        None,
-                        window,
-                        cx,
-                    );
+                    if !is_break {
+                        let _ = line.text_line.paint_background(
+                            line.text_origin,
+                            line.line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
+                    }
+
                     if let Some(empty_sel) = line.empty_selection_quad {
                         window.paint_quad(empty_sel);
                     }
@@ -375,14 +682,16 @@ impl RenderOnce for EditorCanvas {
                         window.paint_quad(cursor_quad);
                     }
 
-                    let _ = line.text_line.paint(
-                        line.text_origin,
-                        prepaint.line_height,
-                        TextAlign::Left,
-                        None,
-                        window,
-                        cx,
-                    );
+                    if !is_break {
+                        let _ = line.text_line.paint(
+                            line.text_origin,
+                            line.line_height,
+                            TextAlign::Left,
+                            None,
+                            window,
+                            cx,
+                        );
+                    }
                 }
             },
         )

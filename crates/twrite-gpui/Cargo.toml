@@ -9,3 +9,7 @@ description = "GPUI rendering, canvas text-shaping, and editor component for twr
 [dependencies]
 gpui = { workspace = true }
 twrite-core = { workspace = true }
+
+[features]
+default = []
+markdown = ["twrite-core/markdown"]

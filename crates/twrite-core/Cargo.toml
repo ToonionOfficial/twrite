@@ -9,3 +9,8 @@ description = "Headless buffer, movement, syntax, and hook primitives for twrite
 [dependencies]
 ropey = { workspace = true }
 thiserror = { workspace = true }
+pulldown-cmark = { workspace = true, optional = true }
+
+[features]
+default = []
+markdown = ["dep:pulldown-cmark"]

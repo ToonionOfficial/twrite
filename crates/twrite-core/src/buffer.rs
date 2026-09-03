@@ -1,9 +1,11 @@
 use std::ops::Range;
+use std::path::Path;
 
 use ropey::Rope;
 
 use crate::{
     coordinates::Point,
+    error::{EditorError, Result},
     history::{Edit, History, Transaction},
 };
 
@@ -472,5 +474,81 @@ impl EditorBuffer {
             self.history.undo_stack.push(tx);
             self.version += 1;
         }
+    }
+
+    /// Checks whether `offset` falls on a valid UTF-8 character boundary.
+    pub fn is_char_boundary(&self, offset: usize) -> bool {
+        if offset > self.text.len_bytes() {
+            return false;
+        }
+        let char_idx = self.text.byte_to_char(offset);
+        self.text.char_to_byte(char_idx) == offset
+    }
+
+    /// Validates that `offset` is within bounds and lies on a UTF-8 character boundary.
+    pub fn validate_offset(&self, offset: usize) -> Result<()> {
+        let len = self.text.len_bytes();
+        if offset > len {
+            return Err(EditorError::OutOfBounds { offset, len });
+        }
+        if !self.is_char_boundary(offset) {
+            return Err(EditorError::InvalidCharBoundary { offset });
+        }
+        Ok(())
+    }
+
+    /// Validates that `range` is well-formed, within bounds, and on UTF-8 character boundaries.
+    pub fn validate_range(&self, range: &Range<usize>) -> Result<()> {
+        let len = self.text.len_bytes();
+        if range.start > range.end || range.end > len {
+            return Err(EditorError::InvalidRange {
+                range: range.clone(),
+                len,
+            });
+        }
+        if !self.is_char_boundary(range.start) {
+            return Err(EditorError::InvalidCharBoundary {
+                offset: range.start,
+            });
+        }
+        if !self.is_char_boundary(range.end) {
+            return Err(EditorError::InvalidCharBoundary { offset: range.end });
+        }
+        Ok(())
+    }
+
+    /// Attempts to read the text of the given `row`, returning an error if out of bounds.
+    pub fn try_line_to_string(&self, row: usize) -> Result<String> {
+        let total_lines = self.text.len_lines();
+        if row >= total_lines {
+            return Err(EditorError::InvalidRow { row, total_lines });
+        }
+        Ok(self.text.line(row).to_string())
+    }
+
+    /// Attempts to replace the text within `range`, validating bounds and UTF-8 boundaries.
+    pub fn try_replace_range(&mut self, range: Range<usize>, text: &str) -> Result<()> {
+        self.validate_range(&range)?;
+        self.replace_range(range, text);
+        Ok(())
+    }
+
+    /// Attempts to delete the text within `range`, validating bounds and UTF-8 boundaries.
+    pub fn try_delete_range(&mut self, range: Range<usize>) -> Result<()> {
+        self.validate_range(&range)?;
+        self.delete_range(range);
+        Ok(())
+    }
+
+    /// Loads document text directly from a file path.
+    pub fn from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let content = std::fs::read_to_string(path)?;
+        Ok(Self::new(&content))
+    }
+
+    /// Saves the current buffer contents to a file path.
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        std::fs::write(path, self.text.to_string())?;
+        Ok(())
     }
 }
