@@ -118,12 +118,21 @@ impl LineMetrics {
     }
 }
 
+/// Fonts used when building styled text runs for a line.
+#[derive(Debug, Clone, Copy)]
+pub struct RunFonts<'a> {
+    /// Base font for normal spans.
+    pub base: &'a Font,
+    /// Base font for `Code` spans (bold/italic still derive from it).
+    pub code: &'a Font,
+}
+
 /// Builds styled text runs for a single line by blending syntax spans and active selection.
 pub fn build_line_text_runs(
     line_text: &str,
     spans: &[StyleSpan],
     selection_line_range: Option<(usize, usize)>,
-    font: &Font,
+    fonts: &RunFonts,
     theme: &EditorTheme,
     is_code_block: bool,
     is_checked_task: bool,
@@ -154,8 +163,11 @@ pub fn build_line_text_runs(
         } else {
             resolved.as_ref().and_then(|r| r.background)
         };
-
-        let mut run_font = font.clone();
+        let mut run_font = if matches!(segment.style, Some(StyleValue::Tag(HighlightTag::Code))) {
+            fonts.code.clone()
+        } else {
+            fonts.base.clone()
+        };
         if let Some(r) = resolved.as_ref() {
             if r.bold {
                 run_font.weight = FontWeight::BOLD;
@@ -268,6 +280,72 @@ impl RenderOnce for EditorCanvas {
             move |bounds, window, cx| {
                 editor_handle.update(cx, |editor, _| {
                     editor.last_bounds = Some(bounds);
+                    // Probe + auto-select when inputs change: explicit families,
+                    // code override, or host font. Explicit families are trusted
+                    // verbatim (probed for the indicator only); otherwise the
+                    // first candidate with bold + italic faces wins.
+                    let host = window.text_style().font();
+                    let key = (
+                        editor.config.font_family.clone(),
+                        editor.config.code_font_family.clone(),
+                        host.clone(),
+                    );
+                    if editor.face_probe_key.as_ref() != Some(&key) {
+                        let text_system = window.text_system();
+                        let mut probe_one = |family: &str| {
+                            let mut base = host.clone();
+                            base.family = family.into();
+                            let base_id = text_system.resolve_font(&base);
+                            let mut bold = base.clone();
+                            bold.weight = FontWeight::BOLD;
+                            let mut italic = base.clone();
+                            italic.style = FontStyle::Italic;
+                            (
+                                text_system.resolve_font(&bold) != base_id,
+                                text_system.resolve_font(&italic) != base_id,
+                            )
+                        };
+                        let candidates = editor.config.font_candidates();
+                        let (selected, mut availability) = match editor.config.font_family.clone() {
+                            Some(explicit) => {
+                                let (bold, italic) = probe_one(explicit.as_ref());
+                                (
+                                    Some(explicit),
+                                    crate::editor::FaceAvailability { bold, italic },
+                                )
+                            }
+                            None => match crate::config::EditorConfig::pick_family(
+                                &candidates,
+                                &mut probe_one,
+                            ) {
+                                Some(winner) => {
+                                    let (bold, italic) = probe_one(winner.as_ref());
+                                    (
+                                        Some(winner.clone()),
+                                        crate::editor::FaceAvailability { bold, italic },
+                                    )
+                                }
+                                None => (
+                                    None,
+                                    crate::editor::FaceAvailability {
+                                        bold: false,
+                                        italic: false,
+                                    },
+                                ),
+                            },
+                        };
+                        // An explicitly overridden code family gets its own say.
+                        if let Some(code_family) = &editor.config.code_font_family
+                            && Some(code_family) != selected.as_ref()
+                        {
+                            let (bold, italic) = probe_one(code_family.as_ref());
+                            availability.bold &= bold;
+                            availability.italic &= italic;
+                        }
+                        editor.selected_font_family = selected;
+                        editor.face_availability = Some(availability);
+                        editor.face_probe_key = Some(key);
+                    }
                 });
                 // Take the cache out for the frame: the read guard below borrows
                 // the editor immutably, so the cache travels as a local.
@@ -276,7 +354,9 @@ impl RenderOnce for EditorCanvas {
                 let editor = editor_handle.read(cx);
                 let theme = editor.theme.clone();
                 let config = editor.config.clone();
-                let font = window.text_style().font();
+                let host_font = window.text_style().font();
+                let font = editor.resolved_base_font(&host_font);
+                let code_font = editor.resolved_code_font(&host_font);
 
                 let gutter_width = if config.line_numbers {
                     px(48.0)
@@ -429,11 +509,15 @@ impl RenderOnce for EditorCanvas {
                         (None, text_origin_x)
                     };
 
+                    let fonts = RunFonts {
+                        base: &font,
+                        code: &code_font,
+                    };
                     let runs = build_line_text_runs(
                         &concealed.display_text,
                         &concealed.spans,
                         selection_line_range,
-                        &font,
+                        &fonts,
                         &theme,
                         metrics.is_code_block,
                         is_checked_task,

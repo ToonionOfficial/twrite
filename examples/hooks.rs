@@ -124,6 +124,10 @@ fn main() {
                         cx,
                     );
                     ed.config.line_numbers = true;
+                    // No explicit family: the editor auto-selects the first
+                    // platform monospace with bold + italic faces (see
+                    // `Editor::face_availability`). Set `ed.config.font_family
+                    // explicitly to override (e.g. Menlo, Consolas).
                     ed.add_hook(AutoPairsHook::new());
                     ed.add_hook(MarkdownShortcutsHook);
                     ed

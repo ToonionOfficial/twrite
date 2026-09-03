@@ -14,16 +14,16 @@ pub mod layout_cache;
 /// Color palettes, Catppuccin themes, and syntax token style resolution.
 pub mod theme;
 
-pub use canvas::{EditorCanvas, LineMetrics, build_line_text_runs};
+pub use canvas::{EditorCanvas, LineMetrics, RunFonts, build_line_text_runs};
 pub use config::EditorConfig;
-pub use editor::{Editor, VisibleLineLayout, VisibleLink};
+pub use editor::{Editor, FaceAvailability, VisibleLineLayout, VisibleLink};
 pub use layout_cache::{CachedInput, LayoutCache};
 pub use theme::{EditorTheme, ResolvedTokenStyle, SyntaxTheme};
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gpui::{Font, px};
+    use gpui::{Font, FontStyle, FontWeight, px};
     use twrite_core::{HighlightTag, StyleSpan};
 
     #[test]
@@ -62,16 +62,48 @@ mod tests {
         let font = Font::default();
         let spans = vec![StyleSpan::tag(0..4, HighlightTag::Code)];
 
-        let runs_block = build_line_text_runs("test", &spans, None, &font, &theme, true, false);
+        let runs_block = build_line_text_runs(
+            "test",
+            &spans,
+            None,
+            &RunFonts {
+                base: &font,
+                code: &font,
+            },
+            &theme,
+            true,
+            false,
+        );
         assert_eq!(runs_block.len(), 1);
         assert!(runs_block[0].background_color.is_none());
 
-        let runs_inline = build_line_text_runs("test", &spans, None, &font, &theme, false, false);
+        let runs_inline = build_line_text_runs(
+            "test",
+            &spans,
+            None,
+            &RunFonts {
+                base: &font,
+                code: &font,
+            },
+            &theme,
+            false,
+            false,
+        );
         assert_eq!(runs_inline.len(), 1);
         assert_eq!(runs_inline[0].background_color, Some(theme.syntax.code_bg));
 
-        let runs_task_checked =
-            build_line_text_runs("test", &spans, None, &font, &theme, false, true);
+        let runs_task_checked = build_line_text_runs(
+            "test",
+            &spans,
+            None,
+            &RunFonts {
+                base: &font,
+                code: &font,
+            },
+            &theme,
+            false,
+            true,
+        );
         assert_eq!(runs_task_checked.len(), 1);
         assert!(runs_task_checked[0].strikethrough.is_some());
     }
@@ -118,5 +150,89 @@ mod tests {
         assert!(link.bounds.contains(&gpui::point(px(60.0), px(25.0))));
         assert!(!link.bounds.contains(&gpui::point(px(120.0), px(25.0))));
         assert_eq!(link.url, "https://example.com");
+    }
+
+    /// Returns the font of the run covering byte `idx` in `text`.
+    fn run_font_at(runs: &[gpui::TextRun], text: &str, idx: usize) -> gpui::Font {
+        let mut offset = 0;
+        for run in runs {
+            if idx < offset + run.len {
+                return run.font.clone();
+            }
+            offset += run.len;
+        }
+        panic!("idx {idx} out of runs for {text:?}");
+    }
+
+    #[test]
+    fn test_build_line_text_runs_bold_italic_fonts() {
+        // Proves the span -> run pipeline requests real faces: if bold/italic
+        // don't *paint* differently, the cause is missing OS font faces
+        // (silent font-kit fallback), not this pipeline.
+        let theme = EditorTheme::default();
+        let font = Font::default();
+        let text = "Hi bold and ital!";
+        let spans = vec![
+            StyleSpan::tag(3..7, HighlightTag::Bold),
+            StyleSpan::tag(12..16, HighlightTag::Italic),
+        ];
+        let runs = build_line_text_runs(
+            text,
+            &spans,
+            None,
+            &RunFonts {
+                base: &font,
+                code: &font,
+            },
+            &theme,
+            false,
+            false,
+        );
+
+        let plain = run_font_at(&runs, text, 0);
+        assert_eq!(plain.weight, FontWeight::NORMAL);
+        assert_eq!(plain.style, FontStyle::Normal);
+
+        let bold = run_font_at(&runs, text, 4);
+        assert_eq!(bold.weight, FontWeight::BOLD);
+        assert_eq!(bold.style, FontStyle::Normal);
+
+        let italic = run_font_at(&runs, text, 13);
+        assert_eq!(italic.weight, FontWeight::NORMAL);
+        assert_eq!(italic.style, FontStyle::Italic);
+    }
+
+    #[test]
+    fn test_build_line_text_runs_code_spans_use_code_font() {
+        let theme = EditorTheme::default();
+        let font = Font::default();
+        let code_font = Font {
+            family: "CodeFam".into(),
+            ..Font::default()
+        };
+        let text = "a `b` c";
+        let spans = vec![StyleSpan::tag(2..5, HighlightTag::Code)];
+        let runs = build_line_text_runs(
+            text,
+            &spans,
+            None,
+            &RunFonts {
+                base: &font,
+                code: &code_font,
+            },
+            &theme,
+            false,
+            false,
+        );
+
+        assert_eq!(
+            run_font_at(&runs, text, 0).family.as_ref(),
+            font.family.as_ref()
+        );
+        assert_eq!(run_font_at(&runs, text, 3).family.as_ref(), "CodeFam");
+        assert_eq!(
+            run_font_at(&runs, text, 6).family.as_ref(),
+            font.family.as_ref()
+        );
     }
 }

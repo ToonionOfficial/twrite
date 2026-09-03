@@ -5,6 +5,31 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Syntax-agnostic core**: new `HighlightTag::{Blockquote, HorizontalRule, TaskUnchecked, TaskChecked}` structural tags; `SyntaxHighlighter::extract_links` and `EditorHook::on_click` extension points (both with default impls).
+- **Battery registry**: `twrite_core::batteries` module documenting the contract and checklist for adding feature-gated batteries; Markdown moved to `batteries/markdown.rs` with the public `twrite_core::markdown` / `twrite::markdown` paths unchanged.
+- **Viewport input cache**: new `twrite_gpui::{LayoutCache, CachedInput}` sharing highlight/conceal/link work across prepaint and hit-testing, with hit/miss stats.
+- **Thousand-line perf proofs**: headless `highlight_perf` / `layout_perf` integration tests (deterministic fixtures, `#[ignore]`d timing cases) asserting cache hit rates.
+- `MarkdownHook::with_config` and `interactive_tasks` toggle.
+- **Font handling**: `EditorConfig::{font_family, code_font_family}` (`None` inherits
+  the host GPUI text style); `Editor::face_availability` surfacing bold/italic
+  face probe results from prepaint; `RunFonts` param bundle for
+  `build_line_text_runs` (code spans use the code font).
+- **Font auto-select**: `EditorConfig::platform_monospace_candidates` plus
+  `pick_family` choosing the first candidate with bold + italic faces at paint
+  time; explicit `font_family` is trusted verbatim; `Editor::selected_font_family`
+  and family-aware status reporting; examples use the default auto-select path.
+
+### Changed
+- **BREAKING**: `Editor::offset_for_position` now takes `&mut self`.
+- **BREAKING**: `VisibleLineLayout` gains `task_state`; `Editor` gains `layout_cache` and `highlighter_rev` (struct literals need updating).
+- **BREAKING**: new `HighlightTag` variants (exhaustive matches need new arms); theme maps them to comment/punctuation/string.
+- `LineMetrics::for_line` derives quote/divider/task state solely from tags (no raw string checks); code-block detection via full-line `Code` spans.
+- Hit-testing (`offset_for_position`, link and checkbox lookup) uses binary search over visible lines.
+- Click handling dispatches task toggles to hooks with `after_edit` / `on_selection_change` notifications; cursor offset preserved.
+
 ## [0.1.0] - 2026-09-03
 
 ### Added
