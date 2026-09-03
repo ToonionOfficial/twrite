@@ -306,6 +306,7 @@ impl RenderOnce for EditorCanvas {
                 });
 
                 let mut lines: Vec<PreparedLine> = Vec::new();
+                let mut visible_line_layouts: Vec<crate::editor::VisibleLineLayout> = Vec::new();
                 let mut current_y = bounds.top();
                 let mut computed_cursor_pixel = None;
 
@@ -573,11 +574,31 @@ impl RenderOnce for EditorCanvas {
                         task_checkbox_quad,
                     });
 
+                    let checkbox_box_x = if is_concealed_task {
+                        let indent = line_text.len() - line_text.trim_start().len();
+                        text_origin_x + px((indent as f32) * 8.0)
+                    } else {
+                        px(0.0)
+                    };
+
+                    visible_line_layouts.push(crate::editor::VisibleLineLayout {
+                        row,
+                        top: current_y,
+                        bottom: current_y + line_total_height,
+                        line_start_byte,
+                        line_len_bytes: line_text.len(),
+                        text_origin_x: line_text_origin_x,
+                        line_height: metrics.line_height,
+                        is_task_checkbox: is_concealed_task,
+                        checkbox_box_x,
+                    });
+
                     current_y += line_total_height;
                 }
 
                 editor_handle.update(cx, |editor, _| {
                     editor.last_cursor_pixel = computed_cursor_pixel;
+                    editor.visible_lines = visible_line_layouts;
                 });
 
                 EditorCanvasPrepaint {
