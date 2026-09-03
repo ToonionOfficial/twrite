@@ -1,5 +1,8 @@
 //! Core headless text buffer, syntax, movement, selection, and hook primitives.
 
+/// Battery registry: optional, feature-gated editor batteries (see it for the
+/// contract and checklist for adding new batteries).
+pub mod batteries;
 /// Text buffer implementation backed by a Rope.
 pub mod buffer;
 /// 2D text coordinates (row and column).
@@ -11,7 +14,11 @@ pub mod history;
 /// Extensible hook system and input interceptors.
 pub mod hook;
 /// CommonMark and GitHub Flavored Markdown highlighter and interactive hook.
+///
+/// Lives at `src/batteries/markdown.rs`; this shim keeps the public path
+/// `twrite_core::markdown` stable regardless of file layout.
 #[cfg(feature = "markdown")]
+#[path = "batteries/markdown.rs"]
 pub mod markdown;
 /// Text movement and boundary calculation primitives.
 pub mod movement;

@@ -9,6 +9,7 @@ use twrite_core::{
 use crate::{
     canvas::{EditorCanvas, build_line_text_runs},
     config::EditorConfig,
+    layout_cache::LayoutCache,
     theme::EditorTheme,
 };
 
@@ -24,6 +25,12 @@ pub struct Editor {
     pub hooks: Vec<Box<dyn EditorHook>>,
     /// Active syntax highlighter computing semantic and direct style spans.
     pub highlighter: Option<Arc<dyn SyntaxHighlighter>>,
+    /// Revision bumped on every highlighter swap so [`LayoutCache`] epochs bust
+    /// even when the buffer version is unchanged (e.g. conceal-mode cycling).
+    pub highlighter_rev: u64,
+    /// Per-version cache of highlight/conceal/link inputs, shared by prepaint
+    /// and hit-testing so each row is parsed once per epoch, not per frame.
+    pub layout_cache: LayoutCache,
     /// Focus handle for keyboard input tracking within GPUI.
     pub focus_handle: FocusHandle,
     /// First visible row index in the viewport.
@@ -76,8 +83,20 @@ pub struct VisibleLineLayout {
     pub is_task_checkbox: bool,
     /// Left X position of the checkbox box.
     pub checkbox_box_x: Pixels,
+    /// Task state for this line, if the highlighter reports one.
+    /// `Some(false)` = unchecked, `Some(true)` = checked.
+    pub task_state: Option<bool>,
     /// Hyperlinks located on this line.
     pub links: Vec<VisibleLink>,
+}
+
+/// Finds the visible line containing vertical position `y` via binary search.
+///
+/// `lines` is sorted by `top` (constructed in paint order in prepaint).
+fn find_visible_line(lines: &[VisibleLineLayout], y: Pixels) -> Option<&VisibleLineLayout> {
+    let idx = lines.partition_point(|l| l.top <= y);
+    let line = lines.get(idx.checked_sub(1)?)?;
+    (y < line.bottom).then_some(line)
 }
 
 impl Editor {
@@ -95,6 +114,8 @@ impl Editor {
             config,
             hooks: Vec::new(),
             highlighter: None,
+            highlighter_rev: 0,
+            layout_cache: LayoutCache::new(),
             focus_handle: cx.focus_handle(),
             scroll_row: 0,
             selection: None,
@@ -131,11 +152,15 @@ impl Editor {
     /// Sets the active syntax highlighter.
     pub fn set_highlighter(&mut self, highlighter: impl SyntaxHighlighter) {
         self.highlighter = Some(Arc::new(highlighter));
+        self.highlighter_rev = self.highlighter_rev.wrapping_add(1);
+        self.layout_cache.clear();
     }
 
     /// Clears the active syntax highlighter, reverting to plain text.
     pub fn clear_highlighter(&mut self) {
         self.highlighter = None;
+        self.highlighter_rev = self.highlighter_rev.wrapping_add(1);
+        self.layout_cache.clear();
     }
 
     /// Enables out-of-the-box CommonMark and GFM editing.
@@ -159,7 +184,7 @@ impl Editor {
         self.config.markdown = config;
         self.set_highlighter(MarkdownHighlighter::with_config(config));
         self.add_hook(AutoPairsHook::new());
-        self.add_hook(MarkdownHook::new());
+        self.add_hook(MarkdownHook::with_config(config));
     }
 
     /// Loads document text from a file into the editor, resetting cursor and undo history.
@@ -171,6 +196,8 @@ impl Editor {
         self.buffer = new_buffer;
         self.scroll_row = 0;
         self.selection = None;
+        // Fresh buffer may reuse version 0: bust the cache explicitly.
+        self.layout_cache.clear();
         Ok(())
     }
 
@@ -379,7 +406,10 @@ impl Editor {
     }
 
     /// Calculates the byte offset in the text buffer corresponding to a window pixel position.
-    pub fn offset_for_position(&self, pos: Point<Pixels>, window: &Window) -> usize {
+    ///
+    /// Shares [`LayoutCache`] inputs with prepaint: the highlight/conceal work
+    /// for the target row is a cache hit unless the buffer changed since paint.
+    pub fn offset_for_position(&mut self, pos: Point<Pixels>, window: &Window) -> usize {
         let bounds = match self.last_bounds {
             Some(b) => b,
             None => return self.buffer.cursor_offset(),
@@ -402,39 +432,39 @@ impl Editor {
                 return (last.line_start_byte + last.line_len_bytes).min(self.buffer.len_bytes());
             }
 
-            // Find the visible line containing pos.y
-            let target_line = match self
-                .visible_lines
-                .iter()
-                .find(|l| pos.y >= l.top && pos.y < l.bottom)
-            {
+            // Find the visible line containing pos.y (binary search: sorted by top).
+            let target_line = match find_visible_line(&self.visible_lines, pos.y) {
                 Some(l) => l,
                 None => last,
             };
 
             let row = target_line.row;
+            let line_start_byte = target_line.line_start_byte;
+            let task_state = target_line.task_state;
+            let text_origin_x = target_line.text_origin_x;
+            let line_top = target_line.top;
+            let line_height = target_line.line_height;
             let raw_line = self.buffer.line_to_string(row);
             let line_text = raw_line.trim_end_matches(['\r', '\n']);
-            let line_start_byte = target_line.line_start_byte;
 
-            if line_text.is_empty() || pos.x <= target_line.text_origin_x {
+            if line_text.is_empty() || pos.x <= text_origin_x {
                 return line_start_byte;
             }
 
-            let spans = if let Some(ref highlighter) = self.highlighter {
-                highlighter.highlight_line(&self.buffer, row, line_text)
-            } else {
-                Vec::new()
-            };
+            let cursor_row = self.buffer.cursor_point().row;
+            let highlighter_rev = self.highlighter_rev;
+            let cached = self.layout_cache.cached_input(
+                &self.buffer,
+                self.highlighter.as_deref(),
+                highlighter_rev,
+                cursor_row,
+                row,
+                line_text,
+            );
+            let concealed = &cached.concealed;
 
-            let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
-
-            let is_concealed_task = target_line.is_task_checkbox;
-            let is_checked_task = is_concealed_task
-                && (line_text.trim_start().starts_with("- [x]")
-                    || line_text.trim_start().starts_with("- [X]")
-                    || line_text.trim_start().starts_with("* [x]")
-                    || line_text.trim_start().starts_with("* [X]"));
+            let is_checked_task =
+                task_state == Some(true) && line_text.len() != concealed.display_text.len();
 
             let font = window.text_style().font();
             let runs = build_line_text_runs(
@@ -448,8 +478,7 @@ impl Editor {
             );
 
             let wrap_width = if self.config.line_wrap {
-                let available =
-                    bounds.size.width - (target_line.text_origin_x - bounds.left()) - px(12.0);
+                let available = bounds.size.width - (text_origin_x - bounds.left()) - px(12.0);
                 Some(available.max(px(50.0)))
             } else {
                 None
@@ -468,12 +497,12 @@ impl Editor {
                 .and_then(|mut l| l.pop())
                 .unwrap_or_default();
 
-            let line_rel_y = (pos.y - target_line.top).max(px(0.0));
-            let line_rel_x = (pos.x - target_line.text_origin_x).max(px(0.0));
+            let line_rel_y = (pos.y - line_top).max(px(0.0));
+            let line_rel_x = (pos.x - text_origin_x).max(px(0.0));
             let rel_pos = point(line_rel_x, line_rel_y);
 
             let col_display = text_line
-                .closest_index_for_position(rel_pos, target_line.line_height)
+                .closest_index_for_position(rel_pos, line_height)
                 .unwrap_or_else(|idx| idx);
 
             let col_src = concealed.display_to_source(col_display);
@@ -756,12 +785,10 @@ impl Editor {
             return None;
         }
 
-        for line in &self.visible_lines {
-            if pos.y >= line.top && pos.y < line.bottom {
-                for link in &line.links {
-                    if link.bounds.contains(&pos) {
-                        return Some(link.url.clone());
-                    }
+        if let Some(line) = find_visible_line(&self.visible_lines, pos.y) {
+            for link in &line.links {
+                if link.bounds.contains(&pos) {
+                    return Some(link.url.clone());
                 }
             }
         }
@@ -770,21 +797,6 @@ impl Editor {
     }
 
     fn is_position_over_task_checkbox(&self, pos: Point<Pixels>, _window: &Window) -> bool {
-        let interactive_tasks = {
-            #[cfg(feature = "markdown")]
-            {
-                self.config.markdown.interactive_tasks
-            }
-            #[cfg(not(feature = "markdown"))]
-            {
-                false
-            }
-        };
-
-        if !interactive_tasks {
-            return false;
-        }
-
         let bounds = match self.last_bounds {
             Some(b) => b,
             None => return false,
@@ -794,27 +806,10 @@ impl Editor {
             return false;
         }
 
-        for line in &self.visible_lines {
-            if pos.y >= line.top && pos.y < line.bottom {
-                if line.is_task_checkbox {
-                    return pos.x >= line.checkbox_box_x && pos.x <= line.checkbox_box_x + px(22.0);
-                } else {
-                    let raw_line = self.buffer.line_to_string(line.row);
-                    let trimmed = raw_line.trim_start();
-                    let is_task = trimmed.starts_with("- [ ] ")
-                        || trimmed.starts_with("* [ ] ")
-                        || trimmed.starts_with("- [x] ")
-                        || trimmed.starts_with("* [x] ")
-                        || trimmed.starts_with("- [X] ")
-                        || trimmed.starts_with("* [X] ");
-                    if !is_task {
-                        return false;
-                    }
-                    let indent = raw_line.len() - trimmed.len();
-                    let box_x = line.text_origin_x + px((indent as f32) * 8.0);
-                    return pos.x >= box_x && pos.x <= box_x + px(50.0);
-                }
-            }
+        if let Some(line) = find_visible_line(&self.visible_lines, pos.y)
+            && line.is_task_checkbox
+        {
+            return pos.x >= line.checkbox_box_x && pos.x <= line.checkbox_box_x + px(22.0);
         }
 
         false
@@ -836,51 +831,49 @@ impl Editor {
             return;
         }
 
-        let interactive_tasks = {
-            #[cfg(feature = "markdown")]
+        // Dispatch clicks to hooks first (e.g. MarkdownHook toggles task checkboxes).
+        // Hooks operate on buffer (row, col) coordinates and decide interactivity
+        // themselves via their own config.
+        if !event.modifiers.shift {
+            // Copy hit-test scalars first: `offset_for_position` needs `&mut`.
+            let clicked = find_visible_line(&self.visible_lines, event.position.y)
+                .map(|l| (l.row, l.line_start_byte, l.line_len_bytes));
+
+            if let Some((row, line_start_byte, line_len_bytes)) = clicked
+                && self.is_position_over_task_checkbox(event.position, window)
             {
-                self.config.markdown.interactive_tasks
-            }
-            #[cfg(not(feature = "markdown"))]
-            {
-                true
-            }
-        };
-
-        if interactive_tasks && !event.modifiers.shift {
-            let clicked_task_line = self
-                .visible_lines
-                .iter()
-                .find(|l| event.position.y >= l.top && event.position.y < l.bottom);
-
-            if let Some(target_line) = clicked_task_line {
-                let is_over = self.is_position_over_task_checkbox(event.position, window);
-                if is_over {
-                    let raw_line = self.buffer.line_to_string(target_line.row);
-                    let trimmed = raw_line.trim_start();
-                    let indent = raw_line.len() - trimmed.len();
-                    let is_task_empty =
-                        trimmed.starts_with("- [ ] ") || trimmed.starts_with("* [ ] ");
-                    let is_task_checked = trimmed.starts_with("- [x] ")
-                        || trimmed.starts_with("* [x] ")
-                        || trimmed.starts_with("- [X] ")
-                        || trimmed.starts_with("* [X] ");
-
-                    if is_task_empty || is_task_checked {
-                        let old_cursor = self.buffer.cursor_offset();
-                        let check_offset = target_line.line_start_byte + indent + 3;
-                        let new_char = if is_task_empty { "x" } else { " " };
-                        self.buffer
-                            .replace_range(check_offset..check_offset + 1, new_char);
-                        self.buffer.set_cursor_offset(old_cursor);
-                        self.selection = None;
-                        self.is_selecting = false;
+                let offset = self.offset_for_position(event.position, window);
+                let col = offset.saturating_sub(line_start_byte).min(line_len_bytes);
+                let initial_version = self.buffer.version();
+                let mut consumed = false;
+                let mut hook_idx = 0;
+                while hook_idx < self.hooks.len() {
+                    let mut ctx = HookContext::new(
+                        &mut self.buffer,
+                        &mut self.selection,
+                        &mut self.cursor_style,
+                    );
+                    if self.hooks[hook_idx].on_click(&mut ctx, row, col)
+                        == twrite_core::HookOutcome::Consumed
+                    {
+                        consumed = true;
+                        break;
+                    }
+                    hook_idx += 1;
+                }
+                if consumed {
+                    if self.buffer.version() != initial_version {
                         for hook in &mut self.hooks {
                             hook.after_edit(&mut self.buffer);
                         }
-                        cx.notify();
-                        return;
                     }
+                    for hook in &mut self.hooks {
+                        hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                    }
+                    self.selection = None;
+                    self.is_selecting = false;
+                    cx.notify();
+                    return;
                 }
             }
         }

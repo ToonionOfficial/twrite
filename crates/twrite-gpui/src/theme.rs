@@ -170,6 +170,10 @@ impl EditorTheme {
                 c.a = 0.0;
                 c
             }
+            HighlightTag::Blockquote => self.syntax.comment,
+            HighlightTag::HorizontalRule => self.syntax.punctuation,
+            HighlightTag::TaskUnchecked => self.syntax.comment,
+            HighlightTag::TaskChecked => self.syntax.string,
         }
     }
 

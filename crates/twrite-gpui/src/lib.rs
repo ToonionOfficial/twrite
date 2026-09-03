@@ -9,12 +9,15 @@ pub mod config;
 pub mod editor;
 /// Translation helpers from GPUI key events to normalized twrite key events.
 pub mod input;
+/// Per-version viewport cache for highlight/conceal/link inputs.
+pub mod layout_cache;
 /// Color palettes, Catppuccin themes, and syntax token style resolution.
 pub mod theme;
 
 pub use canvas::{EditorCanvas, LineMetrics, build_line_text_runs};
 pub use config::EditorConfig;
 pub use editor::{Editor, VisibleLineLayout, VisibleLink};
+pub use layout_cache::{CachedInput, LayoutCache};
 pub use theme::{EditorTheme, ResolvedTokenStyle, SyntaxTheme};
 
 #[cfg(test)]
@@ -25,11 +28,15 @@ mod tests {
 
     #[test]
     fn test_line_metrics_quote_detection_when_concealed() {
-        let spans = vec![];
+        let spans = vec![StyleSpan::tag(0..2, HighlightTag::Blockquote)];
         let metrics = LineMetrics::for_line("> Quote", "Quote", &spans, px(16.0), px(22.0));
         assert!(metrics.is_quote);
         assert!(!metrics.is_code_block);
         assert_eq!(metrics.line_height, px(22.0));
+
+        // No tag -> no quote, proving detection is tag-driven not string-driven.
+        let plain = LineMetrics::for_line("> Quote", "> Quote", &[], px(16.0), px(22.0));
+        assert!(!plain.is_quote);
     }
 
     #[test]
@@ -71,15 +78,32 @@ mod tests {
 
     #[test]
     fn test_line_metrics_task_state_detection() {
-        let spans = vec![];
-        let unchecked = LineMetrics::for_line("- [ ] Todo", "Todo", &spans, px(16.0), px(22.0));
+        let unchecked_spans = vec![StyleSpan::tag(0..6, HighlightTag::TaskUnchecked)];
+        let unchecked =
+            LineMetrics::for_line("- [ ] Todo", "Todo", &unchecked_spans, px(16.0), px(22.0));
         assert_eq!(unchecked.task_state, Some(false));
 
-        let checked = LineMetrics::for_line("- [x] Done", "Done", &spans, px(16.0), px(22.0));
+        let checked_spans = vec![StyleSpan::tag(0..6, HighlightTag::TaskChecked)];
+        let checked =
+            LineMetrics::for_line("- [x] Done", "Done", &checked_spans, px(16.0), px(22.0));
         assert_eq!(checked.task_state, Some(true));
 
-        let plain = LineMetrics::for_line("Plain text", "Plain text", &spans, px(16.0), px(22.0));
+        let plain = LineMetrics::for_line("Plain text", "Plain text", &[], px(16.0), px(22.0));
         assert_eq!(plain.task_state, None);
+
+        // Raw task syntax without tags must NOT be detected (custom-language proof).
+        let raw_only = LineMetrics::for_line("- [ ] Todo", "- [ ] Todo", &[], px(16.0), px(22.0));
+        assert_eq!(raw_only.task_state, None);
+    }
+
+    #[test]
+    fn test_line_metrics_thematic_break_detection() {
+        let spans = vec![StyleSpan::tag(0..3, HighlightTag::HorizontalRule)];
+        let metrics = LineMetrics::for_line("---", "---", &spans, px(16.0), px(22.0));
+        assert!(metrics.is_thematic_break);
+
+        let plain = LineMetrics::for_line("---", "---", &[], px(16.0), px(22.0));
+        assert!(!plain.is_thematic_break);
     }
 
     #[test]

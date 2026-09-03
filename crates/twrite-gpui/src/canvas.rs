@@ -26,9 +26,14 @@ pub struct LineMetrics {
 
 impl LineMetrics {
     /// Calculates layout metrics and block-level decorations based on syntax spans and line text.
+    ///
+    /// `spans` are the original (pre-concealment) highlight spans for the line. Structural
+    /// decorations (`Blockquote`, `HorizontalRule`, `Task*`) are detected solely via
+    /// `HighlightTag`s so custom languages work without raw string checks. Code-block
+    /// detection relies on a full-line `Code` span rather than fence prefixes.
     pub fn for_line(
         raw_line_text: &str,
-        concealed_display_text: &str,
+        _concealed_display_text: &str,
         spans: &[StyleSpan],
         base_font_size: Pixels,
         base_line_height: Pixels,
@@ -75,38 +80,29 @@ impl LineMetrics {
             line_height = base_line_height * 0.95;
         }
 
-        let trimmed_raw = raw_line_text.trim_start();
-        let is_quote = trimmed_raw.starts_with("> ") || trimmed_raw == ">";
+        let is_quote = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Blockquote)));
 
-        let is_code_block = trimmed_raw.starts_with("```")
-            || trimmed_raw.starts_with("~~~")
-            || spans.iter().any(|s| {
-                (raw_line_text.is_empty() || s.range.len() == concealed_display_text.len())
-                    && matches!(s.style, StyleValue::Tag(HighlightTag::Code))
-            });
+        let is_code_block = spans.iter().any(|s| {
+            (raw_line_text.is_empty() || s.range.len() == raw_line_text.len())
+                && matches!(s.style, StyleValue::Tag(HighlightTag::Code))
+        });
 
-        let trimmed_break = trimmed_raw.trim_end();
-        let is_thematic_break =
-            (trimmed_break == "---" || trimmed_break == "***" || trimmed_break == "___")
-                && raw_line_text.len() >= 3;
+        let is_thematic_break = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::HorizontalRule)));
 
-        let is_task_empty = trimmed_raw.starts_with("- [ ] ")
-            || trimmed_raw == "- [ ]"
-            || trimmed_raw.starts_with("* [ ] ")
-            || trimmed_raw == "* [ ]";
-        let is_task_checked = trimmed_raw.starts_with("- [x] ")
-            || trimmed_raw == "- [x]"
-            || trimmed_raw.starts_with("- [X] ")
-            || trimmed_raw == "- [X]"
-            || trimmed_raw.starts_with("* [x] ")
-            || trimmed_raw == "* [x]"
-            || trimmed_raw.starts_with("* [X] ")
-            || trimmed_raw == "* [X]";
-
-        let task_state = if is_task_empty {
-            Some(false)
-        } else if is_task_checked {
+        let task_state = if spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::TaskChecked)))
+        {
             Some(true)
+        } else if spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::TaskUnchecked)))
+        {
+            Some(false)
         } else {
             None
         };
@@ -273,6 +269,10 @@ impl RenderOnce for EditorCanvas {
                 editor_handle.update(cx, |editor, _| {
                     editor.last_bounds = Some(bounds);
                 });
+                // Take the cache out for the frame: the read guard below borrows
+                // the editor immutably, so the cache travels as a local.
+                let mut layout_cache =
+                    editor_handle.update(cx, |editor, _| std::mem::take(&mut editor.layout_cache));
                 let editor = editor_handle.read(cx);
                 let theme = editor.theme.clone();
                 let config = editor.config.clone();
@@ -348,18 +348,25 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    let spans = if let Some(ref highlighter) = editor.highlighter {
-                        highlighter.highlight_line(&editor.buffer, row, line_text)
-                    } else {
-                        Vec::new()
-                    };
+                    let cursor_row = cursor_point.row;
+                    let highlighter_rev = editor.highlighter_rev;
+                    let cached = layout_cache.cached_input(
+                        &editor.buffer,
+                        editor.highlighter.as_deref(),
+                        highlighter_rev,
+                        cursor_row,
+                        row,
+                        line_text,
+                    );
+                    let spans = &cached.spans;
+                    let concealed = &cached.concealed;
 
-                    let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
-
+                    // Pass original spans: structural tags on concealed bytes would
+                    // otherwise be stripped and invisible to layout.
                     let metrics = LineMetrics::for_line(
                         line_text,
                         &concealed.display_text,
-                        &concealed.spans,
+                        spans,
                         config.font_size,
                         config.line_height,
                     );
@@ -386,8 +393,9 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    let is_concealed_task = metrics.task_state.is_some()
-                        && line_text.len() != concealed.display_text.len();
+                    let has_task = metrics.task_state.is_some();
+                    let is_concealed_task =
+                        has_task && line_text.len() != concealed.display_text.len();
                     let is_checked_task = is_concealed_task && metrics.task_state == Some(true);
 
                     let (task_checkbox_quad, line_text_origin_x) = if is_concealed_task {
@@ -449,27 +457,24 @@ impl RenderOnce for EditorCanvas {
 
                     #[allow(unused_mut)]
                     let mut visible_links = Vec::new();
-                    #[cfg(feature = "markdown")]
-                    if line_text.contains('[') || line_text.contains('<') {
-                        let extracted = twrite_core::markdown::extract_markdown_links(line_text);
-                        for (src_range, url) in extracted {
-                            let disp_start = concealed.source_to_display(src_range.start);
-                            let disp_end = concealed.source_to_display(src_range.end);
-                            if disp_start < disp_end {
-                                let start_pt =
-                                    text_line.position_for_index(disp_start, metrics.line_height);
-                                let end_pt =
-                                    text_line.position_for_index(disp_end, metrics.line_height);
-                                if let (Some(s), Some(e)) = (start_pt, end_pt) {
-                                    let width = if e.x > s.x { e.x - s.x } else { px(20.0) };
-                                    visible_links.push(crate::editor::VisibleLink {
-                                        bounds: Bounds::new(
-                                            point(line_text_origin_x + s.x, current_y + s.y),
-                                            size(width.max(px(5.0)), metrics.line_height),
-                                        ),
-                                        url,
-                                    });
-                                }
+                    // Link ranges come from the same cached input: no second parse.
+                    for (src_range, url) in &cached.link_src {
+                        let disp_start = concealed.source_to_display(src_range.start);
+                        let disp_end = concealed.source_to_display(src_range.end);
+                        if disp_start < disp_end {
+                            let start_pt =
+                                text_line.position_for_index(disp_start, metrics.line_height);
+                            let end_pt =
+                                text_line.position_for_index(disp_end, metrics.line_height);
+                            if let (Some(s), Some(e)) = (start_pt, end_pt) {
+                                let width = if e.x > s.x { e.x - s.x } else { px(20.0) };
+                                visible_links.push(crate::editor::VisibleLink {
+                                    bounds: Bounds::new(
+                                        point(line_text_origin_x + s.x, current_y + s.y),
+                                        size(width.max(px(5.0)), metrics.line_height),
+                                    ),
+                                    url: url.clone(),
+                                });
                             }
                         }
                     }
@@ -600,7 +605,7 @@ impl RenderOnce for EditorCanvas {
                         task_checkbox_quad,
                     });
 
-                    let checkbox_box_x = if is_concealed_task {
+                    let checkbox_box_x = if has_task {
                         let indent = line_text.len() - line_text.trim_start().len();
                         text_origin_x + px((indent as f32) * 8.0)
                     } else {
@@ -615,8 +620,9 @@ impl RenderOnce for EditorCanvas {
                         line_len_bytes: line_text.len(),
                         text_origin_x: line_text_origin_x,
                         line_height: metrics.line_height,
-                        is_task_checkbox: is_concealed_task,
+                        is_task_checkbox: has_task,
                         checkbox_box_x,
+                        task_state: metrics.task_state,
                         links: visible_links,
                     });
 
@@ -624,6 +630,7 @@ impl RenderOnce for EditorCanvas {
                 }
 
                 editor_handle.update(cx, |editor, _| {
+                    editor.layout_cache = layout_cache;
                     editor.last_cursor_pixel = computed_cursor_pixel;
                     editor.visible_lines = visible_line_layouts;
                 });
