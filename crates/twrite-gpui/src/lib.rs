@@ -235,4 +235,89 @@ mod tests {
             font.family.as_ref()
         );
     }
+
+    #[test]
+    fn test_line_metrics_heading_levels() {
+        let h1 = LineMetrics::for_line(
+            "# A",
+            "# A",
+            &[StyleSpan::tag(0..3, HighlightTag::Heading(1))],
+            px(16.0),
+            px(22.0),
+        );
+        assert_eq!(h1.font_size, px(16.0) * 2.0);
+
+        let h4 = LineMetrics::for_line(
+            "#### D",
+            "#### D",
+            &[StyleSpan::tag(0..6, HighlightTag::Heading(4))],
+            px(16.0),
+            px(22.0),
+        );
+        assert_eq!(h4.font_size, px(16.0) * 1.125);
+
+        // Lowest level wins when several heading tags share a line.
+        let mixed = LineMetrics::for_line(
+            "mix",
+            "mix",
+            &[
+                StyleSpan::tag(0..3, HighlightTag::Heading(3)),
+                StyleSpan::tag(0..3, HighlightTag::Heading(1)),
+            ],
+            px(16.0),
+            px(22.0),
+        );
+        assert_eq!(mixed.font_size, px(16.0) * 2.0);
+
+        // Out-of-range levels render bold at the base size.
+        let odd = LineMetrics::for_line(
+            "odd",
+            "odd",
+            &[StyleSpan::tag(0..3, HighlightTag::Heading(9))],
+            px(16.0),
+            px(22.0),
+        );
+        assert_eq!(odd.font_size, px(16.0));
+        assert_eq!(odd.line_height, px(22.0));
+    }
+
+    #[test]
+    fn test_custom_tag_colors() {
+        let mut theme = EditorTheme::default();
+        // Unregistered customs fall back to the foreground.
+        assert_eq!(
+            theme.tag_color(HighlightTag::Custom("speaker")),
+            theme.foreground
+        );
+
+        theme
+            .syntax
+            .set_custom_tag_color("speaker", gpui::rgb(0xf9e2af).into());
+        assert_eq!(
+            theme.tag_color(HighlightTag::Custom("speaker")),
+            gpui::rgb(0xf9e2af).into()
+        );
+        // Other names are unaffected.
+        assert_eq!(
+            theme.tag_color(HighlightTag::Custom("dialogue")),
+            theme.foreground
+        );
+    }
+
+    #[test]
+    fn test_heading_level_colors() {
+        let theme = EditorTheme::default();
+        assert_eq!(
+            theme.tag_color(HighlightTag::Heading(1)),
+            theme.syntax.heading1
+        );
+        assert_eq!(
+            theme.tag_color(HighlightTag::Heading(2)),
+            theme.syntax.heading2
+        );
+        assert_eq!(
+            theme.tag_color(HighlightTag::Heading(4)),
+            theme.syntax.heading3
+        );
+    }
 }

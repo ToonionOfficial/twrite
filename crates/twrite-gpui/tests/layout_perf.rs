@@ -67,7 +67,7 @@ fn make_fixture(lines: usize, seed: u64) -> String {
 fn fake_spans(line: &str) -> Vec<StyleSpan> {
     let t = line.trim_start();
     if t.starts_with("# ") {
-        return vec![StyleSpan::tag(0..line.len(), HighlightTag::Heading1)];
+        return vec![StyleSpan::tag(0..line.len(), HighlightTag::Heading(1))];
     }
     if t.starts_with("```") {
         return vec![StyleSpan::tag(0..line.len(), HighlightTag::Code)];

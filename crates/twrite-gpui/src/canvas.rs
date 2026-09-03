@@ -41,43 +41,42 @@ impl LineMetrics {
         let mut font_size = base_font_size;
         let mut line_height = base_line_height;
 
-        let has_h1 = spans
+        // Lowest heading level wins (level 1 outranks level 6); out-of-range
+        // levels keep the base size.
+        let heading_level = spans
             .iter()
-            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading1)));
-        let has_h2 = spans
-            .iter()
-            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading2)));
-        let has_h3 = spans
-            .iter()
-            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading3)));
-        let has_h4 = spans
-            .iter()
-            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading4)));
-        let has_h5 = spans
-            .iter()
-            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading5)));
-        let has_h6 = spans
-            .iter()
-            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Heading6)));
+            .filter_map(|s| match s.style {
+                StyleValue::Tag(HighlightTag::Heading(level)) => Some(level),
+                _ => None,
+            })
+            .min();
 
-        if has_h1 {
-            font_size = base_font_size * 2.0;
-            line_height = base_line_height * 1.8;
-        } else if has_h2 {
-            font_size = base_font_size * 1.5;
-            line_height = base_line_height * 1.4;
-        } else if has_h3 {
-            font_size = base_font_size * 1.25;
-            line_height = base_line_height * 1.2;
-        } else if has_h4 {
-            font_size = base_font_size * 1.125;
-            line_height = base_line_height * 1.1;
-        } else if has_h5 {
-            font_size = base_font_size * 1.0;
-            line_height = base_line_height * 1.0;
-        } else if has_h6 {
-            font_size = base_font_size * 0.875;
-            line_height = base_line_height * 0.95;
+        match heading_level {
+            Some(1) => {
+                font_size = base_font_size * 2.0;
+                line_height = base_line_height * 1.8;
+            }
+            Some(2) => {
+                font_size = base_font_size * 1.5;
+                line_height = base_line_height * 1.4;
+            }
+            Some(3) => {
+                font_size = base_font_size * 1.25;
+                line_height = base_line_height * 1.2;
+            }
+            Some(4) => {
+                font_size = base_font_size * 1.125;
+                line_height = base_line_height * 1.1;
+            }
+            Some(5) => {
+                font_size = base_font_size * 1.0;
+                line_height = base_line_height * 1.0;
+            }
+            Some(6) => {
+                font_size = base_font_size * 0.875;
+                line_height = base_line_height * 0.95;
+            }
+            _ => {}
         }
 
         let is_quote = spans

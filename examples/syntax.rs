@@ -15,20 +15,23 @@ impl SyntaxHighlighter for StoryAndMarkdownHighlighter {
         let mut spans = Vec::new();
 
         if line_text.starts_with("# ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading1));
+            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading(1)));
             return spans;
         } else if line_text.starts_with("## ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading2));
+            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading(2)));
             return spans;
         } else if line_text.starts_with("### ") {
-            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading3));
+            spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Heading(3)));
             return spans;
         }
 
         if line_text.starts_with('@')
             && let Some(colon_pos) = line_text.find(':')
         {
-            spans.push(StyleSpan::tag(0..colon_pos + 1, HighlightTag::Speaker));
+            spans.push(StyleSpan::tag(
+                0..colon_pos + 1,
+                HighlightTag::Custom("speaker"),
+            ));
         }
 
         let mut in_quote = false;
@@ -36,7 +39,10 @@ impl SyntaxHighlighter for StoryAndMarkdownHighlighter {
         for (i, c) in line_text.char_indices() {
             if c == '"' {
                 if in_quote {
-                    spans.push(StyleSpan::tag(quote_start..i + 1, HighlightTag::Dialogue));
+                    spans.push(StyleSpan::tag(
+                        quote_start..i + 1,
+                        HighlightTag::Custom("dialogue"),
+                    ));
                     in_quote = false;
                 } else {
                     in_quote = true;
@@ -96,6 +102,10 @@ fn main() {
                     // platform monospace with bold + italic faces (see
                     // `Editor::face_availability`). Set `ed.config.font_family
                     // explicitly to override (e.g. Menlo, Consolas).
+                    // Custom tags need registered colors (same palette the
+                    // old built-in speaker/dialogue tags used).
+                    ed.theme.syntax.set_custom_tag_color("speaker", rgb(0xf9e2af).into());
+                    ed.theme.syntax.set_custom_tag_color("dialogue", rgb(0xa6e3a1).into());
                     ed.set_highlighter(StoryAndMarkdownHighlighter);
                     ed
                 });
