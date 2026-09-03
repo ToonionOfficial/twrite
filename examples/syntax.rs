@@ -25,10 +25,10 @@ impl SyntaxHighlighter for StoryAndMarkdownHighlighter {
             return spans;
         }
 
-        if line_text.starts_with('@') {
-            if let Some(colon_pos) = line_text.find(':') {
-                spans.push(StyleSpan::tag(0..colon_pos + 1, HighlightTag::Speaker));
-            }
+        if line_text.starts_with('@')
+            && let Some(colon_pos) = line_text.find(':')
+        {
+            spans.push(StyleSpan::tag(0..colon_pos + 1, HighlightTag::Speaker));
         }
 
         let mut in_quote = false;
