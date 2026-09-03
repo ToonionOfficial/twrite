@@ -19,6 +19,7 @@ struct EditorCanvasPrepaint {
     lines: Vec<PreparedLine>,
 }
 
+#[derive(IntoElement)]
 pub struct EditorCanvas {
     editor: Entity<Editor>,
 }
