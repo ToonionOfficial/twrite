@@ -34,8 +34,8 @@ pub use movement::{
 };
 pub use selection::Selection;
 pub use syntax::{
-    HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment, SyntaxHighlighter, TextStyle,
-    UnderlineDecoration, split_line_intervals,
+    ConcealedLine, HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment, SyntaxHighlighter,
+    TextStyle, UnderlineDecoration, split_line_intervals,
 };
 
 #[cfg(test)]

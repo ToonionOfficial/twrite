@@ -295,6 +295,100 @@ pub fn split_line_intervals<'a>(
     segments
 }
 
+/// A rendered visual line where concealed syntax tokens have been collapsed,
+/// maintaining exact bidirectional mapping to source buffer byte offsets.
+#[derive(Debug, Clone)]
+pub struct ConcealedLine {
+    /// The transformed text to be shaped and rendered on screen.
+    pub display_text: String,
+    /// Syntax highlight spans adjusted to display text coordinates.
+    pub spans: Vec<StyleSpan>,
+    /// Map from display text byte offset to source buffer line byte offset.
+    byte_map: Vec<usize>,
+}
+
+impl ConcealedLine {
+    /// Constructs a concealed line from raw line text and syntax spans.
+    pub fn build(line_text: &str, spans: &[StyleSpan]) -> Self {
+        let has_hidden = spans
+            .iter()
+            .any(|s| matches!(s.style, StyleValue::Tag(HighlightTag::Hidden)));
+
+        if !has_hidden {
+            let byte_map = (0..=line_text.len()).collect();
+            return Self {
+                display_text: line_text.to_string(),
+                spans: spans.to_vec(),
+                byte_map,
+            };
+        }
+
+        let mut display_text = String::with_capacity(line_text.len());
+        let mut byte_map = Vec::with_capacity(line_text.len() + 1);
+
+        for (byte_idx, ch) in line_text.char_indices() {
+            let is_hidden = spans.iter().any(|s| {
+                matches!(s.style, StyleValue::Tag(HighlightTag::Hidden))
+                    && s.range.contains(&byte_idx)
+            });
+
+            if !is_hidden {
+                let ch_len = ch.len_utf8();
+                for b in 0..ch_len {
+                    byte_map.push(byte_idx + b);
+                }
+                display_text.push(ch);
+            }
+        }
+        byte_map.push(line_text.len());
+
+        let mut new_spans = Vec::new();
+        for span in spans {
+            if matches!(span.style, StyleValue::Tag(HighlightTag::Hidden)) {
+                continue;
+            }
+
+            let new_start = byte_map
+                .iter()
+                .position(|&src_idx| src_idx >= span.range.start)
+                .unwrap_or(display_text.len());
+            let new_end = byte_map
+                .iter()
+                .position(|&src_idx| src_idx >= span.range.end)
+                .unwrap_or(display_text.len());
+
+            if new_start < new_end {
+                new_spans.push(StyleSpan {
+                    range: new_start..new_end,
+                    style: span.style.clone(),
+                });
+            }
+        }
+
+        Self {
+            display_text,
+            spans: new_spans,
+            byte_map,
+        }
+    }
+
+    /// Converts a display byte offset to a source buffer line byte offset.
+    pub fn display_to_source(&self, display_col: usize) -> usize {
+        if display_col >= self.byte_map.len() {
+            *self.byte_map.last().unwrap_or(&0)
+        } else {
+            self.byte_map[display_col]
+        }
+    }
+
+    /// Converts a source buffer line byte offset to the nearest display byte offset.
+    pub fn source_to_display(&self, source_col: usize) -> usize {
+        self.byte_map
+            .partition_point(|&src_idx| src_idx < source_col)
+            .min(self.display_text.len())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -400,5 +494,59 @@ mod tests {
         assert_eq!(segments[3].range, 8..11);
         assert_eq!(segments[3].style, None);
         assert!(!segments[3].is_selected);
+    }
+
+    #[test]
+    fn test_concealed_line_headings_align_and_collapse() {
+        let line1 = "# hello";
+        let spans1 = vec![
+            StyleSpan::tag(0..2, HighlightTag::Hidden),
+            StyleSpan::tag(2..7, HighlightTag::Heading1),
+        ];
+        let concealed1 = ConcealedLine::build(line1, &spans1);
+        assert_eq!(concealed1.display_text, "hello");
+        assert_eq!(concealed1.spans.len(), 1);
+        assert_eq!(concealed1.spans[0].range, 0..5);
+        assert_eq!(
+            concealed1.spans[0].style,
+            StyleValue::Tag(HighlightTag::Heading1)
+        );
+        assert_eq!(concealed1.display_to_source(0), 2);
+        assert_eq!(concealed1.source_to_display(2), 0);
+
+        let line2 = "## hello";
+        let spans2 = vec![
+            StyleSpan::tag(0..3, HighlightTag::Hidden),
+            StyleSpan::tag(3..8, HighlightTag::Heading2),
+        ];
+        let concealed2 = ConcealedLine::build(line2, &spans2);
+        assert_eq!(concealed2.display_text, "hello");
+        assert_eq!(concealed2.spans.len(), 1);
+        assert_eq!(concealed2.spans[0].range, 0..5);
+        assert_eq!(
+            concealed2.spans[0].style,
+            StyleValue::Tag(HighlightTag::Heading2)
+        );
+        assert_eq!(concealed2.display_to_source(0), 3);
+        assert_eq!(concealed2.source_to_display(3), 0);
+
+        assert_eq!(concealed1.display_text, concealed2.display_text);
+
+        let line_inline = "Hi **bold**!";
+        let spans_inline = vec![
+            StyleSpan::tag(3..5, HighlightTag::Hidden),
+            StyleSpan::tag(5..9, HighlightTag::Bold),
+            StyleSpan::tag(9..11, HighlightTag::Hidden),
+        ];
+        let concealed_inline = ConcealedLine::build(line_inline, &spans_inline);
+        assert_eq!(concealed_inline.display_text, "Hi bold!");
+        assert_eq!(concealed_inline.spans.len(), 1);
+        assert_eq!(concealed_inline.spans[0].range, 3..7);
+        assert_eq!(
+            concealed_inline.spans[0].style,
+            StyleValue::Tag(HighlightTag::Bold)
+        );
+        assert_eq!(concealed_inline.display_to_source(3), 5);
+        assert_eq!(concealed_inline.source_to_display(5), 3);
     }
 }

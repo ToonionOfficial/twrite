@@ -376,19 +376,27 @@ impl Editor {
                 Vec::new()
             };
 
+            let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
+
             let metrics = LineMetrics::for_line(
-                line_text,
-                &spans,
+                &concealed.display_text,
+                &concealed.spans,
                 self.config.font_size,
                 self.config.line_height,
             );
 
-            let runs = build_line_text_runs(line_text, &spans, None, &font, &self.theme);
+            let runs = build_line_text_runs(
+                &concealed.display_text,
+                &concealed.spans,
+                None,
+                &font,
+                &self.theme,
+            );
 
             let text_line = window
                 .text_system()
                 .shape_text(
-                    line_text.to_string().into(),
+                    concealed.display_text.clone().into(),
                     metrics.font_size,
                     &runs,
                     wrap_width,
@@ -404,18 +412,20 @@ impl Editor {
             let is_last_line = row + 1 == total_lines;
             if relative_y < current_y_offset + line_h || is_last_line {
                 if pos.x <= text_origin_x || line_text.is_empty() {
-                    return line_start_byte;
+                    let col_src = concealed.display_to_source(0);
+                    return line_start_byte + col_src;
                 }
 
                 let line_rel_y = (relative_y - current_y_offset).max(px(0.0));
                 let line_rel_x = (pos.x - text_origin_x).max(px(0.0));
                 let rel_pos = point(line_rel_x, line_rel_y);
 
-                let col_byte = text_line
+                let col_display = text_line
                     .closest_index_for_position(rel_pos, metrics.line_height)
                     .unwrap_or_else(|idx| idx);
 
-                return line_start_byte + col_byte.min(line_text.len());
+                let col_src = concealed.display_to_source(col_display);
+                return line_start_byte + col_src.min(line_text.len());
             }
 
             current_y_offset += line_h;

@@ -312,9 +312,11 @@ impl RenderOnce for EditorCanvas {
                         Vec::new()
                     };
 
+                    let concealed = twrite_core::ConcealedLine::build(line_text, &spans);
+
                     let metrics = LineMetrics::for_line(
-                        line_text,
-                        &spans,
+                        &concealed.display_text,
+                        &concealed.spans,
                         config.font_size,
                         config.line_height,
                     );
@@ -322,11 +324,13 @@ impl RenderOnce for EditorCanvas {
                     let selection_line_range = if let Some(sel) = selection {
                         let sel_range = sel.byte_range();
                         if sel_range.end > line_start_byte && sel_range.start < line_end_byte {
-                            let sel_start = sel_range
+                            let raw_start = sel_range
                                 .start
                                 .saturating_sub(line_start_byte)
                                 .min(line_text.len());
-                            let sel_end = (sel_range.end - line_start_byte).min(line_text.len());
+                            let raw_end = (sel_range.end - line_start_byte).min(line_text.len());
+                            let sel_start = concealed.source_to_display(raw_start);
+                            let sel_end = concealed.source_to_display(raw_end);
                             if sel_end > sel_start {
                                 Some((sel_start, sel_end))
                             } else {
@@ -340,8 +344,8 @@ impl RenderOnce for EditorCanvas {
                     };
 
                     let runs = build_line_text_runs(
-                        line_text,
-                        &spans,
+                        &concealed.display_text,
+                        &concealed.spans,
                         selection_line_range,
                         &font,
                         &theme,
@@ -350,7 +354,7 @@ impl RenderOnce for EditorCanvas {
                     let text_line = window
                         .text_system()
                         .shape_text(
-                            line_text.to_string().into(),
+                            concealed.display_text.clone().into(),
                             metrics.font_size,
                             &runs,
                             wrap_width,
@@ -403,8 +407,9 @@ impl RenderOnce for EditorCanvas {
                         let col_in_line = cursor_offset
                             .saturating_sub(line_start_byte)
                             .min(line_text.len());
+                        let col_in_display = concealed.source_to_display(col_in_line);
                         let pos = text_line
-                            .position_for_index(col_in_line, metrics.line_height)
+                            .position_for_index(col_in_display, metrics.line_height)
                             .unwrap_or(point(px(0.0), px(0.0)));
 
                         computed_cursor_pixel = Some(point(
