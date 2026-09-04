@@ -224,6 +224,7 @@ fn main() {
 | --- | ---: | :---: |
 | Ada | 36 | London |
 | `Grace` | 85 | **New York** |
+| Katherine Johnson | 101 | White Sulphur Springs |
 ";
 
                 let editor = cx.new(|cx| {

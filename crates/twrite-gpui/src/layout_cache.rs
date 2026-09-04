@@ -26,9 +26,14 @@ pub struct CachedInput {
     /// Original (pre-concealment) highlight spans.
     pub spans: Vec<StyleSpan>,
     /// Concealed display text, remapped spans, and source/display mapping.
+    ///
+    /// Includes display-only [`twrite_core::DisplayPad`] expansion when the
+    /// highlighter returns any from `expand_line`.
     pub concealed: ConcealedLine,
     /// Hyperlink source ranges and URLs from `SyntaxHighlighter::extract_links`.
     pub link_src: Vec<(Range<usize>, String)>,
+    /// Whether this line may soft-wrap (global `line_wrap` still applies).
+    pub allow_wrap: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -114,7 +119,16 @@ impl LayoutCache {
         let spans = highlighter
             .map(|h| h.highlight_line(buffer, row, line_text))
             .unwrap_or_default();
-        let concealed = ConcealedLine::build(line_text, &spans);
+        let allow_wrap = highlighter
+            .map(|h| h.should_wrap_line(buffer, row))
+            .unwrap_or(true);
+        let mut concealed = ConcealedLine::build(line_text, &spans);
+        let pads = highlighter
+            .map(|h| h.expand_line(buffer, row, &concealed))
+            .unwrap_or_default();
+        if !pads.is_empty() {
+            concealed = concealed.expanded(&pads);
+        }
         let link_src = highlighter
             .map(|h| h.extract_links(buffer, row, line_text))
             .unwrap_or_default();
@@ -126,6 +140,7 @@ impl LayoutCache {
                     spans,
                     concealed,
                     link_src,
+                    allow_wrap,
                 },
             },
         );

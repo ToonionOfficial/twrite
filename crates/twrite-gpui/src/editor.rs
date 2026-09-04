@@ -394,6 +394,16 @@ impl Editor {
                 if line_text.is_empty() {
                     return 1;
                 }
+                // Rows opted out of wrapping (e.g. aligned table rows) never
+                // take more than one visual line.
+                let wraps = self
+                    .highlighter
+                    .as_deref()
+                    .map(|h| h.should_wrap_line(&self.buffer, row))
+                    .unwrap_or(true);
+                if !wraps {
+                    return 1;
+                }
                 let runs = [TextRun {
                     len: line_text.len(),
                     font: font.clone(),
@@ -522,7 +532,7 @@ impl Editor {
                 is_checked_task,
             );
 
-            let wrap_width = if self.config.line_wrap {
+            let wrap_width = if self.config.line_wrap && cached.allow_wrap {
                 let available = bounds.size.width - (text_origin_x - bounds.left()) - px(12.0);
                 Some(available.max(px(50.0)))
             } else {

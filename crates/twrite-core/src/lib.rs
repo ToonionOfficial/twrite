@@ -15,10 +15,10 @@ pub mod history;
 pub mod hook;
 /// CommonMark and GitHub Flavored Markdown highlighter and interactive hook.
 ///
-/// Lives at `src/batteries/markdown.rs`; this shim keeps the public path
+/// Lives at `src/batteries/markdown/`; this shim keeps the public path
 /// `twrite_core::markdown` stable regardless of file layout.
 #[cfg(feature = "markdown")]
-#[path = "batteries/markdown.rs"]
+#[path = "batteries/markdown/mod.rs"]
 pub mod markdown;
 /// Text movement and boundary calculation primitives.
 pub mod movement;
@@ -36,8 +36,8 @@ pub use hook::{
 #[cfg(feature = "markdown")]
 pub use markdown::{
     ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook, TABLE_CELL_TAG,
-    TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableRowKind,
-    find_unescaped_pipes, parse_delimiter_row, split_table_cells, table_block_at,
+    TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout, TableRowKind,
+    find_unescaped_pipes, parse_delimiter_row, split_table_cells, table_block_at, table_layouts,
 };
 pub use movement::{
     CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
@@ -45,8 +45,8 @@ pub use movement::{
 };
 pub use selection::Selection;
 pub use syntax::{
-    ConcealedLine, HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment, SyntaxHighlighter,
-    TextStyle, UnderlineDecoration, split_line_intervals,
+    ConcealedLine, DisplayPad, HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment,
+    SyntaxHighlighter, TextStyle, UnderlineDecoration, display_width, split_line_intervals,
 };
 
 #[cfg(test)]

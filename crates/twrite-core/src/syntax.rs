@@ -240,6 +240,28 @@ pub trait SyntaxHighlighter: Send + Sync + 'static {
     ) -> Vec<(Range<usize>, String)> {
         Vec::new()
     }
+
+    /// Optional display-only padding for this line (e.g. table cell alignment).
+    ///
+    /// Receives the collapsed [`ConcealedLine`] and returns insertions in
+    /// collapsed display coordinates (see [`DisplayPad`]). The default
+    /// implementation returns no padding.
+    fn expand_line(
+        &self,
+        _buffer: &EditorBuffer,
+        _row: usize,
+        _concealed: &ConcealedLine,
+    ) -> Vec<DisplayPad> {
+        Vec::new()
+    }
+
+    /// Whether this line may soft-wrap when `line_wrap` is on.
+    ///
+    /// Batteries return `false` for rows whose display alignment would break
+    /// across visual lines (e.g. Markdown table rows). The default is `true`.
+    fn should_wrap_line(&self, _buffer: &EditorBuffer, _row: usize) -> bool {
+        true
+    }
 }
 
 /// A contiguous segment of text on a line with its resolved style and selection status.
@@ -309,6 +331,37 @@ pub fn split_line_intervals<'a>(
     }
 
     segments
+}
+
+/// Display-column width of `s` for monospace alignment.
+///
+/// Counts most characters as one column and East-Asian wide/fullwidth
+/// characters as two; control characters are zero-width. Used by batteries
+/// that align display columns (e.g. Markdown tables). Only monospace fonts
+/// honor these columns; proportional fonts will misalign padded text.
+pub fn display_width(s: &str) -> usize {
+    use unicode_width::UnicodeWidthStr;
+    s.width()
+}
+
+/// Display-only padding spliced into a [`ConcealedLine`]'s display text.
+///
+/// Generic engine capability: batteries that align display columns (e.g.
+/// Markdown tables) return these from [`SyntaxHighlighter::expand_line`];
+/// the core splices the fill, remaps highlight spans, and extends the
+/// source/display byte map, so painting, cursor placement, selection, and
+/// hit-testing keep working unchanged. Padding bytes map back to the source
+/// offset of the display byte they were inserted before, so clicks and typing
+/// in padding land on that boundary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DisplayPad {
+    /// Collapsed-display byte offset the padding is inserted before
+    /// (`0..=display_text.len()`; snapped forward to a char boundary).
+    pub display_at: usize,
+    /// Fill character repeated [`DisplayPad::len`] times (usually `' '`).
+    pub fill: char,
+    /// Number of times [`DisplayPad::fill`] is repeated.
+    pub len: usize,
 }
 
 /// A rendered visual line where concealed syntax tokens have been collapsed,
@@ -384,6 +437,80 @@ impl ConcealedLine {
         Self {
             display_text,
             spans: new_spans,
+            byte_map,
+        }
+    }
+
+    /// Returns a copy of this line with display-only padding spliced in.
+    ///
+    /// `pads` are applied in ascending `display_at` order against the
+    /// *original* collapsed coordinates. Span boundaries at or after an
+    /// insertion point shift right, so inserted padding belongs to the span
+    /// ending there. Each padding byte maps back to the source offset of the
+    /// display byte it was inserted before.
+    pub fn expanded(&self, pads: &[DisplayPad]) -> Self {
+        if pads.is_empty() {
+            return self.clone();
+        }
+        let mut sorted: Vec<DisplayPad> = pads.to_vec();
+        sorted.sort_by_key(|p| p.display_at);
+
+        let total_pad: usize = sorted.iter().map(|p| p.len * p.fill.len_utf8()).sum();
+        let mut display_text = String::with_capacity(self.display_text.len() + total_pad);
+        let mut byte_map = Vec::with_capacity(self.byte_map.len() + total_pad);
+
+        // Collapsed-display byte offset consumed so far.
+        let mut consumed = 0;
+
+        for pad in &sorted {
+            if pad.len == 0 {
+                continue;
+            }
+            let mut at = pad.display_at.min(self.display_text.len());
+            while at < self.display_text.len() && !self.display_text.is_char_boundary(at) {
+                at += 1;
+            }
+            if at < consumed {
+                continue;
+            }
+            display_text.push_str(&self.display_text[consumed..at]);
+            byte_map.extend_from_slice(&self.byte_map[consumed..at]);
+            let anchor = self.byte_map[at];
+            let fill: String = std::iter::repeat_n(pad.fill, pad.len).collect();
+            display_text.push_str(&fill);
+            byte_map.extend(std::iter::repeat_n(anchor, fill.len()));
+            consumed = at;
+        }
+        display_text.push_str(&self.display_text[consumed..]);
+        byte_map.extend_from_slice(&self.byte_map[consumed..]);
+
+        // Span boundaries at or after an insertion point shift right, so the
+        // inserted padding belongs to the span ending there.
+        let spans = self
+            .spans
+            .iter()
+            .map(|span| {
+                let shift = |b: usize| {
+                    let mut out = b;
+                    for pad in &sorted {
+                        if pad.display_at <= b {
+                            out += pad.len * pad.fill.len_utf8();
+                        } else {
+                            break;
+                        }
+                    }
+                    out
+                };
+                StyleSpan {
+                    range: shift(span.range.start)..shift(span.range.end),
+                    style: span.style.clone(),
+                }
+            })
+            .collect();
+
+        Self {
+            display_text,
+            spans,
             byte_map,
         }
     }
@@ -564,5 +691,64 @@ mod tests {
         );
         assert_eq!(concealed_inline.display_to_source(3), 5);
         assert_eq!(concealed_inline.source_to_display(5), 3);
+    }
+
+    #[test]
+    fn test_display_width_columns() {
+        assert_eq!(display_width(""), 0);
+        assert_eq!(display_width("abc |"), 5);
+        assert_eq!(display_width("日本"), 4);
+        assert_eq!(display_width("a日本b"), 6);
+    }
+
+    #[test]
+    fn test_expanded_line_pads_and_maps() {
+        // Simulates one padded table row: `| a | b |` with two spaces of
+        // padding inserted before the middle pipe (display offset 4).
+        let line = "| a | b |";
+        let spans = vec![
+            StyleSpan::tag(1..3, HighlightTag::Custom("cell")),
+            StyleSpan::tag(4..5, HighlightTag::Punctuation),
+        ];
+        let base = ConcealedLine::build(line, &spans);
+        let padded = base.expanded(&[DisplayPad {
+            display_at: 4,
+            fill: ' ',
+            len: 2,
+        }]);
+        assert_eq!(padded.display_text, "| a   | b |");
+        // Spans ending before the insertion point are untouched; the pipe
+        // span at the insertion point shifts right past the padding.
+        assert!(
+            padded
+                .spans
+                .contains(&StyleSpan::tag(1..3, HighlightTag::Custom("cell")))
+        );
+        assert!(
+            padded
+                .spans
+                .contains(&StyleSpan::tag(6..7, HighlightTag::Punctuation))
+        );
+        // Padding bytes map back to the pipe's source offset (4).
+        assert_eq!(padded.display_to_source(4), 4);
+        assert_eq!(padded.display_to_source(5), 4);
+        assert_eq!(padded.display_to_source(6), 4);
+        // Source mapping stays total: every source byte still resolves.
+        assert_eq!(padded.source_to_display(4), 4);
+        assert_eq!(padded.source_to_display(5), 7);
+
+        // Empty pads are a no-op clone.
+        let same = base.expanded(&[]);
+        assert_eq!(same.display_text, base.display_text);
+        assert_eq!(same.spans, base.spans);
+    }
+
+    #[test]
+    fn test_highlighter_expansion_defaults_are_noops() {
+        let buffer = EditorBuffer::new("hello");
+        let highlighter = MockHighlighter;
+        let concealed = ConcealedLine::build("hello", &[]);
+        assert!(highlighter.expand_line(&buffer, 0, &concealed).is_empty());
+        assert!(highlighter.should_wrap_line(&buffer, 0));
     }
 }

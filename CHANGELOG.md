@@ -17,6 +17,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   table_navigation}` (both default `true`) and `MarkdownHook` `Tab` /
   `Shift+Tab` cell navigation (appends a skeleton row past the last cell)
   plus `Enter` row continuation / blank-row table exit.
+- **Aligned table columns**: `MarkdownConfig::table_alignment` (default `true`)
+  pads every column to the block's max display width (measured on unconcealed
+  source text, so widths are cursor-stable; delimiter dashes are extended and
+  `:--` / `--:` / `:-:` alignment is honored), and table rows opt out of
+  soft-wrapping so the grid never breaks mid-row.
+- **Generic display-expansion engine**: `ConcealedLine::{expanded, DisplayPad}`,
+  `display_width` (Unicode column widths), and defaulted
+  `SyntaxHighlighter::{expand_line, should_wrap_line}` hooks wired through
+  `LayoutCache::CachedInput::{concealed, allow_wrap}` into canvas prepaint,
+  hit-testing, and scroll estimation. Markdown tables are the first client;
+  other highlighters are unaffected (defaults are no-ops).
+- New `unicode-width` workspace dependency backing `display_width`.
+
+### Changed
+- **Battery layout**: the Markdown battery is now `batteries/markdown/`
+  (`config`, `table`, `highlight`, `hook`, `links` modules with colocated
+  tests); public paths `twrite_core::markdown` / `twrite::markdown` unchanged.
 
 ## [0.2.0] - 2026-09-03
 
