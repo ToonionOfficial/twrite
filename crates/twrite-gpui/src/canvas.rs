@@ -364,6 +364,8 @@ impl RenderOnce for EditorCanvas {
                 };
                 let text_origin_x = bounds.left() + gutter_width + px(12.0);
 
+                // Per-line override point: `cached.allow_wrap` (set by the
+                // highlighter) can opt rows out of soft-wrapping below.
                 let wrap_width = if config.line_wrap {
                     let available = bounds.size.width - gutter_width - px(24.0);
                     Some(available.max(px(50.0)))
@@ -528,7 +530,7 @@ impl RenderOnce for EditorCanvas {
                             concealed.display_text.clone().into(),
                             metrics.font_size,
                             &runs,
-                            wrap_width,
+                            wrap_width.filter(|_| cached.allow_wrap),
                             None,
                         )
                         .ok()

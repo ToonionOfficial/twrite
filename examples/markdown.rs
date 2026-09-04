@@ -1,7 +1,9 @@
 use gpui::*;
 use gpui_platform::application;
 use twrite::Editor;
-use twrite::markdown::{ConcealMode, MarkdownHighlighter};
+use twrite::markdown::{
+    ConcealMode, MarkdownHighlighter, TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG,
+};
 
 struct MarkdownApp {
     editor: Entity<Editor>,
@@ -216,11 +218,29 @@ fn main() {
 ```
 
 > Blockquotes are rendered with a sleek vertical accent bar.
+
+### Tables (Tab / Shift+Tab moves between cells, Enter adds a row)
+| Name | Age | City |
+| --- | ---: | :---: |
+| Ada | 36 | London |
+| `Grace` | 85 | **New York** |
+| Katherine Johnson | 101 | White Sulphur Springs |
 ";
 
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(initial_text, cx);
                     ed.config.line_numbers = true;
+                    // Table custom tags fall back to the foreground unless the
+                    // host registers colors for them (battery-only extension).
+                    ed.theme
+                        .syntax
+                        .set_custom_tag_color(TABLE_HEADER_TAG, gpui::rgb(0xf9e2af).into());
+                    ed.theme
+                        .syntax
+                        .set_custom_tag_color(TABLE_CELL_TAG, gpui::rgb(0xcdd6f4).into());
+                    ed.theme
+                        .syntax
+                        .set_custom_tag_color(TABLE_DELIMITER_TAG, gpui::rgb(0x6c7086).into());
                     // No explicit family: the editor auto-selects the first
                     // platform monospace with bold + italic faces (see
                     // `Editor::face_availability`). Set `ed.config.font_family

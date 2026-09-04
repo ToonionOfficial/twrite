@@ -4,51 +4,30 @@ use std::sync::{Arc, RwLock};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::{
-    EditorBuffer, EditorHook, HighlightTag, HookContext, HookOutcome, KeyEvent, Point, Selection,
-    StyleSpan, SyntaxHighlighter, TextStyle,
+    ConcealedLine, DisplayPad, EditorBuffer, HighlightTag, StyleSpan, SyntaxHighlighter, TextStyle,
+    display_width,
 };
+
+use super::config::{ConcealMode, MarkdownConfig};
+use super::links::extract_markdown_links;
+use super::table::{
+    TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableLayout,
+    TableRowKind, clean_table_line, find_unescaped_pipes, split_table_cells, table_block_at,
+    table_layouts,
+};
+
+/// Cached table display layouts and associated document version.
+type TableCache = Arc<RwLock<Option<(usize, Vec<TableLayout>)>>>;
 
 /// Cached fence line row indices and associated document version.
 type FenceCache = Arc<RwLock<Option<(usize, Vec<usize>)>>>;
-
-/// Display mode for markdown syntax delimiters (like `# `, `**`, `*`, `~~`, `` ` ``) on inactive lines.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ConcealMode {
-    /// Markdown markers are always visible with normal syntax coloring.
-    Off,
-    /// Markdown markers on inactive lines are rendered with faint opacity.
-    #[default]
-    Dimmed,
-    /// Markdown markers on inactive lines are completely hidden (invisible).
-    Hidden,
-}
-
-/// Configuration settings for Markdown editing, highlighting, and WYSIWYG rendering.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MarkdownConfig {
-    /// How syntax delimiters (`#`, `**`, `*`, `~~`, `` ` ``) are displayed on inactive lines.
-    pub conceal_mode: ConcealMode,
-    /// Whether horizontal rules (`---`, `***`, `___`) are rendered as visual divider quads.
-    pub visual_thematic_breaks: bool,
-    /// Whether clicking on task checkboxes (`- [ ]` / `- [x]`) toggles their state.
-    pub interactive_tasks: bool,
-}
-
-impl Default for MarkdownConfig {
-    fn default() -> Self {
-        Self {
-            conceal_mode: ConcealMode::Dimmed,
-            visual_thematic_breaks: true,
-            interactive_tasks: true,
-        }
-    }
-}
 
 /// A syntax highlighter for CommonMark and GFM Markdown documents using `pulldown-cmark`.
 #[derive(Debug, Clone)]
 pub struct MarkdownHighlighter {
     config: MarkdownConfig,
     cached_fences: FenceCache,
+    cached_tables: TableCache,
 }
 
 impl Default for MarkdownHighlighter {
@@ -68,6 +47,7 @@ impl MarkdownHighlighter {
         Self {
             config,
             cached_fences: Arc::new(RwLock::new(None)),
+            cached_tables: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -125,6 +105,148 @@ impl MarkdownHighlighter {
             false
         }
     }
+
+    /// Returns the cached display layouts for every table in the buffer,
+    /// recomputing them when the document version changed.
+    fn table_layouts(&self, buffer: &EditorBuffer) -> Vec<TableLayout> {
+        let version = buffer.version();
+        if let Ok(guard) = self.cached_tables.read()
+            && let Some((v, ref layouts)) = *guard
+            && v == version
+        {
+            return layouts.clone();
+        }
+        if let Ok(mut guard) = self.cached_tables.write() {
+            if let Some((v, ref layouts)) = *guard
+                && v == version
+            {
+                return layouts.clone();
+            }
+            let layouts = table_layouts(buffer);
+            *guard = Some((version, layouts.clone()));
+            layouts
+        } else {
+            table_layouts(buffer)
+        }
+    }
+}
+
+/// Snaps a display byte offset forward to a char boundary.
+fn snap_display_fwd(display: &str, mut i: usize) -> usize {
+    i = i.min(display.len());
+    while i < display.len() && !display.is_char_boundary(i) {
+        i += 1;
+    }
+    i
+}
+
+/// Snaps a display byte offset backward to a char boundary.
+fn snap_display_back(display: &str, mut i: usize) -> usize {
+    i = i.min(display.len());
+    while i > 0 && !display.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
+}
+
+/// Computes display-only padding aligning one table row's cells to the
+/// block's column widths.
+///
+/// `source` is the stripped source line, `concealed` its collapsed display
+/// form. Column widths are measured on unconcealed source text (see
+/// [`TableLayout`]); per-row padding absorbs concealment shrinkage so pipes
+/// align on active and inactive rows alike. Delimiter dashes are extended
+/// with `-` fill; body/header cells are space-padded honoring the column's
+/// delimiter alignment.
+fn table_row_pads(
+    layout: &TableLayout,
+    kind: TableRowKind,
+    source: &str,
+    concealed: &ConcealedLine,
+) -> Vec<DisplayPad> {
+    let display = &concealed.display_text;
+    let (_, cells) = split_table_cells(source);
+    let mut pads = Vec::new();
+    for (i, cell) in cells.iter().enumerate().take(layout.col_widths.len()) {
+        let width = layout.col_widths[i];
+        let ds = snap_display_fwd(
+            display,
+            concealed.source_to_display(cell.start.min(source.len())),
+        );
+        let de = snap_display_back(
+            display,
+            concealed.source_to_display(cell.end.min(source.len())),
+        );
+        if ds >= de {
+            continue;
+        }
+        // Trim padding already present in the display slice.
+        let bytes = display.as_bytes();
+        let mut cs = ds;
+        while cs < de && (bytes[cs] == b' ' || bytes[cs] == b'\t') {
+            cs += 1;
+        }
+        let mut ce = de;
+        while ce > cs && (bytes[ce - 1] == b' ' || bytes[ce - 1] == b'\t') {
+            ce -= 1;
+        }
+        let content_width = display_width(&display[cs..ce]);
+        if content_width >= width {
+            continue;
+        }
+        let need = width - content_width;
+        if kind == TableRowKind::Delimiter {
+            // Extend the dash run, keeping a trailing alignment colon last.
+            let at = if display[cs..ce].ends_with(':') {
+                ce - 1
+            } else {
+                ce
+            };
+            pads.push(DisplayPad {
+                display_at: at,
+                fill: '-',
+                len: need,
+            });
+            continue;
+        }
+        match layout
+            .block
+            .aligns
+            .get(i)
+            .copied()
+            .unwrap_or(TableAlignment::None)
+        {
+            TableAlignment::Right => pads.push(DisplayPad {
+                display_at: cs,
+                fill: ' ',
+                len: need,
+            }),
+            TableAlignment::Center => {
+                let left = need / 2;
+                let right = need - left;
+                if left > 0 {
+                    pads.push(DisplayPad {
+                        display_at: cs,
+                        fill: ' ',
+                        len: left,
+                    });
+                }
+                if right > 0 {
+                    pads.push(DisplayPad {
+                        display_at: ce,
+                        fill: ' ',
+                        len: right,
+                    });
+                }
+            }
+            TableAlignment::Left | TableAlignment::None => pads.push(DisplayPad {
+                display_at: ce,
+                fill: ' ',
+                len: need,
+            }),
+        }
+    }
+    pads
 }
 
 impl SyntaxHighlighter for MarkdownHighlighter {
@@ -148,6 +270,73 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         if self.is_in_fenced_code_block(buffer, row) {
             spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Code));
             return spans;
+        }
+
+        // GFM pipe tables. Runs before the thematic-break check so a
+        // single-column `---` delimiter is not mistaken for an `<hr>`.
+        // Pipes stay visible in every conceal mode (Hidden maps to Dimmed)
+        // to preserve `ConcealedLine` source/display column alignment.
+        if self.config.visual_tables
+            && let Some(block) = table_block_at(buffer, row)
+            && let Some(kind) = block.kind_at(row)
+        {
+            // Pipes dim on inactive rows but are never concealed.
+            let pipe_dim = match self.config.conceal_mode {
+                ConcealMode::Off => None,
+                ConcealMode::Dimmed | ConcealMode::Hidden => Some(HighlightTag::Dimmed),
+            };
+            let pipes = find_unescaped_pipes(line_text);
+            match kind {
+                TableRowKind::Delimiter => {
+                    spans.push(StyleSpan::tag(
+                        0..line_text.len(),
+                        HighlightTag::Custom(TABLE_DELIMITER_TAG),
+                    ));
+                    for p in &pipes {
+                        spans.push(StyleSpan::tag(*p..*p + 1, HighlightTag::Punctuation));
+                    }
+                    if !is_cursor_row {
+                        let tag = delimiter_tag.unwrap_or(HighlightTag::Comment);
+                        // Map Hidden -> Dimmed: concealing dashes would collapse
+                        // the row to nothing and break cursor mapping.
+                        let tag = if tag == HighlightTag::Hidden {
+                            HighlightTag::Dimmed
+                        } else {
+                            tag
+                        };
+                        spans.push(StyleSpan::tag(0..line_text.len(), tag));
+                    }
+                    return spans;
+                }
+                TableRowKind::Header | TableRowKind::Body => {
+                    let cell_tag = if kind == TableRowKind::Header {
+                        HighlightTag::Custom(TABLE_HEADER_TAG)
+                    } else {
+                        HighlightTag::Custom(TABLE_CELL_TAG)
+                    };
+                    let (_, cells) = split_table_cells(line_text);
+                    for cell in &cells {
+                        let end = cell.end.min(line_text.len());
+                        if cell.start < end {
+                            spans.push(StyleSpan::tag(cell.start..end, cell_tag));
+                            if kind == TableRowKind::Header
+                                && let Some(content) = line_text.get(cell.start..end)
+                                && !content.trim().is_empty()
+                            {
+                                spans.push(StyleSpan::tag(cell.start..end, HighlightTag::Bold));
+                            }
+                        }
+                    }
+                    for p in &pipes {
+                        spans.push(StyleSpan::tag(*p..*p + 1, HighlightTag::Punctuation));
+                        if !is_cursor_row && let Some(dim) = pipe_dim {
+                            spans.push(StyleSpan::tag(*p..*p + 1, dim));
+                        }
+                    }
+                    // Fall through to the inline pulldown pass so emphasis,
+                    // code spans, and links inside cells keep working.
+                }
+            }
         }
 
         if self.config.visual_thematic_breaks {
@@ -431,284 +620,40 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         }
         extract_markdown_links(line_text)
     }
-}
 
-/// An editor hook providing Markdown shortcuts (Ctrl+B, Ctrl+I, Ctrl+K), smart list continuation, and task list toggles.
-#[derive(Debug, Clone)]
-pub struct MarkdownHook {
-    interactive_tasks: bool,
-}
-
-impl Default for MarkdownHook {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl MarkdownHook {
-    /// Creates a new Markdown editing hook.
-    pub fn new() -> Self {
-        Self {
-            interactive_tasks: true,
+    fn expand_line(
+        &self,
+        buffer: &EditorBuffer,
+        row: usize,
+        concealed: &ConcealedLine,
+    ) -> Vec<DisplayPad> {
+        if !(self.config.visual_tables && self.config.table_alignment) {
+            return Vec::new();
         }
+        let layouts = self.table_layouts(buffer);
+        let layout = match layouts.iter().find(|l| l.block.contains(row)) {
+            Some(layout) => layout,
+            None => return Vec::new(),
+        };
+        let kind = match layout.block.kind_at(row) {
+            Some(kind) => kind,
+            None => return Vec::new(),
+        };
+        let source = clean_table_line(&buffer.line_to_string(row)).to_string();
+        table_row_pads(layout, kind, &source, concealed)
     }
 
-    /// Creates a hook honoring the given Markdown configuration.
-    pub fn with_config(config: MarkdownConfig) -> Self {
-        Self {
-            interactive_tasks: config.interactive_tasks,
-        }
-    }
-
-    /// Updates whether mouse clicks toggle task checkboxes.
-    pub fn set_interactive_tasks(&mut self, interactive: bool) {
-        self.interactive_tasks = interactive;
-    }
-
-    /// Returns whether mouse clicks toggle task checkboxes.
-    pub fn interactive_tasks(&self) -> bool {
-        self.interactive_tasks
-    }
-
-    fn toggle_marker_at_row(ctx: &mut HookContext, row: usize) -> bool {
-        if row >= ctx.buffer.len_lines() {
-            return false;
-        }
-        let line = ctx.buffer.line_to_string(row);
-        let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
-        let old_cursor = ctx.buffer.cursor_offset();
-
-        // Unchecked -> checked (lowercase x, matching Ctrl+Enter behavior).
-        for (empty, checked) in [("- [ ] ", "- [x] "), ("* [ ] ", "* [x] ")] {
-            if let Some(idx) = line.find(empty) {
-                let s = line_start + idx;
-                ctx.buffer.replace_range(s..s + 6, checked);
-                ctx.buffer.set_cursor_offset(old_cursor);
-                return true;
-            }
-        }
-        // Checked (x or X) -> unchecked.
-        for (checked, empty) in [
-            ("- [x] ", "- [ ] "),
-            ("- [X] ", "- [ ] "),
-            ("* [x] ", "* [ ] "),
-            ("* [X] ", "* [ ] "),
-        ] {
-            if let Some(idx) = line.find(checked) {
-                let s = line_start + idx;
-                ctx.buffer.replace_range(s..s + 6, empty);
-                ctx.buffer.set_cursor_offset(old_cursor);
-                return true;
-            }
-        }
-        false
-    }
-
-    fn toggle_checkbox(ctx: &mut HookContext) -> bool {
-        let row = ctx.buffer.cursor_point().row;
-        let line = ctx.buffer.line_to_string(row);
-        let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
-
-        if let Some(idx) = line.find("- [ ] ") {
-            let target_start = line_start + idx;
-            ctx.buffer
-                .replace_range(target_start..target_start + 6, "- [x] ");
-            return true;
-        } else if let Some(idx) = line.find("- [x] ") {
-            let target_start = line_start + idx;
-            ctx.buffer
-                .replace_range(target_start..target_start + 6, "- [ ] ");
-            return true;
-        } else if let Some(idx) = line.find("* [ ] ") {
-            let target_start = line_start + idx;
-            ctx.buffer
-                .replace_range(target_start..target_start + 6, "* [x] ");
-            return true;
-        } else if let Some(idx) = line.find("* [x] ") {
-            let target_start = line_start + idx;
-            ctx.buffer
-                .replace_range(target_start..target_start + 6, "* [ ] ");
+    fn should_wrap_line(&self, buffer: &EditorBuffer, row: usize) -> bool {
+        if !(self.config.visual_tables && self.config.table_alignment) {
             return true;
         }
-        false
+        !table_block_at(buffer, row).is_some_and(|b| b.contains(row))
     }
-}
-
-impl EditorHook for MarkdownHook {
-    fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
-        if event.modifiers.ctrl || event.modifiers.meta {
-            match event.key.to_lowercase().as_str() {
-                "b" => {
-                    if let Some(sel) = ctx.selection.take() {
-                        let range = sel.byte_range();
-                        let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
-                        let wrapped = format!("**{}**", text);
-                        ctx.buffer.replace_range(range.clone(), &wrapped);
-                        *ctx.selection = Some(Selection::range(range.start + 2, range.end + 2));
-                    } else {
-                        ctx.buffer.insert("****");
-                        ctx.buffer.move_cursor_left();
-                        ctx.buffer.move_cursor_left();
-                    }
-                    return HookOutcome::Consumed;
-                }
-                "i" => {
-                    if let Some(sel) = ctx.selection.take() {
-                        let range = sel.byte_range();
-                        let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
-                        let wrapped = format!("*{}*", text);
-                        ctx.buffer.replace_range(range.clone(), &wrapped);
-                        *ctx.selection = Some(Selection::range(range.start + 1, range.end + 1));
-                    } else {
-                        ctx.buffer.insert("**");
-                        ctx.buffer.move_cursor_left();
-                    }
-                    return HookOutcome::Consumed;
-                }
-                "k" => {
-                    if let Some(sel) = ctx.selection.take() {
-                        let range = sel.byte_range();
-                        let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
-                        let wrapped = format!("[{}](url)", text);
-                        ctx.buffer.replace_range(range.clone(), &wrapped);
-                        let url_start = range.start + 1 + text.len() + 2;
-                        *ctx.selection = Some(Selection::range(url_start, url_start + 3));
-                    } else {
-                        ctx.buffer.insert("[](url)");
-                        ctx.buffer.move_cursor_left();
-                        ctx.buffer.move_cursor_left();
-                        ctx.buffer.move_cursor_left();
-                        ctx.buffer.move_cursor_left();
-                        ctx.buffer.move_cursor_left();
-                    }
-                    return HookOutcome::Consumed;
-                }
-                "enter" if Self::toggle_checkbox(ctx) => {
-                    return HookOutcome::Consumed;
-                }
-                _ => {}
-            }
-        }
-
-        if event.key == "enter" && !event.modifiers.shift {
-            let cursor = ctx.buffer.cursor_offset();
-            let row = ctx.buffer.cursor_point().row;
-            let line = ctx.buffer.line_to_string(row);
-            let trimmed = line.trim_start();
-            let indent_len = line.len() - trimmed.len();
-            let indent = &line[..indent_len];
-
-            if trimmed.starts_with("- [ ] ") || trimmed.starts_with("- [x] ") {
-                if trimmed == "- [ ] \n"
-                    || trimmed == "- [ ] \r\n"
-                    || trimmed == "- [ ] "
-                    || trimmed == "- [x] \n"
-                    || trimmed == "- [x] \r\n"
-                    || trimmed == "- [x] "
-                {
-                    let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
-                    ctx.buffer.delete_range(line_start..cursor);
-                    return HookOutcome::Consumed;
-                }
-                ctx.buffer.insert(&format!("\n{}- [ ] ", indent));
-                return HookOutcome::Consumed;
-            }
-
-            if trimmed.starts_with("- ") || trimmed.starts_with("* ") || trimmed.starts_with("+ ") {
-                let bullet = &trimmed[..2];
-                if trimmed == "- \n"
-                    || trimmed == "- \r\n"
-                    || trimmed == "- "
-                    || trimmed == "* \n"
-                    || trimmed == "* \r\n"
-                    || trimmed == "* "
-                    || trimmed == "+ \n"
-                    || trimmed == "+ \r\n"
-                    || trimmed == "+ "
-                {
-                    let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
-                    ctx.buffer.delete_range(line_start..cursor);
-                    return HookOutcome::Consumed;
-                }
-                ctx.buffer.insert(&format!("\n{}{}", indent, bullet));
-                return HookOutcome::Consumed;
-            }
-
-            if let Some(dot_idx) = trimmed.find(". ") {
-                let num_str = &trimmed[..dot_idx];
-                if let Ok(num) = num_str.parse::<usize>() {
-                    let rest = &trimmed[dot_idx + 2..];
-                    if rest == "\n" || rest == "\r\n" || rest.is_empty() {
-                        let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
-                        ctx.buffer.delete_range(line_start..cursor);
-                        return HookOutcome::Consumed;
-                    }
-                    ctx.buffer.insert(&format!("\n{}{}. ", indent, num + 1));
-                    return HookOutcome::Consumed;
-                }
-            }
-        }
-
-        HookOutcome::PassThrough
-    }
-
-    fn on_click(&mut self, ctx: &mut HookContext, row: usize, _col: usize) -> HookOutcome {
-        if !self.interactive_tasks {
-            return HookOutcome::PassThrough;
-        }
-        if Self::toggle_marker_at_row(ctx, row) {
-            return HookOutcome::Consumed;
-        }
-        HookOutcome::PassThrough
-    }
-
-    fn status_text(&self) -> Option<&str> {
-        Some("MARKDOWN")
-    }
-}
-
-/// Extracts all markdown hyperlink destinations and their label character ranges from a single line.
-pub fn extract_markdown_links(line_text: &str) -> Vec<(Range<usize>, String)> {
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TASKLISTS);
-    let parser = Parser::new_ext(line_text, options).into_offset_iter();
-    let mut links = Vec::new();
-    let mut current_link: Option<(usize, String)> = None;
-
-    for (event, range) in parser {
-        match event {
-            Event::Start(Tag::Link { dest_url, .. }) => {
-                current_link = Some((range.start, dest_url.to_string()));
-            }
-            Event::End(TagEnd::Link) => {
-                if let Some((start, dest_url)) = current_link.take() {
-                    let end = range.end.min(line_text.len());
-                    if let Some(bracket_idx) = line_text[start..end].find("](") {
-                        let label_start = start + 1;
-                        let label_end = start + bracket_idx;
-                        links.push((label_start..label_end, dest_url));
-                    } else if let Some(bracket_idx) = line_text[start..end].find("][") {
-                        let label_start = start + 1;
-                        let label_end = start + bracket_idx;
-                        links.push((label_start..label_end, dest_url));
-                    } else if line_text[start..end].starts_with('<')
-                        && line_text[start..end].ends_with('>')
-                    {
-                        links.push((start + 1..end - 1, dest_url));
-                    } else {
-                        links.push((start..end, dest_url));
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    links
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::links::extract_markdown_links;
     use super::*;
     use crate::{ConcealedLine, StyleValue};
 
@@ -773,69 +718,6 @@ mod tests {
             .iter()
             .find(|s| s.style == StyleValue::Tag(HighlightTag::Code));
         assert!(code_span.is_some());
-    }
-
-    #[test]
-    fn test_markdown_hook_bold_wrapping() {
-        let mut buffer = EditorBuffer::new("hello world");
-        let mut selection = Some(Selection::range(0, 5));
-        let mut cursor_style = crate::CursorStyle::Bar;
-        let mut hook = MarkdownHook::new();
-
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
-        let event = KeyEvent {
-            key: "b".into(),
-            modifiers: crate::Modifiers {
-                ctrl: true,
-                ..Default::default()
-            },
-        };
-
-        let outcome = hook.on_key(&mut ctx, &event);
-        assert_eq!(outcome, HookOutcome::Consumed);
-        assert_eq!(ctx.buffer.text().to_string(), "**hello** world");
-        assert_eq!(ctx.selection.unwrap().byte_range(), 2..7);
-    }
-
-    #[test]
-    fn test_markdown_hook_checkbox_toggle() {
-        let mut buffer = EditorBuffer::new("- [ ] Task item");
-        let mut selection = None;
-        let mut cursor_style = crate::CursorStyle::Bar;
-        let mut hook = MarkdownHook::new();
-
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
-        let event = KeyEvent {
-            key: "enter".into(),
-            modifiers: crate::Modifiers {
-                ctrl: true,
-                ..Default::default()
-            },
-        };
-
-        let outcome = hook.on_key(&mut ctx, &event);
-        assert_eq!(outcome, HookOutcome::Consumed);
-        assert_eq!(ctx.buffer.text().to_string(), "- [x] Task item");
-
-        let outcome2 = hook.on_key(&mut ctx, &event);
-        assert_eq!(outcome2, HookOutcome::Consumed);
-        assert_eq!(ctx.buffer.text().to_string(), "- [ ] Task item");
-    }
-
-    #[test]
-    fn test_markdown_hook_numbered_list_continuation() {
-        let mut buffer = EditorBuffer::new("1. First item");
-        buffer.set_cursor_offset(13);
-        let mut selection = None;
-        let mut cursor_style = crate::CursorStyle::Bar;
-        let mut hook = MarkdownHook::new();
-
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
-        let event = KeyEvent::plain("enter");
-
-        let outcome = hook.on_key(&mut ctx, &event);
-        assert_eq!(outcome, HookOutcome::Consumed);
-        assert_eq!(ctx.buffer.text().to_string(), "1. First item\n2. ");
     }
 
     #[test]
@@ -986,70 +868,180 @@ mod tests {
     }
 
     #[test]
-    fn test_markdown_hook_on_click_toggles_task() {
-        let mut buffer = EditorBuffer::new("- [ ] Task one\n- [x] Task two");
-        let mut selection = None;
-        let mut cursor_style = crate::CursorStyle::Bar;
-        let mut hook = MarkdownHook::new();
+    fn test_table_highlight_uses_existing_tags_only() {
+        let buffer = EditorBuffer::new("| Name | Age |\n| --- | ---: |\n| Ada | 36 |");
+        let highlighter = MarkdownHighlighter::new();
 
-        // Click row 1 (checked -> unchecked), cursor stays put.
-        buffer.set_cursor_offset(0);
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
-        assert_eq!(hook.on_click(&mut ctx, 1, 0), HookOutcome::Consumed);
-        assert_eq!(
-            ctx.buffer.text().to_string(),
-            "- [ ] Task one\n- [ ] Task two"
+        let header = highlighter.highlight_line(&buffer, 0, "| Name | Age |");
+        assert!(
+            header
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Punctuation))
         );
-        assert_eq!(ctx.buffer.cursor_offset(), 0);
-
-        // Click row 0 (unchecked -> checked).
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
-        assert_eq!(hook.on_click(&mut ctx, 0, 2), HookOutcome::Consumed);
-        assert_eq!(
-            ctx.buffer.text().to_string(),
-            "- [x] Task one\n- [ ] Task two"
+        assert!(
+            header
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Bold))
+        );
+        assert!(
+            header
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Custom(TABLE_HEADER_TAG)))
         );
 
-        // Uppercase [X] also toggles.
-        ctx.buffer.replace_range(0..14, "- [X] Task one");
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
-        assert_eq!(hook.on_click(&mut ctx, 0, 3), HookOutcome::Consumed);
-        assert_eq!(
-            ctx.buffer.text().to_string(),
-            "- [ ] Task one\n- [ ] Task two"
+        let body = highlighter.highlight_line(&buffer, 2, "| Ada | 36 |");
+        assert!(
+            body.iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Custom(TABLE_CELL_TAG)))
+        );
+        assert!(
+            body.iter()
+                .all(|s| s.style != StyleValue::Tag(HighlightTag::Bold))
         );
 
-        // Plain line passes through.
-        let mut plain = EditorBuffer::new("hello");
-        let mut ctx = HookContext::new(&mut plain, &mut selection, &mut cursor_style);
-        assert_eq!(hook.on_click(&mut ctx, 0, 0), HookOutcome::PassThrough);
-    }
+        let delim = highlighter.highlight_line(&buffer, 1, "| --- | ---: |");
+        assert!(
+            delim
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Custom(TABLE_DELIMITER_TAG)))
+        );
 
-    #[test]
-    fn test_markdown_hook_on_click_respects_config() {
-        let mut buffer = EditorBuffer::new("- [ ] Task");
-        let mut selection = None;
-        let mut cursor_style = crate::CursorStyle::Bar;
-        let mut hook = MarkdownHook::with_config(MarkdownConfig {
-            interactive_tasks: false,
+        // Inline code inside cells still highlights.
+        let code_row = EditorBuffer::new("| `x|y` | b |\n| --- | --- |\n| c | d |");
+        let code_spans = highlighter.highlight_line(&code_row, 0, "| `x|y` | b |");
+        assert!(
+            code_spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Code))
+        );
+
+        // Pipes are never fully concealed: Hidden maps to Dimmed.
+        let hidden = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
             ..Default::default()
         });
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
-        assert_eq!(hook.on_click(&mut ctx, 0, 0), HookOutcome::PassThrough);
-        assert_eq!(ctx.buffer.text().to_string(), "- [ ] Task");
+        let mut moved = EditorBuffer::new("| Name | Age |\n| --- | ---: |\n| Ada | 36 |");
+        moved.set_cursor_offset(40);
+        let inactive = hidden.highlight_line(&moved, 0, "| Name | Age |");
+        assert!(
+            inactive
+                .iter()
+                .all(|s| s.style != StyleValue::Tag(HighlightTag::Hidden))
+        );
+        assert!(
+            inactive
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Dimmed))
+        );
+        let concealed = ConcealedLine::build("| Name | Age |", &inactive);
+        assert_eq!(concealed.display_text, "| Name | Age |");
+
+        // Opt-out flag disables everything.
+        let off = MarkdownHighlighter::with_config(MarkdownConfig {
+            visual_tables: false,
+            ..Default::default()
+        });
+        let plain = off.highlight_line(&buffer, 0, "| Name | Age |");
+        assert!(plain.iter().all(|s| !matches!(
+            s.style,
+            StyleValue::Tag(
+                HighlightTag::Custom(TABLE_HEADER_TAG)
+                    | HighlightTag::Custom(TABLE_CELL_TAG)
+                    | HighlightTag::Custom(TABLE_DELIMITER_TAG)
+            )
+        )));
+    }
+
+    /// Renders one row through highlight + conceal + expand, like the canvas does.
+    fn expanded_display(
+        highlighter: &MarkdownHighlighter,
+        buffer: &EditorBuffer,
+        row: usize,
+        line: &str,
+    ) -> String {
+        let spans = highlighter.highlight_line(buffer, row, line);
+        let concealed = ConcealedLine::build(line, &spans);
+        let pads = highlighter.expand_line(buffer, row, &concealed);
+        concealed.expanded(&pads).display_text
     }
 
     #[test]
-    fn test_markdown_highlighter_extract_links_trait() {
-        use crate::SyntaxHighlighter;
-        let buffer = EditorBuffer::new("[Google](https://google.com)");
+    fn test_table_columns_share_widths_when_a_cell_grows() {
+        let buffer = EditorBuffer::new("| a | b |\n| --- | --- |\n| looong | c |\n| d | e |");
         let highlighter = MarkdownHighlighter::new();
-        let links = highlighter.extract_links(&buffer, 0, "[Google](https://google.com)");
-        assert_eq!(links.len(), 1);
-        assert_eq!(links[0].0, 1..7);
-        assert_eq!(links[0].1, "https://google.com");
 
-        let none = highlighter.extract_links(&buffer, 0, "plain text");
-        assert!(none.is_empty());
+        let header = expanded_display(&highlighter, &buffer, 0, "| a | b |");
+        let body_long = expanded_display(&highlighter, &buffer, 2, "| looong | c |");
+        let body_short = expanded_display(&highlighter, &buffer, 3, "| d | e |");
+        let delim = expanded_display(&highlighter, &buffer, 1, "| --- | --- |");
+
+        // Pipes land on the same display columns in every row.
+        let pipe_cols = |s: &str| {
+            s.char_indices()
+                .filter(|(_, c)| *c == '|')
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pipe_cols(&header), pipe_cols(&body_long));
+        assert_eq!(pipe_cols(&header), pipe_cols(&body_short));
+        assert_eq!(pipe_cols(&header), pipe_cols(&delim));
+        assert_eq!(header, "| a      | b   |");
+        assert_eq!(body_long, "| looong | c   |");
+        assert_eq!(delim, "| ------ | --- |");
+    }
+
+    #[test]
+    fn test_table_alignment_honors_delimiter_sides() {
+        let buffer = EditorBuffer::new("| ab | c |\n| ---: | --- |\n| d | ef |");
+        let highlighter = MarkdownHighlighter::new();
+
+        // Right-aligned column pads before the content, plain column after.
+        let body = expanded_display(&highlighter, &buffer, 2, "| d | ef |");
+        assert_eq!(body, "|    d | ef  |");
+        // The delimiter already fits, so it renders unchanged and aligned.
+        let delim = expanded_display(&highlighter, &buffer, 1, "| ---: | --- |");
+        assert_eq!(delim, "| ---: | --- |");
+        let pipe_cols = |s: &str| {
+            s.char_indices()
+                .filter(|(_, c)| *c == '|')
+                .map(|(i, _)| i)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(pipe_cols(&body), pipe_cols(&delim));
+    }
+
+    #[test]
+    fn test_table_rows_opt_out_of_wrapping() {
+        let buffer = EditorBuffer::new("| a | b |\n| --- | --- |\n| c | d |\nplain");
+        let highlighter = MarkdownHighlighter::new();
+        assert!(!highlighter.should_wrap_line(&buffer, 0));
+        assert!(!highlighter.should_wrap_line(&buffer, 1));
+        assert!(!highlighter.should_wrap_line(&buffer, 2));
+        assert!(highlighter.should_wrap_line(&buffer, 3));
+
+        let off = MarkdownHighlighter::with_config(MarkdownConfig {
+            table_alignment: false,
+            ..Default::default()
+        });
+        assert!(off.should_wrap_line(&buffer, 0));
+        assert!(
+            off.expand_line(&buffer, 0, &ConcealedLine::build("| a | b |", &[]))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn test_table_layout_cache_invalidates_on_edit() {
+        let mut buffer = EditorBuffer::new("| a |\n| --- |\n| b |");
+        let highlighter = MarkdownHighlighter::new();
+        assert_eq!(
+            expanded_display(&highlighter, &buffer, 2, "| b |"),
+            "| b   |"
+        );
+        buffer.replace_range(16..17, "much-longer");
+        assert_eq!(
+            expanded_display(&highlighter, &buffer, 2, "| much-longer |"),
+            "| much-longer |"
+        );
     }
 }

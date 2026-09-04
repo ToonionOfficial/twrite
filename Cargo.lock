@@ -5510,7 +5510,7 @@ dependencies = [
 
 [[package]]
 name = "twrite"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gpui",
  "gpui_platform",
@@ -5520,16 +5520,17 @@ dependencies = [
 
 [[package]]
 name = "twrite-core"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "pulldown-cmark",
  "ropey",
  "thiserror 1.0.69",
+ "unicode-width",
 ]
 
 [[package]]
 name = "twrite-gpui"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "gpui",
  "twrite-core",
