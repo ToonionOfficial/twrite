@@ -5,6 +5,19 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Markdown GFM tables (battery-only, no core changes)**: `table_block_at`,
+  `parse_delimiter_row`, `find_unescaped_pipes`, `split_table_cells`,
+  `TableBlock` / `TableRowKind` / `TableAlignment`, and
+  `TABLE_{HEADER,CELL,DELIMITER}_TAG` custom tags (`markdown.table.*`,
+  styled with existing `Punctuation` / `Bold` / `Dimmed` — pipes are never
+  `Hidden` so concealment preserves column mapping). `MarkdownConfig::{visual_tables,
+  table_navigation}` (both default `true`) and `MarkdownHook` `Tab` /
+  `Shift+Tab` cell navigation (appends a skeleton row past the last cell)
+  plus `Enter` row continuation / blank-row table exit.
+
 ## [0.2.0] - 2026-09-03
 
 ### Added

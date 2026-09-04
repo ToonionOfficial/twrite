@@ -34,7 +34,11 @@ pub use hook::{
     AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
 };
 #[cfg(feature = "markdown")]
-pub use markdown::{ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook};
+pub use markdown::{
+    ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook, TABLE_CELL_TAG,
+    TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableRowKind,
+    find_unescaped_pipes, parse_delimiter_row, split_table_cells, table_block_at,
+};
 pub use movement::{
     CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
     find_prev_word_start,
