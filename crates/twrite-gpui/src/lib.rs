@@ -1,4 +1,4 @@
-#![recursion_limit = "1024"]
+#![recursion_limit = "2048"]
 //! GPUI rendering, canvas text-shaping, and interactive editor component for twrite.
 
 /// Canvas element handling prepaint, layout, and GPU quad rendering.

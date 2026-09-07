@@ -272,7 +272,9 @@ impl EditorCanvas {
 }
 
 impl RenderOnce for EditorCanvas {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        window.request_animation_frame();
+
         let editor_handle = self.editor.clone();
 
         canvas(
