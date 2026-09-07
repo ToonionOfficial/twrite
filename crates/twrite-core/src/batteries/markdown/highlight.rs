@@ -11,9 +11,9 @@ use crate::{
 use super::config::{ConcealMode, MarkdownConfig};
 use super::links::extract_markdown_links;
 use super::table::{
-    TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableLayout,
-    TableRowKind, clean_table_line, find_unescaped_pipes, split_table_cells, table_block_at,
-    table_layouts,
+    TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout,
+    TableRowKind, clean_table_line, find_unescaped_pipes, is_fenced_row, split_table_cells,
+    table_block_at_with_fences, table_layouts_with_fences,
 };
 
 /// Cached table display layouts and associated document version.
@@ -62,73 +62,108 @@ impl MarkdownHighlighter {
     }
 
     fn is_in_fenced_code_block(&self, buffer: &EditorBuffer, current_row: usize) -> bool {
+        let fences = self.cached_fence_rows(buffer);
+        is_fenced_row(&fences, current_row)
+    }
+
+    /// Returns the fence-marker rows for this document version, scanning once
+    /// and sharing the result across all per-row queries in the epoch.
+    ///
+    /// This is the single `O(N)` fence pass per version: `highlight_line`,
+    /// table-block lookup, and table-layout building all share it instead of
+    /// each rescanning `0..row` per visible row per frame.
+    fn cached_fence_rows(&self, buffer: &EditorBuffer) -> Vec<usize> {
         let version = buffer.version();
         if let Ok(guard) = self.cached_fences.read()
             && let Some((v, ref fences)) = *guard
             && v == version
         {
-            let count = fences.partition_point(|&f_row| f_row < current_row);
-            return count % 2 == 1;
+            return fences.clone();
         }
 
         if let Ok(mut guard) = self.cached_fences.write() {
             if let Some((v, ref fences)) = *guard
                 && v == version
             {
-                let count = fences.partition_point(|&f_row| f_row < current_row);
-                return count % 2 == 1;
+                return fences.clone();
             }
 
-            let mut fences = Vec::new();
-            let total_lines = buffer.len_lines();
-            let rope = buffer.text();
-            for r in 0..total_lines {
-                let line = rope.line(r);
-                let mut chars = line.chars();
-                while let Some(c) = chars.next() {
-                    if !c.is_whitespace() {
-                        if (c == '`' && chars.next() == Some('`') && chars.next() == Some('`'))
-                            || (c == '~' && chars.next() == Some('~') && chars.next() == Some('~'))
-                        {
-                            fences.push(r);
-                        }
-                        break;
-                    }
-                }
-            }
-
-            let count = fences.partition_point(|&f_row| f_row < current_row);
-            let in_block = count % 2 == 1;
-            *guard = Some((version, fences));
-            in_block
+            let fences = scan_fence_rows(buffer);
+            *guard = Some((version, fences.clone()));
+            fences
         } else {
-            false
+            scan_fence_rows(buffer)
         }
     }
 
-    /// Returns the cached display layouts for every table in the buffer,
-    /// recomputing them when the document version changed.
-    fn table_layouts(&self, buffer: &EditorBuffer) -> Vec<TableLayout> {
+    /// Locates the table block for `row` using the version-cached fence
+    /// index (`O(log F)` fence check + bounded local walk).
+    fn cached_table_block(&self, buffer: &EditorBuffer, row: usize) -> Option<TableBlock> {
+        if row >= buffer.len_lines() {
+            return None;
+        }
+        let fences = self.cached_fence_rows(buffer);
+        table_block_at_with_fences(buffer, row, &fences)
+    }
+
+    /// Returns the table layout containing `row`, if any, cloning only that
+    /// single layout instead of the whole document's layout vec.
+    fn layout_for_row(&self, buffer: &EditorBuffer, row: usize) -> Option<TableLayout> {
         let version = buffer.version();
         if let Ok(guard) = self.cached_tables.read()
             && let Some((v, ref layouts)) = *guard
             && v == version
         {
-            return layouts.clone();
+            if let Some(layout) = layouts.iter().find(|l| l.block.contains(row)) {
+                return Some(layout.clone());
+            }
+            return None;
         }
         if let Ok(mut guard) = self.cached_tables.write() {
             if let Some((v, ref layouts)) = *guard
                 && v == version
             {
-                return layouts.clone();
+                if let Some(layout) = layouts.iter().find(|l| l.block.contains(row)) {
+                    return Some(layout.clone());
+                }
+                return None;
             }
-            let layouts = table_layouts(buffer);
-            *guard = Some((version, layouts.clone()));
-            layouts
+            // Build layouts with the shared fence index: one linear sweep,
+            // not one `O(row)` fence rescan per row.
+            let fences = self.cached_fence_rows(buffer);
+            let layouts = table_layouts_with_fences(buffer, &fences);
+            let found = layouts.iter().find(|l| l.block.contains(row)).cloned();
+            *guard = Some((version, layouts));
+            found
         } else {
-            table_layouts(buffer)
+            let fences = self.cached_fence_rows(buffer);
+            table_layouts_with_fences(buffer, &fences)
+                .into_iter()
+                .find(|l| l.block.contains(row))
         }
     }
+}
+
+/// Single linear fence-marker scan shared by every table query in an epoch.
+fn scan_fence_rows(buffer: &EditorBuffer) -> Vec<usize> {
+    let mut fences = Vec::new();
+    let total_lines = buffer.len_lines();
+    let rope = buffer.text();
+    for r in 0..total_lines {
+        let line = rope.line(r);
+        let mut chars = line.chars();
+        while let Some(c) = chars.next() {
+            if !c.is_whitespace() {
+                if (c == '`' && chars.next() == Some('`') && chars.next() == Some('`'))
+                    || (c == '~' && chars.next() == Some('~') && chars.next() == Some('~'))
+                {
+                    fences.push(r);
+                }
+                break;
+            }
+        }
+    }
+    fences
 }
 
 /// Snaps a display byte offset forward to a char boundary.
@@ -277,7 +312,7 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         // Pipes stay visible in every conceal mode (Hidden maps to Dimmed)
         // to preserve `ConcealedLine` source/display column alignment.
         if self.config.visual_tables
-            && let Some(block) = table_block_at(buffer, row)
+            && let Some(block) = self.cached_table_block(buffer, row)
             && let Some(kind) = block.kind_at(row)
         {
             // Pipes dim on inactive rows but are never concealed.
@@ -630,8 +665,7 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         if !(self.config.visual_tables && self.config.table_alignment) {
             return Vec::new();
         }
-        let layouts = self.table_layouts(buffer);
-        let layout = match layouts.iter().find(|l| l.block.contains(row)) {
+        let layout = match self.layout_for_row(buffer, row) {
             Some(layout) => layout,
             None => return Vec::new(),
         };
@@ -640,14 +674,16 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             None => return Vec::new(),
         };
         let source = clean_table_line(&buffer.line_to_string(row)).to_string();
-        table_row_pads(layout, kind, &source, concealed)
+        table_row_pads(&layout, kind, &source, concealed)
     }
 
     fn should_wrap_line(&self, buffer: &EditorBuffer, row: usize) -> bool {
         if !(self.config.visual_tables && self.config.table_alignment) {
             return true;
         }
-        !table_block_at(buffer, row).is_some_and(|b| b.contains(row))
+        !self
+            .cached_table_block(buffer, row)
+            .is_some_and(|b| b.contains(row))
     }
 }
 
@@ -1042,6 +1078,60 @@ mod tests {
         assert_eq!(
             expanded_display(&highlighter, &buffer, 2, "| much-longer |"),
             "| much-longer |"
+        );
+    }
+
+    #[test]
+    fn test_deep_table_rows_highlight_with_fence_at_top() {
+        // Guards the version-cached fence index: a fence pair far above must
+        // not hide a real table 1000+ lines below, and fenced pipe rows must
+        // still highlight as code, not table cells.
+        let mut s = String::from("```rust\nfn f() {}\n```\n");
+        for i in 0..1000 {
+            s.push_str(&format!("plain filler line {i}\n"));
+        }
+        let header_row = 1003;
+        s.push_str("| a | b |\n| --- | --- |\n| c | d |\n");
+        s.push_str("```\n| x |\n| --- |\n```\n");
+        let buffer = EditorBuffer::new(&s);
+        let highlighter = MarkdownHighlighter::new();
+
+        let header = highlighter.highlight_line(&buffer, header_row, "| a | b |");
+        assert!(
+            header
+                .iter()
+                .any(|sp| sp.style == StyleValue::Tag(HighlightTag::Custom(TABLE_HEADER_TAG))),
+            "deep header row must keep its table tag"
+        );
+        assert!(
+            header
+                .iter()
+                .any(|sp| sp.style == StyleValue::Tag(HighlightTag::Bold)),
+            "deep header cells must stay bold"
+        );
+        let body = highlighter.highlight_line(&buffer, header_row + 2, "| c | d |");
+        assert!(
+            body.iter()
+                .any(|sp| sp.style == StyleValue::Tag(HighlightTag::Custom(TABLE_CELL_TAG)))
+        );
+        assert!(!highlighter.should_wrap_line(&buffer, header_row));
+        assert!(!highlighter.should_wrap_line(&buffer, header_row + 2));
+
+        // Pipe rows inside the trailing fence are code, never table cells.
+        let total = buffer.len_lines();
+        let fenced_pipe_row = total - 3;
+        let fenced = highlighter.highlight_line(&buffer, fenced_pipe_row, "| x |");
+        assert!(
+            fenced
+                .iter()
+                .any(|sp| sp.style == StyleValue::Tag(HighlightTag::Code)),
+            "fenced pipe row must highlight as code"
+        );
+        assert!(
+            fenced
+                .iter()
+                .all(|sp| sp.style != StyleValue::Tag(HighlightTag::Custom(TABLE_CELL_TAG))),
+            "fenced pipe row must not emit table cell tags"
         );
     }
 }

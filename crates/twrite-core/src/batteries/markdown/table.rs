@@ -84,18 +84,28 @@ fn is_fence_line(cleaned: &str) -> bool {
     t.starts_with("```") || t.starts_with("~~~")
 }
 
-/// Counts fence toggles above `row`: odd means `row` is inside a fenced block.
+/// Collects every fence-marker row in a single linear pass.
 ///
-/// `table_block_at` is a fence-unaware free function, so it needs its own
-/// check (the highlighter additionally guards via its cached fence scan).
-fn row_in_fenced_block(buffer: &EditorBuffer, row: usize) -> bool {
-    let mut fences = 0;
-    for r in 0..row.min(buffer.len_lines()) {
+/// Hot paths (per-frame highlight, table layout) must call this once per
+/// document version and share the result — never scan per row.
+pub fn fence_rows(buffer: &EditorBuffer) -> Vec<usize> {
+    let total = buffer.len_lines();
+    let mut fences = Vec::new();
+    for r in 0..total {
         if is_fence_line(clean_table_line(&buffer.line_to_string(r))) {
-            fences += 1;
+            fences.push(r);
         }
     }
-    fences % 2 == 1
+    fences
+}
+
+/// Returns whether `row` sits inside a fenced code block.
+///
+/// `fences` is the sorted output of [`fence_rows`]; the query is
+/// `O(log F)` via `partition_point`. Counts only markers strictly above
+/// `row`, matching the previous per-call scan semantics.
+pub fn is_fenced_row(fences: &[usize], row: usize) -> bool {
+    fences.partition_point(|&f_row| f_row < row) % 2 == 1
 }
 
 /// Byte ranges of inline code spans (backtick runs) in `line`.
@@ -279,7 +289,26 @@ fn table_line_has_pipe(cleaned: &str) -> bool {
 /// `row` and extends through contiguous piped body rows. Returns `None` for
 /// blank lines, fence lines, blockquotes, single-column pipe-less text (which
 /// is a setext heading, not a table), and bare `---` (thematic break).
+///
+/// Single-shot helper: computes the fence index in one `O(N)` pass. Hot
+/// per-frame paths must hoist that pass per document version and call
+/// [`table_block_at_with_fences`] instead.
 pub fn table_block_at(buffer: &EditorBuffer, row: usize) -> Option<TableBlock> {
+    let fences = fence_rows(buffer);
+    table_block_at_with_fences(buffer, row, &fences)
+}
+
+/// [`table_block_at`] with a caller-provided fence index.
+///
+/// `fences` is the sorted output of [`fence_rows`]; the fenced-region check
+/// is `O(log F)`. Remaining work per call is bounded (upward walk budget
+/// 512, body extension), so this is safe per visible row per frame as long
+/// as `fences` is computed once per document version.
+pub fn table_block_at_with_fences(
+    buffer: &EditorBuffer,
+    row: usize,
+    fences: &[usize],
+) -> Option<TableBlock> {
     let total = buffer.len_lines();
     if row >= total {
         return None;
@@ -288,7 +317,7 @@ pub fn table_block_at(buffer: &EditorBuffer, row: usize) -> Option<TableBlock> {
     if cur.trim().is_empty() || is_fence_line(&cur) || cur.trim_start().starts_with('>') {
         return None;
     }
-    if row_in_fenced_block(buffer, row) {
+    if is_fenced_row(fences, row) {
         return None;
     }
 
@@ -415,12 +444,24 @@ impl TableLayout {
 /// Finds every table block in the buffer with its measured [`TableLayout`].
 ///
 /// Pure in buffer text; callers cache the result per document version.
+///
+/// Single-shot helper: computes the fence index in one `O(N)` pass. Hot
+/// paths must hoist that pass and call [`table_layouts_with_fences`].
 pub fn table_layouts(buffer: &EditorBuffer) -> Vec<TableLayout> {
+    let fences = fence_rows(buffer);
+    table_layouts_with_fences(buffer, &fences)
+}
+
+/// [`table_layouts`] with a caller-provided fence index.
+///
+/// Sweeps rows once, reusing `fences` for every point query instead of
+/// rescanning `0..row` per row (which made the naive version quadratic).
+pub fn table_layouts_with_fences(buffer: &EditorBuffer, fences: &[usize]) -> Vec<TableLayout> {
     let mut layouts = Vec::new();
     let mut row = 0;
     let total = buffer.len_lines();
     while row < total {
-        if let Some(block) = table_block_at(buffer, row) {
+        if let Some(block) = table_block_at_with_fences(buffer, row, fences) {
             let end = block.end_row;
             layouts.push(TableLayout::build(buffer, &block));
             row = end + 1;
@@ -541,5 +582,44 @@ mod tests {
         // Multiple blocks each get their own layout.
         let two = EditorBuffer::new("| a |\n| --- |\n| b |\n\n| x | yy |\n| --- | --- |");
         assert_eq!(table_layouts(&two).len(), 2);
+    }
+
+    #[test]
+    fn test_fenced_index_queries_agree_with_single_shot() {
+        // Fence pair at the top, a real table deep in the doc, and a
+        // pipe-table lookalike inside a second fence (must stay invisible).
+        let mut s = String::from("```rust\nfn f() {}\n```\n");
+        for i in 0..200 {
+            s.push_str(&format!("plain line {i}\n"));
+        }
+        s.push_str("| a | b |\n| --- | --- |\n| c | d |\n");
+        s.push_str("```\n| x |\n| --- |\n```\n");
+        let buffer = EditorBuffer::new(&s);
+        let fences = fence_rows(&buffer);
+        // Fence rows: 0, 2, and the second block's open/close.
+        assert!(fences.contains(&0) && fences.contains(&2));
+        assert_eq!(fences.len(), 4);
+
+        let total = buffer.len_lines();
+        for row in 0..total {
+            assert_eq!(
+                table_block_at_with_fences(&buffer, row, &fences),
+                table_block_at(&buffer, row),
+                "indexed query must agree with single-shot at row {row}"
+            );
+        }
+        assert_eq!(
+            table_layouts_with_fences(&buffer, &fences),
+            table_layouts(&buffer),
+            "indexed layouts must agree with single-shot layouts"
+        );
+
+        // The real table is detected; the fenced lookalike is not.
+        let table_row = 203;
+        assert!(table_block_at(&buffer, table_row).is_some());
+        assert!(is_fenced_row(&fences, table_row) == false);
+        let fenced_row = total - 3;
+        assert!(is_fenced_row(&fences, fenced_row));
+        assert!(table_block_at(&buffer, fenced_row).is_none());
     }
 }

@@ -28,6 +28,7 @@ pub use hook::MarkdownHook;
 pub use links::extract_markdown_links;
 pub use table::{
     TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout,
-    TableRowKind, find_unescaped_pipes, parse_delimiter_row, split_table_cells, table_block_at,
-    table_layouts,
+    TableRowKind, fence_rows, find_unescaped_pipes, is_fenced_row, parse_delimiter_row,
+    split_table_cells, table_block_at, table_block_at_with_fences, table_layouts,
+    table_layouts_with_fences,
 };
