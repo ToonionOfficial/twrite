@@ -1,14 +1,26 @@
 use gpui::*;
 use gpui_platform::application;
 use twrite::Editor;
+use twrite::fps_badge;
 
 struct AppView {
     editor: Entity<Editor>,
 }
 
 impl Render for AppView {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().child(self.editor.clone())
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let fps_stats = self.editor.read(cx).frame_stats.clone();
+        div()
+            .size_full()
+            .relative()
+            .child(self.editor.clone())
+            .child(
+                div()
+                    .absolute()
+                    .top_2()
+                    .right_2()
+                    .child(fps_badge(&fps_stats)),
+            )
     }
 }
 

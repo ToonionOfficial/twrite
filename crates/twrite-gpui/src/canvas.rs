@@ -272,13 +272,17 @@ impl EditorCanvas {
 }
 
 impl RenderOnce for EditorCanvas {
-    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+    fn render(self, window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        window.request_animation_frame();
+
         let editor_handle = self.editor.clone();
 
         canvas(
             move |bounds, window, cx| {
                 editor_handle.update(cx, |editor, _| {
                     editor.last_bounds = Some(bounds);
+                    // One sample per presented frame for the FPS testing HUD.
+                    editor.frame_stats.record();
                     // Probe + auto-select when inputs change: explicit families,
                     // code override, or host font. Explicit families are trusted
                     // verbatim (probed for the indicator only); otherwise the

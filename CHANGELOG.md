@@ -5,6 +5,30 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-09-07
+
+### Added
+- **FPS counter & performance HUD (`twrite-gpui`)**: new `fps` module with
+  `FrameStats` (rolling 120-frame window tracking FPS, average frame duration,
+  and worst frame hitch) and `fps_badge` (color-coded GPUI status element:
+  green ≥ 50fps, amber ≥ 25fps, red below). `Editor::frame_stats` records
+  frame intervals on paint without forcing repaints; integrated into the
+  `markdown` and `simple` examples.
+- **Indexed fence query helpers (`twrite-core`)**: `fence_rows`, `is_fenced_row`,
+  `table_block_at_with_fences`, and `table_layouts_with_fences` allow callers
+  to hoist the `O(N)` fence scan out of hot per-row loops and evaluate
+  fenced status in `O(log F)` time via binary search.
+
+### Fixed
+- **Markdown selection recalculation & table query jank**:
+  - `MarkdownHighlighter::highlight_line`, `should_wrap_line`, and `expand_line`
+    now serve point queries from a shared, version-cached table layout pass
+    (`cached_layouts`), eliminating upward buffer walks and per-row allocations
+    that previously caused multi-millisecond hitches when selection changes
+    flipped line cache states in large tables.
+  - Table fence detection shares one cached linear fence scan per document
+    version (`cached_fence_rows`), removing quadratic `0..row` fence rescanning.
+
 ## [0.3.0] - 2026-09-04
 
 ### Added

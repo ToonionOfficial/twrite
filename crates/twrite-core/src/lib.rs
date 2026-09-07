@@ -37,7 +37,8 @@ pub use hook::{
 pub use markdown::{
     ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook, TABLE_CELL_TAG,
     TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout, TableRowKind,
-    find_unescaped_pipes, parse_delimiter_row, split_table_cells, table_block_at, table_layouts,
+    fence_rows, find_unescaped_pipes, is_fenced_row, parse_delimiter_row, split_table_cells,
+    table_block_at, table_block_at_with_fences, table_layouts, table_layouts_with_fences,
 };
 pub use movement::{
     CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
