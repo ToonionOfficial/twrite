@@ -1,4 +1,4 @@
-#![recursion_limit = "512"]
+#![recursion_limit = "1024"]
 //! GPUI rendering, canvas text-shaping, and interactive editor component for twrite.
 
 /// Canvas element handling prepaint, layout, and GPU quad rendering.
@@ -7,6 +7,8 @@ pub mod canvas;
 pub mod config;
 /// Main editor entity, keybindings, selections, and hook executions.
 pub mod editor;
+/// Frame-rate HUD for interactive performance testing.
+pub mod fps;
 /// Translation helpers from GPUI key events to normalized twrite key events.
 pub mod input;
 /// Per-version viewport cache for highlight/conceal/link inputs.
@@ -17,6 +19,7 @@ pub mod theme;
 pub use canvas::{EditorCanvas, LineMetrics, RunFonts, build_line_text_runs};
 pub use config::EditorConfig;
 pub use editor::{Editor, FaceAvailability, VisibleLineLayout, VisibleLink};
+pub use fps::{FrameStats, fps_badge};
 pub use layout_cache::{CachedInput, LayoutCache};
 pub use theme::{EditorTheme, ResolvedTokenStyle, SyntaxTheme};
 

@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_platform::application;
 use twrite::Editor;
+use twrite::fps_badge;
 use twrite::markdown::{
     ConcealMode, MarkdownHighlighter, TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG,
 };
@@ -26,7 +27,7 @@ impl MarkdownApp {
 
 impl Render for MarkdownApp {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let (cursor_pos, pixel_pos, status_text, conceal_mode, faces_text) = {
+        let (cursor_pos, pixel_pos, status_text, conceal_mode, faces_text, fps_stats) = {
             let ed = self.editor.read(cx);
             let pt = ed.buffer.cursor_point();
             let pixel = ed
@@ -62,6 +63,7 @@ impl Render for MarkdownApp {
                 status,
                 conceal,
                 faces,
+                ed.frame_stats.clone(),
             )
         };
 
@@ -155,6 +157,7 @@ impl Render for MarkdownApp {
                             .flex()
                             .items_center()
                             .gap_4()
+                            .child(fps_badge(&fps_stats))
                             .child(
                                 div()
                                     .text_color(rgb(0xf9e2af))

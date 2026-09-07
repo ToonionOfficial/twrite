@@ -9,6 +9,7 @@ use twrite_core::{
 use crate::{
     canvas::{EditorCanvas, RunFonts, build_line_text_runs},
     config::EditorConfig,
+    fps::FrameStats,
     layout_cache::LayoutCache,
     theme::EditorTheme,
 };
@@ -59,6 +60,12 @@ pub struct Editor {
     pub last_cursor_pixel: Option<Point<Pixels>>,
     /// Layout metrics and screen coordinates of currently visible lines, cached during prepaint.
     pub visible_lines: Vec<VisibleLineLayout>,
+    /// Rolling frame-rate samples, recorded once per canvas prepaint.
+    ///
+    /// Powers the [`crate::fps_badge`] testing HUD: it updates whenever the
+    /// editor repaints (typing, selection drags, scrolling) and freezes when
+    /// idle, with no forced repaints of its own.
+    pub frame_stats: FrameStats,
 }
 
 /// A hyperlink visible on screen with its screen pixel bounds and target URL.
@@ -151,6 +158,7 @@ impl Editor {
             last_bounds: None,
             last_cursor_pixel: None,
             visible_lines: Vec::new(),
+            frame_stats: FrameStats::new(),
         }
     }
 

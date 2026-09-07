@@ -279,6 +279,8 @@ impl RenderOnce for EditorCanvas {
             move |bounds, window, cx| {
                 editor_handle.update(cx, |editor, _| {
                     editor.last_bounds = Some(bounds);
+                    // One sample per presented frame for the FPS testing HUD.
+                    editor.frame_stats.record();
                     // Probe + auto-select when inputs change: explicit families,
                     // code override, or host font. Explicit families are trusted
                     // verbatim (probed for the indicator only); otherwise the
