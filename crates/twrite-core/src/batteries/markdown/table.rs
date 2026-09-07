@@ -617,7 +617,7 @@ mod tests {
         // The real table is detected; the fenced lookalike is not.
         let table_row = 203;
         assert!(table_block_at(&buffer, table_row).is_some());
-        assert!(is_fenced_row(&fences, table_row) == false);
+        assert!(!is_fenced_row(&fences, table_row));
         let fenced_row = total - 3;
         assert!(is_fenced_row(&fences, fenced_row));
         assert!(table_block_at(&buffer, fenced_row).is_none());

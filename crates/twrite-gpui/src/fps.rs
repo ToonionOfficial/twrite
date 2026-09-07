@@ -17,7 +17,7 @@
 use std::collections::VecDeque;
 use std::time::Instant;
 
-use gpui::*;
+use gpui::{IntoElement, ParentElement, Styled, div, rgb};
 
 /// Number of frame timestamps kept; FPS is computed over the whole window
 /// (~2s at 60fps).
