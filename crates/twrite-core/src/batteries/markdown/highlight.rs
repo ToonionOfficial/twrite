@@ -13,7 +13,7 @@ use super::links::extract_markdown_links;
 use super::table::{
     TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout,
     TableRowKind, clean_table_line, find_unescaped_pipes, is_fenced_row, split_table_cells,
-    table_block_at_with_fences, table_layouts_with_fences,
+    table_layouts_with_fences,
 };
 
 /// Cached table display layouts and associated document version.
@@ -96,50 +96,56 @@ impl MarkdownHighlighter {
         }
     }
 
-    /// Locates the table block for `row` using the version-cached fence
-    /// index (`O(log F)` fence check + bounded local walk).
+    /// Locates the table block for `row` from the version-cached layouts.
+    ///
+    /// Point queries never walk the buffer: the one linear sweep per version
+    /// lives in [`Self::cached_layouts`], and every per-row call
+    /// (`highlight_line`, `should_wrap_line`, `expand_line`) shares it.
+    /// Previously each call re-walked up to the whole table (upward search +
+    /// body extension with a `line_to_string` alloc per row), costing
+    /// milliseconds per row inside large tables on every selection frame.
     fn cached_table_block(&self, buffer: &EditorBuffer, row: usize) -> Option<TableBlock> {
         if row >= buffer.len_lines() {
             return None;
         }
-        let fences = self.cached_fence_rows(buffer);
-        table_block_at_with_fences(buffer, row, &fences)
+        self.cached_layouts(buffer)
+            .into_iter()
+            .find(|l| l.block.contains(row))
+            .map(|l| l.block)
     }
 
-    /// Returns the table layout containing `row`, if any, cloning only that
-    /// single layout instead of the whole document's layout vec.
+    /// Returns the table layout containing `row`, if any.
     fn layout_for_row(&self, buffer: &EditorBuffer, row: usize) -> Option<TableLayout> {
+        self.cached_layouts(buffer)
+            .into_iter()
+            .find(|l| l.block.contains(row))
+    }
+
+    /// Returns all table layouts for this document version, sweeping once
+    /// and sharing the result across every per-row query in the epoch.
+    fn cached_layouts(&self, buffer: &EditorBuffer) -> Vec<TableLayout> {
         let version = buffer.version();
         if let Ok(guard) = self.cached_tables.read()
             && let Some((v, ref layouts)) = *guard
             && v == version
         {
-            if let Some(layout) = layouts.iter().find(|l| l.block.contains(row)) {
-                return Some(layout.clone());
-            }
-            return None;
+            return layouts.clone();
         }
         if let Ok(mut guard) = self.cached_tables.write() {
             if let Some((v, ref layouts)) = *guard
                 && v == version
             {
-                if let Some(layout) = layouts.iter().find(|l| l.block.contains(row)) {
-                    return Some(layout.clone());
-                }
-                return None;
+                return layouts.clone();
             }
             // Build layouts with the shared fence index: one linear sweep,
             // not one `O(row)` fence rescan per row.
             let fences = self.cached_fence_rows(buffer);
             let layouts = table_layouts_with_fences(buffer, &fences);
-            let found = layouts.iter().find(|l| l.block.contains(row)).cloned();
-            *guard = Some((version, layouts));
-            found
+            *guard = Some((version, layouts.clone()));
+            layouts
         } else {
             let fences = self.cached_fence_rows(buffer);
             table_layouts_with_fences(buffer, &fences)
-                .into_iter()
-                .find(|l| l.block.contains(row))
         }
     }
 }
@@ -1081,6 +1087,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn test_large_table_body_rows_stay_detected() {
+        // The cached block lookup must keep working hundreds of rows deep in
+        // one table (a per-row upward walk with a bounded budget would give
+        // up before reaching the delimiter and drop table styling mid-table).
+        let mut s = String::from("| a | b |\n| --- | --- |\n");
+        for i in 0..700 {
+            s.push_str(&format!("| c{i} | d |\n"));
+        }
+        let buffer = EditorBuffer::new(&s);
+        let highlighter = MarkdownHighlighter::new();
+
+        for row in [10usize, 300, 699, 701] {
+            let line = buffer.line_to_string(row);
+            let text = line.trim_end_matches(['\r', '\n']);
+            let spans = highlighter.highlight_line(&buffer, row, text);
+            assert!(
+                spans
+                    .iter()
+                    .any(|sp| sp.style == StyleValue::Tag(HighlightTag::Custom(TABLE_CELL_TAG))),
+                "deep body row {row} must keep its table cell tag"
+            );
+            assert!(
+                !highlighter.should_wrap_line(&buffer, row),
+                "deep body row {row} must opt out of wrapping"
+            );
+            let concealed = ConcealedLine::build(text, &spans);
+            assert!(
+                !highlighter.expand_line(&buffer, row, &concealed).is_empty(),
+                "deep body row {row} must get alignment padding"
+            );
+        }
+    }
     #[test]
     fn test_deep_table_rows_highlight_with_fence_at_top() {
         // Guards the version-cached fence index: a fence pair far above must
