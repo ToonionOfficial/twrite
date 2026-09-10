@@ -1,44 +1,55 @@
+//! Getting-started example 2 of 6: writing your own hook.
+//!
+//! Read after `simple`. Demonstrates a custom [`EditorHook`]: intercepting
+//! keys (`on_key`), reacting to edits (`after_edit`), and reporting a status
+//! line (`status_text`). Deliberately battery-neutral: formatting shortcuts
+//! (Ctrl+B and friends) live in the markdown battery, see `markdown`
+//! (`Editor::enable_markdown`) instead of being reimplemented here.
+//! Run with: `cargo run --example hooks`
+//! Next: `syntax` (highlighting) or `prompt` (input boxes).
 use gpui::*;
 use gpui_platform::application;
-use twrite::{AutoPairsHook, Editor, EditorHook, HookContext, HookOutcome, KeyEvent, Selection};
+use twrite::{AutoPairsHook, Editor, EditorBuffer, EditorHook, HookContext, HookOutcome, KeyEvent};
 
-/// A custom hook providing formatting shortcuts and smart list continuation.
+/// A custom hook showing the three most-used hook methods.
+///
+/// `on_key` duplicates the current line on `Ctrl+D` and continues `- ` lists
+/// on `Enter` (batteries extend the list idea for tasks and tables);
+/// `after_edit` recounts words after every buffer change; `status_text` feeds
+/// the count to the status bar below.
 #[derive(Default)]
-struct MarkdownShortcutsHook;
+struct ScratchHook {
+    words: usize,
+    status_line: String,
+}
 
-impl EditorHook for MarkdownShortcutsHook {
+impl ScratchHook {
+    fn new(initial_text: &str) -> Self {
+        let words = initial_text.split_whitespace().count();
+        Self {
+            words,
+            status_line: format!("{words} WORDS"),
+        }
+    }
+
+    fn recount(&mut self, buffer: &EditorBuffer) {
+        self.words = buffer.text().to_string().split_whitespace().count();
+        self.status_line = format!("{} WORDS", self.words);
+    }
+}
+
+impl EditorHook for ScratchHook {
     fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
-        if event.modifiers.ctrl || event.modifiers.meta {
-            match event.key.to_lowercase().as_str() {
-                "b" => {
-                    if let Some(sel) = ctx.selection.take() {
-                        let range = sel.byte_range();
-                        let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
-                        let wrapped = format!("**{}**", text);
-                        ctx.buffer.replace_range(range.clone(), &wrapped);
-                        *ctx.selection = Some(Selection::range(range.start + 2, range.end + 2));
-                    } else {
-                        ctx.buffer.insert("****");
-                        ctx.buffer.move_cursor_left();
-                        ctx.buffer.move_cursor_left();
-                    }
-                    return HookOutcome::Consumed;
-                }
-                "i" => {
-                    if let Some(sel) = ctx.selection.take() {
-                        let range = sel.byte_range();
-                        let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
-                        let wrapped = format!("*{}*", text);
-                        ctx.buffer.replace_range(range.clone(), &wrapped);
-                        *ctx.selection = Some(Selection::range(range.start + 1, range.end + 1));
-                    } else {
-                        ctx.buffer.insert("**");
-                        ctx.buffer.move_cursor_left();
-                    }
-                    return HookOutcome::Consumed;
-                }
-                _ => {}
-            }
+        if (event.modifiers.ctrl || event.modifiers.meta)
+            && event.key.to_lowercase().as_str() == "d"
+        {
+            let row = ctx.buffer.cursor_point().row;
+            let line_start = ctx.buffer.point_to_offset(twrite::Point::new(row, 0));
+            let stripped = ctx.buffer.line_to_string(row);
+            let stripped = stripped.trim_end_matches(['\r', '\n']);
+            ctx.buffer
+                .replace_range(line_start..line_start, &format!("{stripped}\n"));
+            return HookOutcome::Consumed;
         }
 
         if event.key == "enter" && !event.modifiers.shift {
@@ -65,7 +76,11 @@ impl EditorHook for MarkdownShortcutsHook {
     }
 
     fn status_text(&self) -> Option<&str> {
-        Some("MARKDOWN HOOKS ACTIVE")
+        Some(&self.status_line)
+    }
+
+    fn after_edit(&mut self, buffer: &mut EditorBuffer) {
+        self.recount(buffer);
     }
 }
 
@@ -119,17 +134,15 @@ fn main() {
             },
             |window, cx| {
                 let editor = cx.new(|cx| {
-                    let mut ed = Editor::new(
-                        "# Versatile Hooks Demo\n\nThis editor has multiple hooks running concurrently:\n\n1. AutoPairsHook:\n   - Type '(' or '[' or '{' or '\"' -> auto-inserts pair\n   - Select text and type '\"' -> wraps the selected text\n   - Press backspace inside empty '()' -> deletes both\n\n2. MarkdownShortcutsHook:\n   - Press Ctrl+B to bold (wraps selection or inserts ****)\n   - Press Ctrl+I to italic (wraps selection or inserts **)\n   - Type '- First item' and press Enter to auto-continue list\n\nTry it below:\n- Item 1\n",
-                        cx,
-                    );
+                    let initial_text = "# Versatile Hooks Demo\n\nThis editor has multiple hooks running concurrently:\n\n1. AutoPairsHook:\n   - Type '(' or '[' or '{' or '\"' -> auto-inserts pair\n   - Select text and type '\"' -> wraps the selected text\n   - Press backspace inside empty '()' -> deletes both\n\n2. ScratchHook (custom, see top of this file):\n   - Press Ctrl+D to duplicate the current line\n   - Type '- First item' and press Enter to auto-continue list\n   - Status bar counts words live via after_edit\n\nTry it below:\n- Item 1\n";
+                    let mut ed = Editor::new(initial_text, cx);
                     ed.config.line_numbers = true;
                     // No explicit family: the editor auto-selects the first
                     // platform monospace with bold + italic faces (see
                     // `Editor::face_availability`). Set `ed.config.font_family
                     // explicitly to override (e.g. Menlo, Consolas).
                     ed.add_hook(AutoPairsHook::new());
-                    ed.add_hook(MarkdownShortcutsHook);
+                    ed.add_hook(ScratchHook::new(initial_text));
                     ed
                 });
 

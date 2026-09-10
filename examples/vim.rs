@@ -1,3 +1,14 @@
+//! Getting-started example 6 of 6: a full modal Vim system on hooks alone.
+//!
+//! Read last, after `hooks` and `prompt`. Zero Vim code lives in the engine:
+//! everything is one `EditorHook`.
+//!
+//! Reading guide: `VimHook` state first (`mode`, `pending_key` for `dd`/`gg`,
+//! owned `SearchHook`, one-shot `status_override`), then the `on_key`
+//! dispatch order (shared prompt, `escape`, mode arms), then `execute_ex` /
+//! `execute_substitute`, finally the `AppView` shell and `main` at the bottom.
+//!
+//! Run with: `cargo run --example vim`
 use gpui::*;
 use gpui_platform::application;
 use twrite::{

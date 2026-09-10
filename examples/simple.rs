@@ -1,3 +1,9 @@
+//! Getting-started example 1 of 6: a bare editor with find.
+//!
+//! Read first. Demonstrates the minimum to open an editor window plus one
+//! stock hook (SearchHook on Ctrl+F). Keeps everything else default.
+//! Run with: `cargo run --example simple`
+//! Next: `hooks` (writing your own hook).
 use gpui::*;
 use gpui_platform::application;
 use twrite::Editor;
@@ -40,7 +46,7 @@ fn main() {
             |window, cx| {
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(
-                        "Hello from TWrite!\n\nThis is a simple text editor built with GPUI.\n\nTry:\n- Typing text\n- Backspacing and Enter\n- Moving the cursor with Arrow Keys\n- Undo (Ctrl+Z) and Redo (Ctrl+Y or Ctrl+Shift+Z)\n- Select All (Ctrl+A)\n- Scrolling with mouse wheel\n",
+                        "Hello from TWrite!\n\nThis is a simple text editor built with GPUI.\n\nTry:\n- Typing text\n- Backspacing and Enter\n- Moving the cursor with Arrow Keys\n- Undo (Ctrl+Z) and Redo (Ctrl+Y or Ctrl+Shift+Z)\n- Select All (Ctrl+A)\n- Find (Ctrl+F), Replace (Ctrl+H)\n- Scrolling with mouse wheel\n",
                         cx,
                     );
                     ed.config.line_numbers = true;
