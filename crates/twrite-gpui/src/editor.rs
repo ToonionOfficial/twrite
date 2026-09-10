@@ -1247,9 +1247,12 @@ impl Render for Editor {
 
         // The prompt box is a dumb view over the shared headless state:
         // bottom-anchored line for vim/ex/search, floating palette for `F1`.
+        // Plain data (not the entity): PromptBar must not re-enter the
+        // entity while it is being rendered.
         if !self.prompt.is_open() {
             return root;
         }
+        let snapshot = self.search_snapshot();
         let placement = self
             .prompt
             .spec()
@@ -1257,10 +1260,10 @@ impl Render for Editor {
             .unwrap_or(twrite_core::PromptPlacement::BottomBar);
         match placement {
             twrite_core::PromptPlacement::TopPalette => {
-                root.child(PromptBar::palette(&cx.entity().clone(), cx))
+                root.child(PromptBar::palette(&self.prompt, snapshot, cx))
             }
             twrite_core::PromptPlacement::BottomBar => {
-                root.child(PromptBar::bottom_bar(&cx.entity().clone(), cx))
+                root.child(PromptBar::bottom_bar(&self.prompt, snapshot, cx))
             }
         }
     }

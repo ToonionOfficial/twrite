@@ -15,8 +15,14 @@ pub struct PromptBar;
 
 impl PromptBar {
     /// Bottom-anchored vim-style line (`:`, `/`, `Ctrl+F`).
-    pub fn bottom_bar(editor: &Entity<Editor>, cx: &mut Context<Editor>) -> Div {
-        let (prompt, snapshot) = Self::read_state(editor, cx);
+    ///
+    /// Takes plain data on purpose: reading the entity here would
+    /// re-enterantly borrow it mid-render and panic.
+    pub fn bottom_bar(
+        prompt: &PromptState,
+        snapshot: Option<SearchSnapshot>,
+        cx: &mut Context<Editor>,
+    ) -> Div {
         if !prompt.is_open() {
             return div();
         }
@@ -30,15 +36,18 @@ impl PromptBar {
             .flex()
             .flex_col()
             .gap_1()
-            .child(Self::input_row(&prompt))
+            .child(Self::input_row(prompt))
             .child(Self::controls_row(snapshot.as_ref(), cx))
-            .child(Self::item_list(&prompt, 6))
-            .child(Self::message_row(&prompt))
+            .child(Self::item_list(prompt, 6))
+            .child(Self::message_row(prompt))
     }
 
     /// Browser-`F1` style floating palette centered near the top.
-    pub fn palette(editor: &Entity<Editor>, cx: &mut Context<Editor>) -> Div {
-        let (prompt, snapshot) = Self::read_state(editor, cx);
+    pub fn palette(
+        prompt: &PromptState,
+        snapshot: Option<SearchSnapshot>,
+        cx: &mut Context<Editor>,
+    ) -> Div {
         if !prompt.is_open() {
             return div();
         }
@@ -60,19 +69,11 @@ impl PromptBar {
                     .flex()
                     .flex_col()
                     .gap_1()
-                    .child(Self::input_row(&prompt))
+                    .child(Self::input_row(prompt))
                     .child(Self::controls_row(snapshot.as_ref(), cx))
-                    .child(Self::item_list(&prompt, 8))
-                    .child(Self::message_row(&prompt)),
+                    .child(Self::item_list(prompt, 8))
+                    .child(Self::message_row(prompt)),
             )
-    }
-
-    fn read_state(
-        editor: &Entity<Editor>,
-        cx: &mut Context<Editor>,
-    ) -> (PromptState, Option<SearchSnapshot>) {
-        let editor_ref = editor.read(cx);
-        (editor_ref.prompt.clone(), editor_ref.search_snapshot())
     }
 
     /// Toggle chips (`Aa` / `W` / `All`), match count, and `↑` / `↓` steppers.
