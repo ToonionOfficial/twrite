@@ -29,6 +29,10 @@ name = "hooks"
 path = "../../examples/hooks.rs"
 
 [[example]]
+name = "prompt"
+path = "../../examples/prompt.rs"
+
+[[example]]
 name = "vim"
 path = "../../examples/vim.rs"
 

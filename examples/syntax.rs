@@ -1,3 +1,12 @@
+//! Getting-started example 3 of 6: custom syntax highlighting.
+//!
+//! Read after `hooks`. Demonstrates `SyntaxHighlighter` (only
+//! `highlight_line` is overridden here) plus custom tags registered on the
+//! theme. The full trait also offers `extract_links` (clickable ranges),
+//! `expand_line` / `should_wrap_line` (display-width tricks like aligned
+//! tables); this file stays small on purpose.
+//! Run with: `cargo run --example syntax`
+//! Next: `prompt` (input boxes) or `markdown` (the real Markdown battery).
 use gpui::*;
 use gpui_platform::application;
 use twrite::{Editor, EditorBuffer, HighlightTag, StyleSpan, SyntaxHighlighter};

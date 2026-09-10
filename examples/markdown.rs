@@ -1,3 +1,11 @@
+//! Getting-started example 5 of 6: the Markdown battery.
+//!
+//! Read after `syntax` and `prompt`. Demonstrates the battery pattern:
+//! one `enable_markdown()` call wires highlighter + hooks (formatting
+//! shortcuts, lists, tables, task checkboxes) instead of hand-rolling them.
+//! Also shows a stock `SearchHook` registered first so find/replace works.
+//! Run with: `cargo run --example markdown --features markdown`
+//! Next: `vim` (a full modal system built only on hooks).
 use gpui::*;
 use gpui_platform::application;
 use twrite::Editor;
