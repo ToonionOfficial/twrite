@@ -28,6 +28,8 @@ pub mod movement;
 pub mod prompt;
 /// Headless find & replace engine (literal and regex search, single-undo batch replace).
 pub mod search;
+/// Stock search/replace hook binding the engine to the shared prompt.
+pub mod search_hook;
 /// Text selection ranges and anchor/head management.
 pub mod selection;
 /// Headless syntax highlighting, styling tokens, and interval splitting.
@@ -55,6 +57,8 @@ pub use prompt::{
     PromptAction, PromptItem, PromptPlacement, PromptSpec, PromptState, fuzzy_filter, fuzzy_score,
 };
 pub use search::{SearchQuery, SearchState, find_matches, find_next, find_prev, replace_all_query};
+pub use search::{collect_replacements, replace_one_query};
+pub use search_hook::{REPLACE_PROMPT_ID, SEARCH_PROMPT_ID, SearchHook};
 pub use selection::Selection;
 pub use syntax::{
     ConcealedLine, DisplayPad, HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment,
