@@ -1133,6 +1133,8 @@ impl Render for Editor {
             .track_focus(&self.focus_handle)
             .key_context("Editor")
             .size_full()
+            .flex()
+            .flex_col()
             .overflow_hidden()
             .cursor(cursor_style)
             .bg(self.theme.background);
@@ -1165,7 +1167,14 @@ impl Render for Editor {
             )
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
-            .child(EditorCanvas::new(cx.entity().clone()));
+            // The canvas yields space so an open prompt bar stays visible
+            // instead of being pushed below the fold and clipped.
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(EditorCanvas::new(cx.entity().clone())),
+            );
 
         // The prompt box is a dumb view over the shared headless state:
         // bottom-anchored line for vim/ex/search, floating palette for `F1`.

@@ -417,7 +417,7 @@ impl PromptState {
                     PromptAction::Ignored
                 }
             }
-            "arrowup" if !mods.ctrl && !mods.alt && !mods.meta => {
+            "arrowup" | "up" if !mods.ctrl && !mods.alt && !mods.meta => {
                 if self.items.is_empty() {
                     self.history_prev();
                 } else {
@@ -425,7 +425,7 @@ impl PromptState {
                 }
                 PromptAction::Editing
             }
-            "arrowdown" if !mods.ctrl && !mods.alt && !mods.meta => {
+            "arrowdown" | "down" if !mods.ctrl && !mods.alt && !mods.meta => {
                 if self.items.is_empty() {
                     self.history_next();
                 } else {
@@ -441,11 +441,11 @@ impl PromptState {
                 self.delete_after_cursor();
                 PromptAction::Editing
             }
-            "arrowleft" if !mods.ctrl && !mods.alt && !mods.meta => {
+            "arrowleft" | "left" if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.move_left();
                 PromptAction::Editing
             }
-            "arrowright" if !mods.ctrl && !mods.alt && !mods.meta => {
+            "arrowright" | "right" if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.move_right();
                 PromptAction::Editing
             }
@@ -773,6 +773,28 @@ mod tests {
         assert_eq!(prompt.handle_key(&key("arrowdown")), PromptAction::Editing);
         assert_eq!(prompt.selected_index(), 1);
         assert_eq!(prompt.input(), "x");
+    }
+
+    #[test]
+    fn arrow_key_aliases_move_cursor() {
+        let mut prompt = PromptState::new();
+        prompt.open(search_spec(), "");
+        prompt.insert("ab");
+
+        // Both platform spellings work for horizontal movement.
+        assert_eq!(prompt.handle_key(&key("left")), PromptAction::Editing);
+        assert_eq!(prompt.cursor(), 1);
+        assert_eq!(prompt.handle_key(&key("arrowleft")), PromptAction::Editing);
+        assert_eq!(prompt.cursor(), 0);
+        assert_eq!(prompt.handle_key(&key("right")), PromptAction::Editing);
+        assert_eq!(prompt.cursor(), 1);
+
+        // And for vertical item navigation.
+        prompt.set_items(vec![PromptItem::new("one"), PromptItem::new("two")]);
+        assert_eq!(prompt.handle_key(&key("up")), PromptAction::Editing);
+        assert_eq!(prompt.selected_index(), 1);
+        assert_eq!(prompt.handle_key(&key("arrowdown")), PromptAction::Editing);
+        assert_eq!(prompt.selected_index(), 0);
     }
 
     #[test]

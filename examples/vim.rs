@@ -321,23 +321,23 @@ impl EditorHook for VimHook {
                 let cursor = ctx.buffer.cursor_offset();
 
                 match event.key.as_str() {
-                    "h" | "arrowleft" => {
+                    "h" | "left" | "arrowleft" => {
                         let target = cursor.saturating_sub(1);
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "l" | "arrowright" => {
+                    "l" | "right" | "arrowright" => {
                         let target = (cursor + 1).min(ctx.buffer.len_bytes());
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "k" | "arrowup" => {
+                    "k" | "up" | "arrowup" => {
                         ctx.buffer.move_cursor_up();
                         let target = ctx.buffer.cursor_offset();
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "j" | "arrowdown" => {
+                    "j" | "down" | "arrowdown" => {
                         ctx.buffer.move_cursor_down();
                         let target = ctx.buffer.cursor_offset();
                         self.move_visual(ctx, target);
@@ -428,19 +428,19 @@ impl EditorHook for VimHook {
                 }
 
                 match event.key.as_str() {
-                    "h" | "arrowleft" => {
+                    "h" | "left" | "arrowleft" => {
                         ctx.buffer.move_cursor_left();
                         HookOutcome::Consumed
                     }
-                    "l" | "arrowright" => {
+                    "l" | "right" | "arrowright" => {
                         ctx.buffer.move_cursor_right();
                         HookOutcome::Consumed
                     }
-                    "k" | "arrowup" => {
+                    "k" | "up" | "arrowup" => {
                         ctx.buffer.move_cursor_up();
                         HookOutcome::Consumed
                     }
-                    "j" | "arrowdown" => {
+                    "j" | "down" | "arrowdown" => {
                         ctx.buffer.move_cursor_down();
                         HookOutcome::Consumed
                     }
@@ -679,7 +679,7 @@ fn main() {
             |window, cx| {
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(
-                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v : enter Visual mode\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search, n / N : next / previous match\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
+                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l or arrow keys : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v : enter Visual mode\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search, n / N : next / previous match\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
                         cx,
                     );
                     ed.config.line_numbers = true;
