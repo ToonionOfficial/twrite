@@ -151,10 +151,14 @@ impl SearchHook {
     /// Sitting exactly on the current match start steps past it, so repeated
     /// `Enter` / `F3` walks forward instead of re-selecting.
     pub fn navigate_next(&mut self, ctx: &mut HookContext, wrap: bool) -> bool {
-        let at = ctx.buffer.cursor_offset();
+        self.navigate_next_from(ctx, ctx.buffer.cursor_offset(), wrap)
+    }
+
+    /// Selects the next match at or after `from` (see [`Self::navigate_next`]).
+    pub fn navigate_next_from(&mut self, ctx: &mut HookContext, from: usize, wrap: bool) -> bool {
         let from = match self.state.current_match() {
-            Some(m) if m.start == at => at + 1,
-            _ => at,
+            Some(m) if m.start == from => from + 1,
+            _ => from,
         };
         let found = self
             .state
@@ -172,7 +176,11 @@ impl SearchHook {
 
     /// Selects the previous match at or before the cursor.
     pub fn navigate_prev(&mut self, ctx: &mut HookContext, wrap: bool) -> bool {
-        let from = ctx.buffer.cursor_offset();
+        self.navigate_prev_from(ctx, ctx.buffer.cursor_offset(), wrap)
+    }
+
+    /// Selects the previous match at or before `from`.
+    pub fn navigate_prev_from(&mut self, ctx: &mut HookContext, from: usize, wrap: bool) -> bool {
         let found = self
             .state
             .prev(ctx.buffer, from, wrap)
@@ -335,15 +343,19 @@ impl EditorHook for SearchHook {
                 self.open_replace(ctx);
                 return HookOutcome::Consumed;
             }
-            if event.key == "f3" && !mods.ctrl && !mods.alt && !mods.meta {
-                if self.active && !self.query_text.is_empty() {
-                    if mods.shift {
-                        self.navigate_prev(ctx, true);
-                    } else {
-                        self.navigate_next(ctx, true);
-                    }
-                    return HookOutcome::Consumed;
+            if event.key == "f3"
+                && !mods.ctrl
+                && !mods.alt
+                && !mods.meta
+                && self.active
+                && !self.query_text.is_empty()
+            {
+                if mods.shift {
+                    self.navigate_prev(ctx, true);
+                } else {
+                    self.navigate_next(ctx, true);
                 }
+                return HookOutcome::Consumed;
             }
             HookOutcome::PassThrough
         } else {
