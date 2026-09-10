@@ -41,6 +41,7 @@ pub use effect::HookEffect;
 pub use error::{EditorError, Result as EditorResult};
 pub use hook::{
     AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
+    SearchSnapshot,
 };
 #[cfg(feature = "markdown")]
 pub use markdown::{

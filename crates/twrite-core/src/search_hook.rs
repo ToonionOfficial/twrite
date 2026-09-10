@@ -35,7 +35,10 @@ fn replace_spec() -> PromptSpec {
 /// Keymap (all headless, no frontend code):
 /// - `Ctrl+F`: open search (selected text becomes the initial query).
 /// - Typing: live match refresh.
-/// - `Enter` / `F3`: next match, `Shift+F3`: previous match.
+/// - `Enter` / `F3` / `Down`: next match, `Shift+F3` / `Up`: previous match.
+/// - `Alt+Down` / `Alt+Up`: input history (Up/Down navigate matches here).
+/// - `Alt+C` / `Alt+W` / `Alt+H`: flip Match Case / Whole Word / Highlight All
+///   (also while active with the prompt closed).
 /// - `Ctrl+H`: open the replace field; `Enter` on it stores the replacement
 ///   and returns to the search prompt (`REPLACE` mode).
 /// - `Ctrl+Enter`: replace the current match and advance.
@@ -45,7 +48,7 @@ fn replace_spec() -> PromptSpec {
 /// `Enter` always navigates, even in `REPLACE` mode. Register this hook
 /// before mode hooks (e.g. vim) so its keys win while the prompt is open;
 /// unconsumed keys pass through untouched when the prompt is closed.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct SearchHook {
     state: SearchState,
     query_text: String,
@@ -53,15 +56,32 @@ pub struct SearchHook {
     replace_mode: bool,
     active: bool,
     status_cache: String,
+    case_sensitive: bool,
+    whole_word: bool,
+    highlight_all: bool,
+}
+
+impl Default for SearchHook {
+    fn default() -> Self {
+        Self {
+            state: SearchState::new(),
+            query_text: String::new(),
+            replacement: String::new(),
+            replace_mode: false,
+            active: false,
+            status_cache: "SEARCH".to_string(),
+            case_sensitive: true,
+            whole_word: false,
+            highlight_all: true,
+        }
+    }
 }
 
 impl SearchHook {
-    /// Creates an idle search hook.
+    /// Creates an idle search hook (case-sensitive, whole-word off,
+    /// highlight-all on).
     pub fn new() -> Self {
-        Self {
-            status_cache: "SEARCH".to_string(),
-            ..Self::default()
-        }
+        Self::default()
     }
 
     /// Whether the hook currently owns the open prompt.
@@ -87,6 +107,53 @@ impl SearchHook {
     /// The stored replacement text.
     pub fn replacement(&self) -> &str {
         &self.replacement
+    }
+
+    /// Whether matching is case-sensitive.
+    pub fn case_sensitive(&self) -> bool {
+        self.case_sensitive
+    }
+
+    /// Whether matches must span whole words.
+    pub fn whole_word(&self) -> bool {
+        self.whole_word
+    }
+
+    /// Whether all matches wash the viewport (vs current match only).
+    pub fn highlight_all(&self) -> bool {
+        self.highlight_all
+    }
+
+    /// Builds the active query from the text plus toggle flags.
+    /// Returns `None` when the query text is empty.
+    pub fn build_query(&self) -> Option<SearchQuery> {
+        if self.query_text.is_empty() {
+            return None;
+        }
+        Some(SearchQuery::new(
+            &self.query_text,
+            self.case_sensitive,
+            self.whole_word,
+            false,
+        ))
+    }
+
+    /// Flips Match Case and re-scans.
+    pub fn toggle_case(&mut self, ctx: &mut HookContext) {
+        self.case_sensitive = !self.case_sensitive;
+        self.rescan(ctx);
+    }
+
+    /// Flips Whole Word and re-scans.
+    pub fn toggle_word(&mut self, ctx: &mut HookContext) {
+        self.whole_word = !self.whole_word;
+        self.rescan(ctx);
+    }
+
+    /// Flips the highlight-all wash (no re-scan needed).
+    pub fn toggle_highlight(&mut self) {
+        self.highlight_all = !self.highlight_all;
+        self.update_status();
     }
 
     /// Opens the search prompt with `initial` as the query.
@@ -115,15 +182,24 @@ impl SearchHook {
         self.update_status();
     }
 
-    /// Re-scans from the prompt input (literal query).
+    /// Re-scans from the prompt input with the current toggle flags.
     fn refresh_from_input(&mut self, ctx: &mut HookContext) {
-        let input = ctx.prompt.input().to_string();
-        self.query_text = input.clone();
-        if input.is_empty() {
+        self.query_text = ctx.prompt.input().to_string();
+        self.rescan(ctx);
+    }
+
+    /// Re-scans the stored query text with the current toggle flags.
+    fn rescan(&mut self, ctx: &mut HookContext) {
+        if self.query_text.is_empty() {
             self.state = SearchState::new();
         } else {
-            self.state.set_query(SearchQuery::literal(&input));
-            // Literal queries cannot fail to compile; ignore staleness errors.
+            self.state.set_query(SearchQuery::new(
+                &self.query_text,
+                self.case_sensitive,
+                self.whole_word,
+                false,
+            ));
+            // Flag combinations always compile; ignore staleness errors.
             let _ = self.state.refresh(ctx.buffer);
         }
         self.update_status();
@@ -135,13 +211,19 @@ impl SearchHook {
         } else {
             "SEARCH"
         };
+        let flags = format!(
+            "[{}] [{}] [{}]",
+            if self.case_sensitive { "Aa" } else { "aa" },
+            if self.whole_word { "W" } else { "w" },
+            if self.highlight_all { "H" } else { "h" },
+        );
         let count = self.state.match_count();
         self.status_cache = if count == 0 {
-            format!("{scope} — no matches")
+            format!("{scope} — no matches {flags}")
         } else {
             match self.state.current_index() {
-                Some(i) => format!("{scope} {}/{}", i + 1, count),
-                None => format!("{scope} — {count} matches"),
+                Some(i) => format!("{scope} {}/{} {flags}", i + 1, count),
+                None => format!("{scope} — {count} matches {flags}"),
             }
         };
     }
@@ -221,7 +303,9 @@ impl SearchHook {
         let Some(target) = target else {
             return Ok(false);
         };
-        let query = SearchQuery::literal(&self.query_text);
+        let Some(query) = self.build_query() else {
+            return Ok(false);
+        };
         let replacement = self.replacement.clone();
         if !replace_one_query(ctx.buffer, &query, target, &replacement)? {
             return Ok(false);
@@ -234,10 +318,9 @@ impl SearchHook {
     /// Replaces all matches as a single undoable transaction, reporting the
     /// count in the prompt message. Returns the number of replacements.
     pub fn replace_all(&mut self, ctx: &mut HookContext) -> Result<usize, EditorError> {
-        if self.query_text.is_empty() {
+        let Some(query) = self.build_query() else {
             return Ok(0);
-        }
-        let query = SearchQuery::literal(&self.query_text);
+        };
         let replacement = self.replacement.clone();
         let n = replace_all_query(ctx.buffer, &query, &replacement)?;
         let _ = self.state.refresh(ctx.buffer);
@@ -283,6 +366,35 @@ impl EditorHook for SearchHook {
             }
             if key_lower == "a" && mods.alt && !mods.ctrl && !mods.meta {
                 let _ = self.replace_all(ctx);
+                return HookOutcome::Consumed;
+            }
+            if key_lower == "c" && mods.alt && !mods.ctrl && !mods.meta {
+                self.toggle_case(ctx);
+                return HookOutcome::Consumed;
+            }
+            if key_lower == "w" && mods.alt && !mods.ctrl && !mods.meta {
+                self.toggle_word(ctx);
+                return HookOutcome::Consumed;
+            }
+            if key_lower == "h" && mods.alt && !mods.ctrl && !mods.meta {
+                self.toggle_highlight();
+                return HookOutcome::Consumed;
+            }
+            // Up/Down walk matches on our prompts (history moves to Alt+Up/Down).
+            if (event.key == "arrowup" || event.key == "up") && !mods.ctrl && !mods.meta {
+                if mods.alt {
+                    ctx.prompt.history_prev();
+                } else {
+                    self.navigate_prev(ctx, true);
+                }
+                return HookOutcome::Consumed;
+            }
+            if (event.key == "arrowdown" || event.key == "down") && !mods.ctrl && !mods.meta {
+                if mods.alt {
+                    ctx.prompt.history_next();
+                } else {
+                    self.navigate_next(ctx, true);
+                }
                 return HookOutcome::Consumed;
             }
             if key_lower == "h" && mods.ctrl && !mods.alt && !mods.meta {
@@ -343,6 +455,19 @@ impl EditorHook for SearchHook {
                 self.open_replace(ctx);
                 return HookOutcome::Consumed;
             }
+            // Toggles apply while active, even with the prompt closed.
+            if key_lower == "c" && mods.alt && !mods.ctrl && !mods.meta && self.active {
+                self.toggle_case(ctx);
+                return HookOutcome::Consumed;
+            }
+            if key_lower == "w" && mods.alt && !mods.ctrl && !mods.meta && self.active {
+                self.toggle_word(ctx);
+                return HookOutcome::Consumed;
+            }
+            if key_lower == "h" && mods.alt && !mods.ctrl && !mods.meta && self.active {
+                self.toggle_highlight();
+                return HookOutcome::Consumed;
+            }
             if event.key == "f3"
                 && !mods.ctrl
                 && !mods.alt
@@ -370,6 +495,20 @@ impl EditorHook for SearchHook {
         } else {
             None
         }
+    }
+
+    fn search_snapshot(&self) -> Option<crate::SearchSnapshot> {
+        if !self.active {
+            return None;
+        }
+        Some(crate::SearchSnapshot {
+            active: true,
+            case_sensitive: self.case_sensitive,
+            whole_word: self.whole_word,
+            highlight_all: self.highlight_all,
+            matches: self.state.matches().to_vec(),
+            current: self.state.current_index(),
+        })
     }
 }
 
@@ -438,6 +577,25 @@ mod tests {
         fn ctx_text(&self) -> String {
             self.buffer.text().to_string()
         }
+
+        fn type_into_prompt(&mut self, text: &str) {
+            for ch in text.chars() {
+                self.key(&ch.to_string());
+            }
+        }
+
+        fn with_ctx<R>(&mut self, f: impl FnOnce(&mut HookContext<'_>, &mut SearchHook) -> R) -> R {
+            let Harness {
+                buffer,
+                selection,
+                cursor_style,
+                prompt,
+                effects,
+                hook,
+            } = self;
+            let mut ctx = HookContext::new(buffer, selection, cursor_style, prompt, effects);
+            f(&mut ctx, hook)
+        }
     }
 
     #[test]
@@ -471,11 +629,171 @@ mod tests {
 
         assert_eq!(h.key("enter"), HookOutcome::Consumed);
         assert_eq!(h.selection.unwrap().byte_range(), 0..3);
-        assert_eq!(h.hook.status_text(), Some("SEARCH 1/2"));
+        assert_eq!(h.hook.status_text(), Some("SEARCH 1/2 [Aa] [w] [H]"));
 
         assert_eq!(h.key("enter"), HookOutcome::Consumed);
         assert_eq!(h.selection.unwrap().byte_range(), 8..11);
-        assert_eq!(h.hook.status_text(), Some("SEARCH 2/2"));
+        assert_eq!(h.hook.status_text(), Some("SEARCH 2/2 [Aa] [w] [H]"));
+    }
+
+    #[test]
+    fn toggle_case_rescans_case_insensitively() {
+        let mut h = Harness::new("Foo foo FOO");
+        h.key_mod("f", true, false, false);
+        for k in ["f", "o", "o"] {
+            h.key(k);
+        }
+        assert_eq!(h.hook.match_count(), 1);
+        assert!(h.hook.case_sensitive());
+
+        h.with_ctx(|ctx, hook| hook.toggle_case(ctx));
+        assert!(!h.hook.case_sensitive());
+        assert_eq!(h.hook.match_count(), 3);
+        assert_eq!(
+            h.hook.status_text(),
+            Some("SEARCH — 3 matches [aa] [w] [H]")
+        );
+
+        h.with_ctx(|ctx, hook| hook.toggle_case(ctx));
+        assert_eq!(h.hook.match_count(), 1);
+    }
+
+    #[test]
+    fn toggle_word_filters_substring_matches() {
+        let mut h = Harness::new("foo foobar foo");
+        h.key_mod("f", true, false, false);
+        for k in ["f", "o", "o"] {
+            h.key(k);
+        }
+        assert_eq!(h.hook.match_count(), 3);
+
+        h.with_ctx(|ctx, hook| hook.toggle_word(ctx));
+        assert!(h.hook.whole_word());
+        assert_eq!(h.hook.match_count(), 2);
+        assert_eq!(
+            h.hook.status_text(),
+            Some("SEARCH — 2 matches [Aa] [W] [H]")
+        );
+    }
+
+    #[test]
+    fn toggle_highlight_flips_without_rescanning() {
+        let mut h = Harness::new("foo foo");
+        h.key_mod("f", true, false, false);
+        h.key("f");
+        assert!(h.hook.highlight_all());
+
+        h.with_ctx(|ctx, hook| {
+            hook.toggle_highlight();
+            let _ = ctx;
+        });
+        assert!(!h.hook.highlight_all());
+        assert_eq!(h.hook.match_count(), 2);
+        assert!(h.hook.status_text().unwrap().ends_with("[Aa] [w] [h]"));
+    }
+
+    #[test]
+    fn replace_honors_toggle_flags() {
+        let mut h = Harness::new("Foo foo");
+        h.key_mod("f", true, false, false);
+        for k in ["f", "o", "o"] {
+            h.key(k);
+        }
+        h.with_ctx(|ctx, hook| hook.toggle_case(ctx));
+        h.key_mod("h", true, false, false);
+        for k in ["b", "a", "r"] {
+            h.key(k);
+        }
+        h.key("enter");
+        h.with_ctx(|ctx, hook| {
+            assert_eq!(hook.replace_all(ctx).unwrap(), 2);
+        });
+        assert_eq!(h.ctx_text(), "bar bar");
+    }
+
+    #[test]
+    fn build_query_is_none_when_empty() {
+        let hook = SearchHook::new();
+        assert!(hook.build_query().is_none());
+    }
+
+    #[test]
+    fn alt_h_toggles_highlight_via_key() {
+        let mut h = Harness::new("foo foo");
+        h.key_mod("f", true, false, false);
+        h.key("f");
+        assert!(h.hook.highlight_all());
+        assert_eq!(h.key_mod("h", false, true, false), HookOutcome::Consumed);
+        assert!(!h.hook.highlight_all());
+        // Prompt stays open; matching is untouched.
+        assert!(h.prompt.is_open());
+        assert_eq!(h.hook.match_count(), 2);
+    }
+
+    #[test]
+    fn snapshot_reports_state_while_active() {
+        let mut h = Harness::new("foo bar foo");
+        assert!(h.hook.search_snapshot().is_none());
+        h.key_mod("f", true, false, false);
+        for k in ["f", "o", "o"] {
+            h.key(k);
+        }
+        h.key("enter");
+        let snap = h.hook.search_snapshot().expect("snapshot while active");
+        assert!(snap.active);
+        assert!(snap.case_sensitive);
+        assert!(!snap.whole_word);
+        assert!(snap.highlight_all);
+        assert_eq!(snap.matches, vec![0..3, 8..11]);
+        assert_eq!(snap.current, Some(0));
+        h.key("escape");
+        assert!(h.hook.search_snapshot().is_none());
+    }
+
+    #[test]
+    fn alt_c_and_alt_w_toggle_via_keys() {
+        let mut h = Harness::new("Foo foo foobar");
+        h.key_mod("f", true, false, false);
+        for k in ["f", "o", "o"] {
+            h.key(k);
+        }
+        assert_eq!(h.hook.match_count(), 2);
+
+        assert_eq!(h.key_mod("c", false, true, false), HookOutcome::Consumed);
+        assert_eq!(h.hook.match_count(), 3);
+
+        assert_eq!(h.key_mod("w", false, true, false), HookOutcome::Consumed);
+        assert_eq!(h.hook.match_count(), 2);
+        assert_eq!(
+            h.hook.status_text(),
+            Some("SEARCH — 2 matches [aa] [W] [H]")
+        );
+    }
+
+    #[test]
+    fn up_down_navigate_matches_and_alt_reaches_history() {
+        let mut h = Harness::new("foo bar foo");
+        h.key_mod("f", true, false, false);
+        for k in ["f", "o", "o"] {
+            h.key(k);
+        }
+        h.key("enter");
+        assert_eq!(h.selection.unwrap().byte_range(), 0..3);
+
+        // Down advances instead of walking history.
+        assert_eq!(h.key("down"), HookOutcome::Consumed);
+        assert_eq!(h.selection.unwrap().byte_range(), 8..11);
+        assert_eq!(h.key("up"), HookOutcome::Consumed);
+        assert_eq!(h.selection.unwrap().byte_range(), 0..3);
+
+        // History moved to Alt+Up.
+        h.key("enter");
+        h.type_into_prompt("zzz");
+        assert_eq!(
+            h.key_mod("arrowup", false, true, false),
+            HookOutcome::Consumed
+        );
+        assert_eq!(h.prompt.input(), "foo");
     }
 
     #[test]

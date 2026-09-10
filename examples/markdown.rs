@@ -128,7 +128,7 @@ impl Render for MarkdownApp {
                         div()
                             .text_xs()
                             .text_color(rgb(0x6c7086))
-                            .child("Ctrl+B: Bold  |  Ctrl+I: Italic  |  Ctrl+K: Link  |  Ctrl+Enter: Toggle Checkbox  |  Ctrl+F: Find  |  Ctrl+H: Replace"),
+                            .child("Ctrl+B: Bold  |  Ctrl+I: Italic  |  Ctrl+K: Link  |  Ctrl+Enter: Toggle Checkbox  |  Ctrl+F: Find  |  Ctrl+H: Replace  |  Alt+C/W/H: Toggles"),
                     ),
             )
             .child(

@@ -3,7 +3,7 @@ use gpui_platform::application;
 use twrite::{
     CharKind, CursorStyle, Editor, EditorHook, HookContext, HookEffect, HookOutcome, KeyEvent,
     Point, PromptAction, PromptPlacement, PromptSpec, SEARCH_PROMPT_ID, SearchHook, SearchQuery,
-    Selection, collect_replacements,
+    SearchSnapshot, Selection, collect_replacements,
 };
 
 /// The operating mode of the Vim state machine.
@@ -318,6 +318,13 @@ impl EditorHook for VimHook {
             VimMode::Insert => HookOutcome::PassThrough,
 
             VimMode::Visual => {
+                // Search function keys / toggles share the owned SearchHook.
+                let outcome = self.search.on_key(ctx, event);
+                if outcome == HookOutcome::Consumed {
+                    self.sync_search_status();
+                    return HookOutcome::Consumed;
+                }
+
                 let cursor = ctx.buffer.cursor_offset();
 
                 match event.key.as_str() {
@@ -612,6 +619,10 @@ impl EditorHook for VimHook {
             (VimMode::Visual, _) => Some("-- VISUAL --"),
         }
     }
+
+    fn search_snapshot(&self) -> Option<SearchSnapshot> {
+        self.search.search_snapshot()
+    }
 }
 
 struct AppView {
@@ -679,7 +690,7 @@ fn main() {
             |window, cx| {
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(
-                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l or arrow keys : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v : enter Visual mode\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search, n / N : next / previous match\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
+                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l or arrow keys : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v : enter Visual mode\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search, n / N : next / previous match\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n  * Alt+C / Alt+W / Alt+H : Match Case / Whole Word / Highlight All, Up/Down : prev/next match\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
                         cx,
                     );
                     ed.config.line_numbers = true;

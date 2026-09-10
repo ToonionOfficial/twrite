@@ -36,6 +36,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   keys while it is open, and `flush_effects()` executes file effects inline
   (`take_effects()` leaves `Quit` / `Message` for hosts). The `markdown`
   example wires `Ctrl+F` / `Ctrl+H` for free.
+- **Search toggles + highlight-all (`twrite-core`, `twrite-gpui`)**: `SearchHook`
+  gains Match Case / Whole Word / Highlight All flags (status shows
+  `[Aa] [w] [H]`), `Alt+C` / `Alt+W` / `Alt+H` shortcuts, `Up` / `Down` match
+  stepping (`Alt+Up` / `Alt+Down` still reach input history), and a
+  `SearchSnapshot` bridge (`EditorHook::search_snapshot`, default `None`)
+  that composite hooks forward. `Editor` syncs `search_matches` after input
+  and `PromptBar` renders clickable `Aa` / `W` / `All` chips plus `↑` / `↓`
+  steppers that dispatch through the same key path; the canvas paints a
+  viewport-clipped `theme.search_match` wash under the text.
 
 ### Changed
 - **BREAKING**: `HookContext` gains `prompt: &mut PromptState` and

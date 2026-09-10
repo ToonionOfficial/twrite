@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use crate::{EditorBuffer, Selection};
 use crate::{HookEffect, PromptState};
 
@@ -139,6 +141,36 @@ pub trait EditorHook: 'static {
     fn status_text(&self) -> Option<&str> {
         None
     }
+
+    /// Returns a live search-panel snapshot for renderers (toggles, matches).
+    ///
+    /// Hooks without a prompt-driven search return `None` (the default), in
+    /// which case editors hide search chrome. [`crate::SearchHook`]
+    /// implements this; composite hooks (e.g. vim) forward their owned hook.
+    fn search_snapshot(&self) -> Option<SearchSnapshot> {
+        None
+    }
+}
+
+/// Owned snapshot of a hook's search panel for renderers.
+///
+/// Returned by [`EditorHook::search_snapshot`]; editors poll it after input
+/// events to draw toggle chips and the highlight-all wash. Owned (not
+/// borrowed) so hosts can retain it across frames without pinning hooks.
+#[derive(Debug, Clone, Default)]
+pub struct SearchSnapshot {
+    /// Whether the hook currently owns the open prompt.
+    pub active: bool,
+    /// Whether matching is case-sensitive.
+    pub case_sensitive: bool,
+    /// Whether matches must span whole words.
+    pub whole_word: bool,
+    /// Whether all matches wash the viewport (vs current match only).
+    pub highlight_all: bool,
+    /// All match byte ranges in ascending order.
+    pub matches: Vec<Range<usize>>,
+    /// Index of the current match, if navigation has occurred.
+    pub current: Option<usize>,
 }
 
 /// Built-in hook that automatically inserts closing quotes, brackets, and braces, wraps selected text, and steps over closing pairs.

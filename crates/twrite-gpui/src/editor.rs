@@ -1,9 +1,10 @@
+use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::*;
 use twrite_core::{
-    CursorStyle, EditorBuffer, EditorHook, HookContext, HookEffect, Point as BufferPoint,
-    PromptState, Selection, SyntaxHighlighter,
+    CursorStyle, EditorBuffer, EditorHook, HookContext, HookEffect, KeyEvent, Modifiers,
+    Point as BufferPoint, PromptState, SearchSnapshot, Selection, SyntaxHighlighter,
 };
 
 use crate::{
@@ -76,6 +77,10 @@ pub struct Editor {
     /// File path for `:w`-style saves (`Save { path: None }`); set by
     /// [`Self::load_file`].
     pub file_path: Option<std::path::PathBuf>,
+    /// Last synced search matches for the highlight-all wash.
+    pub search_matches: Vec<Range<usize>>,
+    /// Whether the highlight-all wash is enabled (from the search snapshot).
+    pub search_highlight_all: bool,
 }
 
 /// A hyperlink visible on screen with its screen pixel bounds and target URL.
@@ -172,6 +177,8 @@ impl Editor {
             prompt: PromptState::new(),
             pending_effects: Vec::new(),
             file_path: None,
+            search_matches: Vec::new(),
+            search_highlight_all: false,
         }
     }
 
@@ -296,6 +303,54 @@ impl Editor {
     /// Takes app-level effects (`Quit` / `Message`) left by [`Self::flush_effects`].
     pub fn take_effects(&mut self) -> Vec<HookEffect> {
         std::mem::take(&mut self.pending_effects)
+    }
+
+    /// Returns the live search-panel snapshot from the first hook that
+    /// provides one ([`SearchHook`]; composite hooks forward their own).
+    pub fn search_snapshot(&self) -> Option<SearchSnapshot> {
+        self.hooks.iter().find_map(|h| h.search_snapshot())
+    }
+
+    /// Refreshes [`Self::search_matches`] / [`Self::search_highlight_all`]
+    /// from the hook snapshot; clears both when no hook is active.
+    /// Runs automatically after key input (see [`Self::dispatch_key`]).
+    pub fn sync_search_state(&mut self) {
+        match self.search_snapshot() {
+            Some(snapshot) => {
+                self.search_matches = snapshot.matches;
+                self.search_highlight_all = snapshot.highlight_all;
+            }
+            None => {
+                self.search_matches.clear();
+                self.search_highlight_all = false;
+            }
+        }
+    }
+
+    /// Feeds a synthetic key through the hook chain with full post-processing.
+    ///
+    /// Used by prompt-bar chips and arrow buttons so clicks share the exact
+    /// keyboard path (e.g. `Alt+C` toggles Match Case, plain `arrowdown`
+    /// walks to the next match).
+    pub fn press_search_key(
+        &mut self,
+        key: &str,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
+        let key_event = KeyEvent {
+            key: key.to_string(),
+            modifiers: Modifiers {
+                ctrl,
+                alt,
+                shift,
+                meta: false,
+            },
+        };
+        self.dispatch_key(&key_event, window, cx);
     }
 
     /// Saves the current editor document contents to a file.
@@ -642,11 +697,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let key_event = match crate::input::translate_key_down(event) {
-            Some(ke) => ke,
-            None => return,
-        };
+        if let Some(key_event) = crate::input::translate_key_down(event) {
+            self.dispatch_key(&key_event, Some(window), cx);
+        }
+    }
 
+    /// Feeds a translated key through the hook chain with full post-processing
+    /// (selection callbacks, scrolling, effect + search sync, notify).
+    ///
+    /// Used by [`Self::handle_key_down`] and by synthetic prompt-bar clicks
+    /// via [`Self::press_search_key`].
+    fn dispatch_key(
+        &mut self,
+        key_event: &KeyEvent,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
         let initial_version = self.buffer.version();
         let mut consumed = false;
 
@@ -659,7 +725,7 @@ impl Editor {
                 &mut self.prompt,
                 &mut self.pending_effects,
             );
-            let outcome = self.hooks[hook_idx].on_key(&mut ctx, &key_event);
+            let outcome = self.hooks[hook_idx].on_key(&mut ctx, key_event);
             if outcome == twrite_core::HookOutcome::Consumed {
                 consumed = true;
                 break;
@@ -676,8 +742,9 @@ impl Editor {
             for hook in &mut self.hooks {
                 hook.on_selection_change(&self.buffer, self.selection.as_ref());
             }
-            self.scroll_to_cursor(Some(window));
+            self.scroll_to_cursor(window);
             self.flush_effects();
+            self.sync_search_state();
             cx.notify();
             return;
         }
@@ -689,6 +756,7 @@ impl Editor {
                 hook.on_selection_change(&self.buffer, self.selection.as_ref());
             }
             self.flush_effects();
+            self.sync_search_state();
             cx.notify();
             return;
         }
@@ -907,8 +975,9 @@ impl Editor {
             hook.on_selection_change(&self.buffer, self.selection.as_ref());
         }
 
-        self.scroll_to_cursor(Some(window));
+        self.scroll_to_cursor(window);
         self.flush_effects();
+        self.sync_search_state();
         cx.notify();
     }
 
@@ -1188,10 +1257,10 @@ impl Render for Editor {
             .unwrap_or(twrite_core::PromptPlacement::BottomBar);
         match placement {
             twrite_core::PromptPlacement::TopPalette => {
-                root.child(PromptBar::palette(&self.prompt))
+                root.child(PromptBar::palette(&cx.entity().clone(), cx))
             }
             twrite_core::PromptPlacement::BottomBar => {
-                root.child(PromptBar::bottom_bar(&self.prompt))
+                root.child(PromptBar::bottom_bar(&cx.entity().clone(), cx))
             }
         }
     }

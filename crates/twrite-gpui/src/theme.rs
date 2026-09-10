@@ -91,6 +91,8 @@ pub struct EditorTheme {
     pub cursor: Hsla,
     /// Background highlight color for selected text ranges.
     pub selection: Hsla,
+    /// Background wash color for highlight-all search matches.
+    pub search_match: Hsla,
     /// Gutter line number color for inactive lines.
     pub line_number: Hsla,
     /// Gutter line number color for the line containing the cursor.
@@ -106,6 +108,7 @@ impl Default for EditorTheme {
             foreground: rgb(0xcdd6f4).into(),
             cursor: rgb(0xf5e0dc).into(),
             selection: hsla(0.65, 0.4, 0.6, 0.25),
+            search_match: hsla(0.12, 0.8, 0.65, 0.25),
             line_number: rgb(0x6c7086).into(),
             line_number_active: rgb(0xcdd6f4).into(),
             syntax: SyntaxTheme::default(),
