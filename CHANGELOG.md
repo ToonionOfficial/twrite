@@ -5,9 +5,13 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.0] - 2026-09-10
 
 ### Added
+- **Getting-started pass (`examples/`, `README.md`):** numbered example order
+  (`simple` to `vim`) with header pointers, a README run map, a battery-neutral
+  hooks demo, and a new `prompt` example (goto-line plus command palette on
+  `ctx.prompt`).
 - **Headless find & replace engine (`twrite-core`)**: new `search` module with
   `SearchQuery` (literal + regex, case and whole-word toggles),
   `find_matches` / `find_next` / `find_prev` (wrapping), version-cached
@@ -54,6 +58,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Save { path: None }`.
 - Multi-edit undo/redo now track length shifts, so growing batch
   replacements round-trip exactly in one undo step.
+
+### Fixed
+- **Capital and shifted-symbol input (`twrite-gpui`)**: `translate_key_down`
+  now prefers `key_char` (the typed character) over the physical key name, so
+  Shift+letter, shifted symbols, and non-US layouts type correctly everywhere.
+  Command combos keep physical names; Option/Alt keeps toggle bindings unless
+  the platform prefers character input. Also revives Shift-bound keys
+  (`G`, `N`, `*`, `:`, `$`) in the vim example.
 
 ## [0.4.0] - 2026-09-07
 
