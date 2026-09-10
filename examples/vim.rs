@@ -1,7 +1,9 @@
 use gpui::*;
 use gpui_platform::application;
 use twrite::{
-    CursorStyle, Editor, EditorHook, HookContext, HookOutcome, KeyEvent, Point, Selection,
+    CharKind, CursorStyle, Editor, EditorHook, HookContext, HookEffect, HookOutcome, KeyEvent,
+    Point, PromptAction, PromptPlacement, PromptSpec, SEARCH_PROMPT_ID, SearchHook, SearchQuery,
+    Selection, collect_replacements,
 };
 
 /// The operating mode of the Vim state machine.
@@ -18,6 +20,11 @@ enum VimMode {
 struct VimHook {
     mode: VimMode,
     pending_key: Option<char>,
+    search: SearchHook,
+    /// Forward (`/`) or backward (`?`) for `n` / `N`.
+    search_backward: bool,
+    /// One-shot status line (search counts, `:w` feedback, `E...` errors).
+    status_override: Option<String>,
 }
 
 impl VimHook {
@@ -25,6 +32,9 @@ impl VimHook {
         Self {
             mode: VimMode::Normal,
             pending_key: None,
+            search: SearchHook::new(),
+            search_backward: false,
+            status_override: None,
         }
     }
 
@@ -59,12 +69,248 @@ impl VimHook {
             *ctx.selection = Some(Selection::range(sel.anchor, new_head));
         }
     }
+
+    /// Mirrors the owned [`SearchHook`] status into the one-shot line.
+    fn sync_search_status(&mut self) {
+        self.status_override = self.search.status_text().map(|s| s.to_string());
+    }
+
+    /// Keyword under the cursor (`*` / `#`), if any.
+    fn word_under_cursor(ctx: &HookContext) -> Option<String> {
+        let cursor = ctx.buffer.cursor_offset();
+        let text = ctx.buffer.text();
+        if cursor >= text.len_bytes() {
+            return None;
+        }
+        let char_idx = text.byte_to_char(cursor);
+        if twrite::classify_char(text.char(char_idx)) != CharKind::Word {
+            return None;
+        }
+        let start = ctx.buffer.prev_word_offset();
+        let end = ctx.buffer.next_word_offset();
+        if start >= end {
+            return None;
+        }
+        Some(text.byte_slice(start..end).to_string())
+    }
+
+    /// Splits `s/old/new/flags` bodies on unescaped `/` (`\/` and `\\` unescape;
+    /// other backslash sequences are kept verbatim for regexes).
+    fn split_ex_parts(body: &str) -> Vec<String> {
+        let mut parts = vec![String::new()];
+        let mut chars = body.chars();
+        while let Some(c) = chars.next() {
+            if c == '\\' {
+                match chars.next() {
+                    Some('/') => parts.last_mut().unwrap().push('/'),
+                    Some('\\') => parts.last_mut().unwrap().push('\\'),
+                    Some(n) => {
+                        parts.last_mut().unwrap().push('\\');
+                        parts.last_mut().unwrap().push(n);
+                    }
+                    None => parts.last_mut().unwrap().push('\\'),
+                }
+            } else if c == '/' {
+                parts.push(String::new());
+            } else {
+                parts.last_mut().unwrap().push(c);
+            }
+        }
+        parts
+    }
+
+    fn handle_ex_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
+        match ctx.prompt.handle_key(event) {
+            PromptAction::Editing => HookOutcome::Consumed,
+            PromptAction::Submitted(input) => {
+                let cmd = input.trim().to_string();
+                self.execute_ex(ctx, &cmd);
+                HookOutcome::Consumed
+            }
+            PromptAction::Cancelled => {
+                self.status_override = None;
+                HookOutcome::Consumed
+            }
+            PromptAction::Ignored => HookOutcome::Consumed,
+        }
+    }
+
+    fn execute_ex(&mut self, ctx: &mut HookContext, cmd: &str) {
+        ctx.prompt.close();
+        if cmd.is_empty() {
+            self.status_override = None;
+            return;
+        }
+        // :<num> goes to a line.
+        if let Ok(num) = cmd.parse::<usize>()
+            && num >= 1
+            && num <= ctx.buffer.len_lines()
+        {
+            let target = ctx.buffer.point_to_offset(Point::new(num - 1, 0));
+            ctx.buffer.set_cursor_offset(target);
+            *ctx.selection = None;
+            self.status_override = None;
+            return;
+        }
+        // File / lifecycle commands.
+        let (head, rest) = match cmd.find([' ', '\t']) {
+            Some(i) => (&cmd[..i], cmd[i..].trim()),
+            None => (cmd, ""),
+        };
+        match head {
+            "w" => {
+                ctx.effects.push(HookEffect::Save {
+                    path: if rest.is_empty() {
+                        None
+                    } else {
+                        Some(rest.to_string())
+                    },
+                });
+                self.status_override = None;
+            }
+            "q" => {
+                ctx.effects.push(HookEffect::Quit { force: false });
+                self.status_override = None;
+            }
+            "q!" => {
+                ctx.effects.push(HookEffect::Quit { force: true });
+                self.status_override = None;
+            }
+            "wq" | "x" => {
+                ctx.effects.push(HookEffect::Save {
+                    path: if rest.is_empty() {
+                        None
+                    } else {
+                        Some(rest.to_string())
+                    },
+                });
+                ctx.effects.push(HookEffect::Quit { force: false });
+                self.status_override = None;
+            }
+            "e" => {
+                if rest.is_empty() {
+                    self.status_override = Some("E471: Argument required".to_string());
+                } else {
+                    ctx.effects.push(HookEffect::Load {
+                        path: rest.to_string(),
+                    });
+                    self.status_override = None;
+                }
+            }
+            _ if cmd.starts_with('s') || cmd.starts_with("%s") => self.execute_substitute(ctx, cmd),
+            _ => {
+                self.status_override = Some(format!("E492: Not an editor command: {cmd}"));
+            }
+        }
+    }
+
+    fn execute_substitute(&mut self, ctx: &mut HookContext, cmd: &str) {
+        let (whole, rest) = match cmd.strip_prefix("%s") {
+            Some(rest) => (true, rest),
+            None => match cmd.strip_prefix('s') {
+                Some(rest) => (false, rest),
+                None => {
+                    self.status_override = Some(format!("E492: Not an editor command: {cmd}"));
+                    return;
+                }
+            },
+        };
+        let Some(body) = rest.strip_prefix('/') else {
+            self.status_override = Some("E488: Trailing characters".to_string());
+            return;
+        };
+        let parts = Self::split_ex_parts(body);
+        if parts.len() < 2 || parts.len() > 3 || parts[1..].iter().any(|p| p.contains('\n')) {
+            self.status_override = Some("E488: Trailing characters".to_string());
+            return;
+        }
+        let mut old = parts[0].clone();
+        let new = parts[1].clone();
+        let flags = parts.get(2).cloned().unwrap_or_default();
+        if old.is_empty() {
+            if self.search.query_text().is_empty() {
+                self.status_override = Some("E35: No previous regular expression".to_string());
+                return;
+            }
+            old = self.search.query_text().to_string();
+        }
+        let mut global = false;
+        let mut insensitive = false;
+        for flag in flags.chars() {
+            match flag {
+                'g' => global = true,
+                'i' => insensitive = true,
+                _ => {
+                    self.status_override = Some("E488: Trailing characters".to_string());
+                    return;
+                }
+            }
+        }
+
+        let query = SearchQuery::new(&old, !insensitive, false, true);
+        let (scope_text, base) = if whole {
+            (ctx.buffer.text().to_string(), 0)
+        } else {
+            let row = ctx.buffer.cursor_point().row;
+            (
+                ctx.buffer.line_to_string(row),
+                ctx.buffer.point_to_offset(Point::new(row, 0)),
+            )
+        };
+        let mut replacements = match collect_replacements(&scope_text, &query, &new) {
+            Ok(replacements) => replacements,
+            Err(e) => {
+                self.status_override = Some(e.to_string());
+                return;
+            }
+        };
+        for (range, _) in &mut replacements {
+            range.start += base;
+            range.end += base;
+        }
+        if !global {
+            replacements.truncate(1);
+        }
+        if replacements.is_empty() {
+            self.status_override = Some(format!("E486: Pattern not found: {old}"));
+            return;
+        }
+        let rows = replacements
+            .iter()
+            .map(|(r, _)| ctx.buffer.offset_to_point(r.start).row)
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        let n = replacements.len();
+        let first = replacements[0].0.start;
+        ctx.buffer.replace_many(replacements);
+        ctx.buffer.set_cursor_offset(first);
+        *ctx.selection = None;
+        self.status_override = Some(if rows == 1 && n == 1 {
+            "1 substitution on 1 line".to_string()
+        } else if rows == 1 {
+            format!("{n} substitutions on 1 line")
+        } else {
+            format!("{n} substitutions on {rows} lines")
+        });
+    }
 }
 
 impl EditorHook for VimHook {
     fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
+        // Shared prompt open: search prompts delegate to the owned SearchHook,
+        // `:` ex-commands are handled here. Either way nothing else runs.
+        if ctx.prompt.is_open() {
+            if ctx.prompt.spec().is_some_and(|s| s.id == SEARCH_PROMPT_ID) {
+                let outcome = self.search.on_key(ctx, event);
+                self.sync_search_status();
+                return outcome;
+            }
+            return self.handle_ex_key(ctx, event);
+        }
+
         if event.key == "escape" || (event.modifiers.ctrl && event.key == "[") {
             self.enter_normal_mode(ctx);
+            self.status_override = None;
             return HookOutcome::Consumed;
         }
 
@@ -146,6 +392,16 @@ impl EditorHook for VimHook {
                     }
                 }
 
+                // Search function keys (Ctrl+F / Ctrl+H / F3) share the owned
+                // SearchHook; a consumed key abandons any pending operator.
+                let outcome = self.search.on_key(ctx, event);
+                if outcome == HookOutcome::Consumed {
+                    self.pending_key = None;
+                    self.sync_search_status();
+                    return HookOutcome::Consumed;
+                }
+                self.status_override = None;
+
                 if let Some(pending) = self.pending_key.take() {
                     match (pending, event.key.as_str()) {
                         ('d', "d") => {
@@ -213,6 +469,87 @@ impl EditorHook for VimHook {
                         ctx.buffer.set_cursor_offset(target);
                         HookOutcome::Consumed
                     }
+                    "/" => {
+                        self.pending_key = None;
+                        self.search_backward = false;
+                        self.search.open_search(ctx, "");
+                        self.sync_search_status();
+                        HookOutcome::Consumed
+                    }
+                    "?" => {
+                        self.pending_key = None;
+                        self.search_backward = true;
+                        self.search.open_search(ctx, "");
+                        self.sync_search_status();
+                        HookOutcome::Consumed
+                    }
+                    "n" => {
+                        self.pending_key = None;
+                        if !self.search.query_text().is_empty() {
+                            if self.search_backward {
+                                self.search.navigate_prev(ctx, true);
+                            } else {
+                                self.search.navigate_next(ctx, true);
+                            }
+                            self.sync_search_status();
+                        }
+                        HookOutcome::Consumed
+                    }
+                    "N" => {
+                        self.pending_key = None;
+                        if !self.search.query_text().is_empty() {
+                            if self.search_backward {
+                                self.search.navigate_next(ctx, true);
+                            } else {
+                                self.search.navigate_prev(ctx, true);
+                            }
+                            self.sync_search_status();
+                        }
+                        HookOutcome::Consumed
+                    }
+                    "*" => {
+                        self.pending_key = None;
+                        match Self::word_under_cursor(ctx) {
+                            Some(word) => {
+                                let from = ctx.buffer.cursor_offset() + 1;
+                                self.search_backward = false;
+                                self.search.open_search(ctx, &word);
+                                self.search.navigate_next_from(ctx, from, true);
+                                self.sync_search_status();
+                            }
+                            None => {
+                                self.status_override =
+                                    Some("E348: No string under cursor".to_string());
+                            }
+                        }
+                        HookOutcome::Consumed
+                    }
+                    "#" => {
+                        self.pending_key = None;
+                        match Self::word_under_cursor(ctx) {
+                            Some(word) => {
+                                let from = ctx.buffer.cursor_offset();
+                                self.search_backward = true;
+                                self.search.open_search(ctx, &word);
+                                self.search.navigate_prev_from(ctx, from, true);
+                                self.sync_search_status();
+                            }
+                            None => {
+                                self.status_override =
+                                    Some("E348: No string under cursor".to_string());
+                            }
+                        }
+                        HookOutcome::Consumed
+                    }
+                    ":" => {
+                        self.pending_key = None;
+                        self.status_override = None;
+                        ctx.prompt.open(
+                            PromptSpec::new("vim-ex", ":", "", PromptPlacement::BottomBar, false),
+                            "",
+                        );
+                        HookOutcome::Consumed
+                    }
                     "i" => {
                         self.enter_insert_mode(ctx);
                         HookOutcome::Consumed
@@ -264,6 +601,9 @@ impl EditorHook for VimHook {
     }
 
     fn status_text(&self) -> Option<&str> {
+        if let Some(line) = &self.status_override {
+            return Some(line);
+        }
         match (self.mode, self.pending_key) {
             (VimMode::Normal, Some('d')) => Some("-- NORMAL (d) --"),
             (VimMode::Normal, Some('g')) => Some("-- NORMAL (g) --"),
@@ -339,7 +679,7 @@ fn main() {
             |window, cx| {
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(
-                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v : enter Visual mode\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
+                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v : enter Visual mode\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search, n / N : next / previous match\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
                         cx,
                     );
                     ed.config.line_numbers = true;
