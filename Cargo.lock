@@ -5523,6 +5523,7 @@ name = "twrite-core"
 version = "0.4.0"
 dependencies = [
  "pulldown-cmark",
+ "regex",
  "ropey",
  "thiserror 1.0.69",
  "unicode-width",

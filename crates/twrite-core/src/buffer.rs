@@ -424,14 +424,105 @@ impl EditorBuffer {
         self.version += 1;
     }
 
+    /// Applies multiple non-overlapping replacements as a single undoable transaction.
+    ///
+    /// `replacements` holds `(range, replacement_text)` pairs. They are applied
+    /// back-to-front so earlier byte offsets stay valid, recorded as one
+    /// [`Transaction`](crate::history::Transaction), and undone/redone together.
+    /// Returns the number of replacements applied. Overlapping, empty, or
+    /// out-of-bounds ranges are skipped. A no-op leaves the version untouched.
+    pub fn replace_many(&mut self, replacements: Vec<(Range<usize>, String)>) -> usize {
+        let len = self.text.len_bytes();
+        let mut valid: Vec<(usize, usize, String)> = Vec::with_capacity(replacements.len());
+        for (range, text) in replacements {
+            if range.start >= range.end || range.end > len {
+                continue;
+            }
+            if !self.is_char_boundary(range.start) || !self.is_char_boundary(range.end) {
+                continue;
+            }
+            valid.push((range.start, range.end, text));
+        }
+        if valid.is_empty() {
+            return 0;
+        }
+        valid.sort_by_key(|(start, _, _)| *start);
+        // Matches from a single scan never overlap, but callers may pass
+        // arbitrary ranges: keep the first of any overlapping pair.
+        let mut dedup: Vec<(usize, usize, String)> = Vec::with_capacity(valid.len());
+        for (start, end, text) in valid {
+            if let Some((_, last_end, _)) = dedup.last()
+                && start < *last_end
+            {
+                continue;
+            }
+            dedup.push((start, end, text));
+        }
+        if dedup.is_empty() {
+            return 0;
+        }
+
+        let previous_cursor = self.cursor;
+        // Apply back-to-front so earlier byte offsets stay valid, then store
+        // the edits ascending; undo/redo both walk descending (see below).
+        let mut edits: Vec<Edit> = Vec::with_capacity(dedup.len());
+        for (start, end, text) in dedup.iter().rev() {
+            let deleted_text = self.text.byte_slice(*start..*end).to_string();
+            let start_char = self.text.byte_to_char(*start);
+            let end_char = self.text.byte_to_char(*end);
+            self.text.remove(start_char..end_char);
+            self.text.insert(start_char, text);
+            edits.push(Edit {
+                bytes_range: *start..*end,
+                inserted_text: text.clone(),
+                deleted_text,
+            });
+        }
+        edits.reverse();
+
+        // Cursor tracks the end of the last replacement: earlier edits shift
+        // it by the sum of their length deltas.
+        let mut shift: i64 = 0;
+        for edit in &edits[..edits.len() - 1] {
+            shift += edit.inserted_text.len() as i64
+                - (edit.bytes_range.end - edit.bytes_range.start) as i64;
+        }
+        let last = &edits[edits.len() - 1];
+        let new_cursor = (last.bytes_range.start as i64 + shift + last.inserted_text.len() as i64)
+            .max(0) as usize;
+        self.cursor = new_cursor.min(self.text.len_bytes());
+
+        let tx = Transaction {
+            edits,
+            previous_cursor,
+            resulting_cursor: self.cursor,
+        };
+        let applied = tx.edits.len();
+
+        self.history.undo_stack.push(tx);
+        self.history.redo_stack.clear();
+        self.version += 1;
+        applied
+    }
+
     /// Undoes the most recent transaction.
     ///
     /// If there is no transaction to undo, this method does nothing.
     /// The undone transaction is moved to the redo stack.
     pub fn undo(&mut self) {
         if let Some(tx) = self.history.undo_stack.pop() {
-            for edit in tx.edits.iter().rev() {
-                let start = edit.bytes_range.start;
+            // Stored ranges are original-document coordinates. Undone
+            // descending, each edit's inserted text sits at its stored start
+            // plus the length deltas of all still-applied earlier edits.
+            let mut prefix = Vec::with_capacity(tx.edits.len() + 1);
+            prefix.push(0i64);
+            for edit in &tx.edits {
+                let delta = edit.inserted_text.len() as i64
+                    - (edit.bytes_range.end - edit.bytes_range.start) as i64;
+                prefix.push(prefix.last().copied().unwrap_or(0) + delta);
+            }
+            for (index, edit) in tx.edits.iter().enumerate().rev() {
+                let start = (edit.bytes_range.start as i64 + prefix[index]).max(0) as usize;
                 let end = start + edit.inserted_text.len();
 
                 if end > start {
@@ -456,7 +547,9 @@ impl EditorBuffer {
     /// The redone transaction is moved back to the undo stack.
     pub fn redo(&mut self) {
         if let Some(tx) = self.history.redo_stack.pop() {
-            for edit in &tx.edits {
+            // Descending (like `undo`): higher offsets are re-applied first so
+            // earlier stored ranges stay valid for multi-edit transactions.
+            for edit in tx.edits.iter().rev() {
                 let start = edit.bytes_range.start;
                 let end = start + edit.deleted_text.len();
 

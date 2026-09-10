@@ -8,6 +8,7 @@ description = "Headless buffer, movement, syntax, and hook primitives for twrite
 
 [dependencies]
 ropey = { workspace = true }
+regex = { workspace = true }
 thiserror = { workspace = true }
 unicode-width = { workspace = true }
 pulldown-cmark = { workspace = true, optional = true }

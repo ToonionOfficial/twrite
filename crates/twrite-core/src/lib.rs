@@ -22,6 +22,8 @@ pub mod hook;
 pub mod markdown;
 /// Text movement and boundary calculation primitives.
 pub mod movement;
+/// Headless find & replace engine (literal and regex search, single-undo batch replace).
+pub mod search;
 /// Text selection ranges and anchor/head management.
 pub mod selection;
 /// Headless syntax highlighting, styling tokens, and interval splitting.
@@ -44,6 +46,7 @@ pub use movement::{
     CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
     find_prev_word_start,
 };
+pub use search::{SearchQuery, SearchState, find_matches, find_next, find_prev, replace_all_query};
 pub use selection::Selection;
 pub use syntax::{
     ConcealedLine, DisplayPad, HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment,

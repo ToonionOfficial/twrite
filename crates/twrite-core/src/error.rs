@@ -38,6 +38,19 @@ pub enum EditorError {
         offset: usize,
     },
 
+    /// A search was attempted with an empty pattern.
+    #[error("search pattern is empty")]
+    EmptySearchPattern,
+
+    /// A regex search pattern failed to compile.
+    #[error("invalid regex {pattern:?}: {message}")]
+    InvalidRegex {
+        /// The offending regex source.
+        pattern: String,
+        /// The underlying regex engine error message.
+        message: String,
+    },
+
     /// An I/O error occurred during file reading or writing.
     #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
