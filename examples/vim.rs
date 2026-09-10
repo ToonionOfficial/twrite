@@ -348,7 +348,13 @@ fn main() {
                     // `Editor::face_availability`). Set `ed.config.font_family
                     // explicitly to override (e.g. Menlo, Consolas).
                     let mut vim = VimHook::new();
-                    let mut ctx = HookContext::new(&mut ed.buffer, &mut ed.selection, &mut ed.cursor_style);
+                    let mut ctx = HookContext::new(
+                        &mut ed.buffer,
+                        &mut ed.selection,
+                        &mut ed.cursor_style,
+                        &mut ed.prompt,
+                        &mut ed.pending_effects,
+                    );
                     vim.enter_normal_mode(&mut ctx);
                     ed.add_hook(vim);
                     ed

@@ -12,6 +12,8 @@ pub mod fps;
 pub mod input;
 /// Per-version viewport cache for highlight/conceal/link inputs.
 pub mod layout_cache;
+/// Dumb renderer for the shared headless prompt (bottom bar, palette).
+pub mod prompt_bar;
 /// Color palettes, Catppuccin themes, and syntax token style resolution.
 pub mod theme;
 
@@ -20,6 +22,7 @@ pub use config::EditorConfig;
 pub use editor::{Editor, FaceAvailability, VisibleLineLayout, VisibleLink};
 pub use fps::{FrameStats, fps_badge};
 pub use layout_cache::{CachedInput, LayoutCache};
+pub use prompt_bar::PromptBar;
 pub use theme::{EditorTheme, ResolvedTokenStyle, SyntaxTheme};
 
 #[cfg(test)]
