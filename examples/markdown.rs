@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_platform::application;
 use twrite::Editor;
+use twrite::SearchHook;
 use twrite::fps_badge;
 use twrite::markdown::{
     ConcealMode, MarkdownHighlighter, TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG,
@@ -127,7 +128,7 @@ impl Render for MarkdownApp {
                         div()
                             .text_xs()
                             .text_color(rgb(0x6c7086))
-                            .child("Ctrl+B: Bold  |  Ctrl+I: Italic  |  Ctrl+K: Link  |  Ctrl+Enter: Toggle Checkbox"),
+                            .child("Ctrl+B: Bold  |  Ctrl+I: Italic  |  Ctrl+K: Link  |  Ctrl+Enter: Toggle Checkbox  |  Ctrl+F: Find  |  Ctrl+H: Replace  |  Alt+C/W/H: Toggles"),
                     ),
             )
             .child(
@@ -248,6 +249,8 @@ fn main() {
                     // platform monospace with bold + italic faces (see
                     // `Editor::face_availability`). Set `ed.config.font_family
                     // explicitly to override (e.g. Menlo, Consolas).
+                    // First hook: its status wins while the find box is open.
+                    ed.add_hook(SearchHook::new());
                     ed.enable_markdown();
                     ed
                 });

@@ -1,9 +1,10 @@
+use std::ops::Range;
 use std::sync::Arc;
 
 use gpui::*;
 use twrite_core::{
-    CursorStyle, EditorBuffer, EditorHook, HookContext, Point as BufferPoint, Selection,
-    SyntaxHighlighter,
+    CursorStyle, EditorBuffer, EditorHook, HookContext, HookEffect, KeyEvent, Modifiers,
+    Point as BufferPoint, PromptState, SearchSnapshot, Selection, SyntaxHighlighter,
 };
 
 use crate::{
@@ -11,6 +12,7 @@ use crate::{
     config::EditorConfig,
     fps::FrameStats,
     layout_cache::LayoutCache,
+    prompt_bar::PromptBar,
     theme::EditorTheme,
 };
 
@@ -66,6 +68,19 @@ pub struct Editor {
     /// editor repaints (typing, selection drags, scrolling) and freezes when
     /// idle, with no forced repaints of its own.
     pub frame_stats: FrameStats,
+    /// Shared headless prompt / input-box state, passed to hooks via
+    /// [`HookContext`] and rendered by [`PromptBar`] when open.
+    pub prompt: PromptState,
+    /// App-level requests queued by hooks; [`Self::flush_effects`] executes
+    /// file effects inline, hosts drain the rest via [`Self::take_effects`].
+    pub pending_effects: Vec<HookEffect>,
+    /// File path for `:w`-style saves (`Save { path: None }`); set by
+    /// [`Self::load_file`].
+    pub file_path: Option<std::path::PathBuf>,
+    /// Last synced search matches for the highlight-all wash.
+    pub search_matches: Vec<Range<usize>>,
+    /// Whether the highlight-all wash is enabled (from the search snapshot).
+    pub search_highlight_all: bool,
 }
 
 /// A hyperlink visible on screen with its screen pixel bounds and target URL.
@@ -159,6 +174,11 @@ impl Editor {
             last_cursor_pixel: None,
             visible_lines: Vec::new(),
             frame_stats: FrameStats::new(),
+            prompt: PromptState::new(),
+            pending_effects: Vec::new(),
+            file_path: None,
+            search_matches: Vec::new(),
+            search_highlight_all: false,
         }
     }
 
@@ -237,13 +257,100 @@ impl Editor {
         &mut self,
         path: P,
     ) -> Result<(), twrite_core::EditorError> {
-        let new_buffer = EditorBuffer::from_file(path)?;
+        let new_buffer = EditorBuffer::from_file(path.as_ref())?;
         self.buffer = new_buffer;
         self.scroll_row = 0;
         self.selection = None;
+        self.file_path = Some(path.as_ref().to_path_buf());
         // Fresh buffer may reuse version 0: bust the cache explicitly.
         self.layout_cache.clear();
         Ok(())
+    }
+
+    /// Executes queued file effects (`Save` / `Load`) inline, keeping
+    /// app-level effects (`Quit` / `Message`) queued for the host to drain
+    /// via [`Self::take_effects`]. Runs automatically after input events.
+    pub fn flush_effects(&mut self) {
+        let queued = std::mem::take(&mut self.pending_effects);
+        let mut unhandled = Vec::new();
+        for effect in queued {
+            match effect {
+                HookEffect::Save { path } => {
+                    let target = path
+                        .map(std::path::PathBuf::from)
+                        .or_else(|| self.file_path.clone());
+                    match target {
+                        Some(p) => {
+                            if let Err(e) = self.save_file(&p) {
+                                unhandled.push(HookEffect::Message(format!("save failed: {e}")));
+                            }
+                        }
+                        None => {
+                            unhandled.push(HookEffect::Message("E32: No file name".to_string()));
+                        }
+                    }
+                }
+                HookEffect::Load { path } => match self.load_file(&path) {
+                    Ok(()) => {}
+                    Err(e) => unhandled.push(HookEffect::Message(format!("load failed: {e}"))),
+                },
+                other => unhandled.push(other),
+            }
+        }
+        self.pending_effects = unhandled;
+    }
+
+    /// Takes app-level effects (`Quit` / `Message`) left by [`Self::flush_effects`].
+    pub fn take_effects(&mut self) -> Vec<HookEffect> {
+        std::mem::take(&mut self.pending_effects)
+    }
+
+    /// Returns the live search-panel snapshot from the first hook that
+    /// provides one ([`SearchHook`]; composite hooks forward their own).
+    pub fn search_snapshot(&self) -> Option<SearchSnapshot> {
+        self.hooks.iter().find_map(|h| h.search_snapshot())
+    }
+
+    /// Refreshes [`Self::search_matches`] / [`Self::search_highlight_all`]
+    /// from the hook snapshot; clears both when no hook is active.
+    /// Runs automatically after key input (see [`Self::dispatch_key`]).
+    pub fn sync_search_state(&mut self) {
+        match self.search_snapshot() {
+            Some(snapshot) => {
+                self.search_matches = snapshot.matches;
+                self.search_highlight_all = snapshot.highlight_all;
+            }
+            None => {
+                self.search_matches.clear();
+                self.search_highlight_all = false;
+            }
+        }
+    }
+
+    /// Feeds a synthetic key through the hook chain with full post-processing.
+    ///
+    /// Used by prompt-bar chips and arrow buttons so clicks share the exact
+    /// keyboard path (e.g. `Alt+C` toggles Match Case, plain `arrowdown`
+    /// walks to the next match).
+    pub fn press_search_key(
+        &mut self,
+        key: &str,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
+        let key_event = KeyEvent {
+            key: key.to_string(),
+            modifiers: Modifiers {
+                ctrl,
+                alt,
+                shift,
+                meta: false,
+            },
+        };
+        self.dispatch_key(&key_event, window, cx);
     }
 
     /// Saves the current editor document contents to a file.
@@ -590,11 +697,22 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let key_event = match crate::input::translate_key_down(event) {
-            Some(ke) => ke,
-            None => return,
-        };
+        if let Some(key_event) = crate::input::translate_key_down(event) {
+            self.dispatch_key(&key_event, Some(window), cx);
+        }
+    }
 
+    /// Feeds a translated key through the hook chain with full post-processing
+    /// (selection callbacks, scrolling, effect + search sync, notify).
+    ///
+    /// Used by [`Self::handle_key_down`] and by synthetic prompt-bar clicks
+    /// via [`Self::press_search_key`].
+    fn dispatch_key(
+        &mut self,
+        key_event: &KeyEvent,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
         let initial_version = self.buffer.version();
         let mut consumed = false;
 
@@ -604,8 +722,10 @@ impl Editor {
                 &mut self.buffer,
                 &mut self.selection,
                 &mut self.cursor_style,
+                &mut self.prompt,
+                &mut self.pending_effects,
             );
-            let outcome = self.hooks[hook_idx].on_key(&mut ctx, &key_event);
+            let outcome = self.hooks[hook_idx].on_key(&mut ctx, key_event);
             if outcome == twrite_core::HookOutcome::Consumed {
                 consumed = true;
                 break;
@@ -622,7 +742,21 @@ impl Editor {
             for hook in &mut self.hooks {
                 hook.on_selection_change(&self.buffer, self.selection.as_ref());
             }
-            self.scroll_to_cursor(Some(window));
+            self.scroll_to_cursor(window);
+            self.flush_effects();
+            self.sync_search_state();
+            cx.notify();
+            return;
+        }
+
+        // While the prompt box is open, unconsumed keys never reach the
+        // buffer; hooks route them via `ctx.prompt.handle_key`.
+        if self.prompt.is_open() {
+            for hook in &mut self.hooks {
+                hook.on_selection_change(&self.buffer, self.selection.as_ref());
+            }
+            self.flush_effects();
+            self.sync_search_state();
             cx.notify();
             return;
         }
@@ -690,11 +824,13 @@ impl Editor {
                 }
                 "up" | "arrowup" => {
                     self.scroll_up(1);
+                    self.flush_effects();
                     cx.notify();
                     return;
                 }
                 "down" | "arrowdown" => {
                     self.scroll_down(1);
+                    self.flush_effects();
                     cx.notify();
                     return;
                 }
@@ -807,6 +943,8 @@ impl Editor {
                                 &mut self.buffer,
                                 &mut self.selection,
                                 &mut self.cursor_style,
+                                &mut self.prompt,
+                                &mut self.pending_effects,
                             );
                             if self.hooks[hook_idx].before_insert(&mut ctx, key)
                                 == twrite_core::HookOutcome::Consumed
@@ -837,7 +975,9 @@ impl Editor {
             hook.on_selection_change(&self.buffer, self.selection.as_ref());
         }
 
-        self.scroll_to_cursor(Some(window));
+        self.scroll_to_cursor(window);
+        self.flush_effects();
+        self.sync_search_state();
         cx.notify();
     }
 
@@ -915,6 +1055,8 @@ impl Editor {
                         &mut self.buffer,
                         &mut self.selection,
                         &mut self.cursor_style,
+                        &mut self.prompt,
+                        &mut self.pending_effects,
                     );
                     if self.hooks[hook_idx].on_click(&mut ctx, row, col)
                         == twrite_core::HookOutcome::Consumed
@@ -935,6 +1077,7 @@ impl Editor {
                     }
                     self.selection = None;
                     self.is_selecting = false;
+                    self.flush_effects();
                     cx.notify();
                     return;
                 }
@@ -956,6 +1099,7 @@ impl Editor {
         }
 
         self.scroll_to_cursor(Some(window));
+        self.flush_effects();
         cx.notify();
     }
 
@@ -1014,6 +1158,7 @@ impl Editor {
             self.is_hovering_task = hovering;
             self.hovered_link = hovered_link;
         }
+        self.flush_effects();
         cx.notify();
     }
 
@@ -1057,6 +1202,8 @@ impl Render for Editor {
             .track_focus(&self.focus_handle)
             .key_context("Editor")
             .size_full()
+            .flex()
+            .flex_col()
             .overflow_hidden()
             .cursor(cursor_style)
             .bg(self.theme.background);
@@ -1071,7 +1218,8 @@ impl Render for Editor {
             root
         };
 
-        root.on_key_down(cx.listener(Self::handle_key_down))
+        let root = root
+            .on_key_down(cx.listener(Self::handle_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .on_mouse_up_out(
@@ -1088,6 +1236,35 @@ impl Render for Editor {
             )
             .on_mouse_move(cx.listener(Self::handle_mouse_move))
             .on_scroll_wheel(cx.listener(Self::handle_scroll_wheel))
-            .child(EditorCanvas::new(cx.entity().clone()))
+            // The canvas yields space so an open prompt bar stays visible
+            // instead of being pushed below the fold and clipped.
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_hidden()
+                    .child(EditorCanvas::new(cx.entity().clone())),
+            );
+
+        // The prompt box is a dumb view over the shared headless state:
+        // bottom-anchored line for vim/ex/search, floating palette for `F1`.
+        // Plain data (not the entity): PromptBar must not re-enter the
+        // entity while it is being rendered.
+        if !self.prompt.is_open() {
+            return root;
+        }
+        let snapshot = self.search_snapshot();
+        let placement = self
+            .prompt
+            .spec()
+            .map(|s| s.placement)
+            .unwrap_or(twrite_core::PromptPlacement::BottomBar);
+        match placement {
+            twrite_core::PromptPlacement::TopPalette => {
+                root.child(PromptBar::palette(&self.prompt, snapshot, cx))
+            }
+            twrite_core::PromptPlacement::BottomBar => {
+                root.child(PromptBar::bottom_bar(&self.prompt, snapshot, cx))
+            }
+        }
     }
 }

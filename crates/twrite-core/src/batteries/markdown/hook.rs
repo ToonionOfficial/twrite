@@ -382,16 +382,24 @@ impl EditorHook for MarkdownHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EditorBuffer, HookContext, HookOutcome, KeyEvent, Selection};
+    use crate::{EditorBuffer, HookContext, HookOutcome, KeyEvent, PromptState, Selection};
 
     #[test]
     fn test_markdown_hook_bold_wrapping() {
         let mut buffer = EditorBuffer::new("hello world");
         let mut selection = Some(Selection::range(0, 5));
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::new();
 
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         let event = KeyEvent {
             key: "b".into(),
             modifiers: crate::Modifiers {
@@ -411,9 +419,17 @@ mod tests {
         let mut buffer = EditorBuffer::new("- [ ] Task item");
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::new();
 
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         let event = KeyEvent {
             key: "enter".into(),
             modifiers: crate::Modifiers {
@@ -437,9 +453,17 @@ mod tests {
         buffer.set_cursor_offset(13);
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::new();
 
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         let event = KeyEvent::plain("enter");
 
         let outcome = hook.on_key(&mut ctx, &event);
@@ -452,11 +476,19 @@ mod tests {
         let mut buffer = EditorBuffer::new("- [ ] Task one\n- [x] Task two");
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::new();
 
         // Click row 1 (checked -> unchecked), cursor stays put.
         buffer.set_cursor_offset(0);
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(hook.on_click(&mut ctx, 1, 0), HookOutcome::Consumed);
         assert_eq!(
             ctx.buffer.text().to_string(),
@@ -465,7 +497,13 @@ mod tests {
         assert_eq!(ctx.buffer.cursor_offset(), 0);
 
         // Click row 0 (unchecked -> checked).
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(hook.on_click(&mut ctx, 0, 2), HookOutcome::Consumed);
         assert_eq!(
             ctx.buffer.text().to_string(),
@@ -474,7 +512,13 @@ mod tests {
 
         // Uppercase [X] also toggles.
         ctx.buffer.replace_range(0..14, "- [X] Task one");
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(hook.on_click(&mut ctx, 0, 3), HookOutcome::Consumed);
         assert_eq!(
             ctx.buffer.text().to_string(),
@@ -483,7 +527,13 @@ mod tests {
 
         // Plain line passes through.
         let mut plain = EditorBuffer::new("hello");
-        let mut ctx = HookContext::new(&mut plain, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut plain,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(hook.on_click(&mut ctx, 0, 0), HookOutcome::PassThrough);
     }
 
@@ -492,11 +542,19 @@ mod tests {
         let mut buffer = EditorBuffer::new("- [ ] Task");
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::with_config(MarkdownConfig {
             interactive_tasks: false,
             ..Default::default()
         });
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(hook.on_click(&mut ctx, 0, 0), HookOutcome::PassThrough);
         assert_eq!(ctx.buffer.text().to_string(), "- [ ] Task");
     }
@@ -506,17 +564,31 @@ mod tests {
         let mut buffer = EditorBuffer::new("| a | b |\n| --- | --- |\n| c | d |");
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::new();
         buffer.set_cursor_offset(0);
 
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(
             hook.on_key(&mut ctx, &KeyEvent::plain("tab")),
             HookOutcome::Consumed
         );
         assert_eq!(ctx.buffer.cursor_offset(), 2); // start of `a`
 
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(
             hook.on_key(&mut ctx, &KeyEvent::plain("tab")),
             HookOutcome::Consumed
@@ -531,7 +603,13 @@ mod tests {
                 ..Default::default()
             },
         };
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(hook.on_key(&mut ctx, &back), HookOutcome::Consumed);
         assert_eq!(ctx.buffer.cursor_offset(), 2);
     }
@@ -541,10 +619,18 @@ mod tests {
         let mut buffer = EditorBuffer::new("| a |\n| --- |\n| b |");
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::new();
         buffer.set_cursor_offset(buffer.len_bytes());
 
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(
             hook.on_key(&mut ctx, &KeyEvent::plain("tab")),
             HookOutcome::Consumed
@@ -557,10 +643,18 @@ mod tests {
         let mut buffer = EditorBuffer::new("plain text");
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::new();
         buffer.set_cursor_offset(3);
 
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(
             hook.on_key(&mut ctx, &KeyEvent::plain("tab")),
             HookOutcome::PassThrough
@@ -572,7 +666,13 @@ mod tests {
             table_navigation: false,
             ..Default::default()
         });
-        let mut ctx = HookContext::new(&mut disabled, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut disabled,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(
             hook_off.on_key(&mut ctx, &KeyEvent::plain("tab")),
             HookOutcome::PassThrough
@@ -586,8 +686,16 @@ mod tests {
         buffer.set_cursor_offset(buffer.len_bytes());
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
         let mut hook = MarkdownHook::new();
-        let mut ctx = HookContext::new(&mut buffer, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(
             hook.on_key(&mut ctx, &KeyEvent::plain("enter")),
             HookOutcome::Consumed
@@ -600,7 +708,13 @@ mod tests {
         // An all-blank row exits the table like empty list items do.
         let mut empty = EditorBuffer::new("| a |\n| --- |\n| |");
         empty.set_cursor_offset(empty.len_bytes());
-        let mut ctx = HookContext::new(&mut empty, &mut selection, &mut cursor_style);
+        let mut ctx = HookContext::new(
+            &mut empty,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
         assert_eq!(
             hook.on_key(&mut ctx, &KeyEvent::plain("enter")),
             HookOutcome::Consumed

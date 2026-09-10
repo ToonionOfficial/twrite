@@ -7,6 +7,8 @@ pub mod batteries;
 pub mod buffer;
 /// 2D text coordinates (row and column).
 pub mod coordinates;
+/// App-level hook effects (save, load, quit, messages) for headless frontends.
+pub mod effect;
 /// Strongly-typed error types and results for editor operations.
 pub mod error;
 /// Granular undo/redo transaction history.
@@ -22,8 +24,12 @@ pub mod hook;
 pub mod markdown;
 /// Text movement and boundary calculation primitives.
 pub mod movement;
+/// Headless prompt / input-box primitive (bottom bar, command palette).
+pub mod prompt;
 /// Headless find & replace engine (literal and regex search, single-undo batch replace).
 pub mod search;
+/// Stock search/replace hook binding the engine to the shared prompt.
+pub mod search_hook;
 /// Text selection ranges and anchor/head management.
 pub mod selection;
 /// Headless syntax highlighting, styling tokens, and interval splitting.
@@ -31,9 +37,11 @@ pub mod syntax;
 
 pub use buffer::EditorBuffer;
 pub use coordinates::Point;
+pub use effect::HookEffect;
 pub use error::{EditorError, Result as EditorResult};
 pub use hook::{
     AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
+    SearchSnapshot,
 };
 #[cfg(feature = "markdown")]
 pub use markdown::{
@@ -46,7 +54,12 @@ pub use movement::{
     CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
     find_prev_word_start,
 };
+pub use prompt::{
+    PromptAction, PromptItem, PromptPlacement, PromptSpec, PromptState, fuzzy_filter, fuzzy_score,
+};
 pub use search::{SearchQuery, SearchState, find_matches, find_next, find_prev, replace_all_query};
+pub use search::{collect_replacements, replace_one_query};
+pub use search_hook::{REPLACE_PROMPT_ID, SEARCH_PROMPT_ID, SearchHook};
 pub use selection::Selection;
 pub use syntax::{
     ConcealedLine, DisplayPad, HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment,

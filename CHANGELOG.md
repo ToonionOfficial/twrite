@@ -5,6 +5,56 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Headless find & replace engine (`twrite-core`)**: new `search` module with
+  `SearchQuery` (literal + regex, case and whole-word toggles),
+  `find_matches` / `find_next` / `find_prev` (wrapping), version-cached
+  `SearchState` for interactive find, and single-undo batch replace
+  (`EditorBuffer::replace_many`, `replace_all_query` with `$1` / `$name`
+  capture expansion, `replace_one_query`, line-scoped `collect_replacements`).
+  New `regex` workspace dependency; `EditorError::{EmptySearchPattern, InvalidRegex}`.
+- **Headless prompt primitive (`twrite-core`)**: new `prompt` module with
+  `PromptState` (UTF-8-safe single-line editing, `Ctrl+W/U/A/E` shortcuts,
+  submitted-input history with draft restore, item list + wrapping selection,
+  `Tab` completion, `fuzzy_score` / `fuzzy_filter`) in `BottomBar` and
+  `TopPalette` placements, plus `HookEffect::{Save, Load, Quit, Message}` for
+  app-level requests frontends drain.
+- **Stock `SearchHook` (`twrite-core`)**: `Ctrl+F` find (selection seeds the
+  query) with live refresh, `Enter` / `F3` next, `Shift+F3` previous,
+  `Ctrl+H` replace field, `Ctrl+Enter` replace-one, `Alt+A` single-undo
+  replace-all, `Escape` close, and `SEARCH n/m` / `REPLACE` status text.
+  Exposes `navigate_next_from` / `navigate_prev_from` for vim `*` / `#`.
+- **Vim search & ex-commands (`examples/vim.rs`)**: `/` / `?` live search with
+  `n` / `N` following the direction, `*` / `#` word under cursor, and a `:`
+  prompt supporting `:w [path]`, `:q[!]`, `:wq`, `:e path`, `:<num>`, and
+  `:s` / `:%s` with `[g][i]` flags (regex, `$1` captures, single undo).
+- **Prompt box renderer (`twrite-gpui`)**: new `PromptBar` drawing the shared
+  `PromptState` as a bottom line or floating `F1` palette (input with block
+  cursor, item rows, message line). `Editor` owns the state, swallows buffer
+  keys while it is open, and `flush_effects()` executes file effects inline
+  (`take_effects()` leaves `Quit` / `Message` for hosts). The `markdown`
+  example wires `Ctrl+F` / `Ctrl+H` for free.
+- **Search toggles + highlight-all (`twrite-core`, `twrite-gpui`)**: `SearchHook`
+  gains Match Case / Whole Word / Highlight All flags (status shows
+  `[Aa] [w] [H]`), `Alt+C` / `Alt+W` / `Alt+H` shortcuts, `Up` / `Down` match
+  stepping (`Alt+Up` / `Alt+Down` still reach input history), and a
+  `SearchSnapshot` bridge (`EditorHook::search_snapshot`, default `None`)
+  that composite hooks forward. `Editor` syncs `search_matches` after input
+  and `PromptBar` renders clickable `Aa` / `W` / `All` chips plus `↑` / `↓`
+  steppers that dispatch through the same key path; the canvas paints a
+  viewport-clipped `theme.search_match` wash under the text.
+
+### Changed
+- **BREAKING**: `HookContext` gains `prompt: &mut PromptState` and
+  `effects: &mut Vec<HookEffect>`; constructors take five arguments.
+- **BREAKING**: `Editor` gains `prompt`, `pending_effects`, and `file_path`
+  fields (struct literals need updating); `load_file` records the path for
+  `Save { path: None }`.
+- Multi-edit undo/redo now track length shifts, so growing batch
+  replacements round-trip exactly in one undo step.
+
 ## [0.4.0] - 2026-09-07
 
 ### Added

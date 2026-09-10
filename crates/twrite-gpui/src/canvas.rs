@@ -4,6 +4,8 @@ use twrite_core::{
     split_line_intervals,
 };
 
+use std::ops::Range;
+
 use crate::editor::Editor;
 use crate::theme::EditorTheme;
 
@@ -250,6 +252,34 @@ struct PreparedLine {
     empty_selection_quad: Option<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
     task_checkbox_quad: Option<PaintQuad>,
+    /// Highlight-all search washes for this line (painted under the text).
+    search_match_quads: Vec<PaintQuad>,
+}
+
+/// Intersects ascending `matches` with `[line_start, line_end)`, advancing
+/// `*cursor` past ranges ending at or before the line. Returns clamped
+/// overlapping sub-ranges. Both inputs ascend, so a full frame walks each
+/// list once.
+fn wash_ranges_for_line(
+    matches: &[Range<usize>],
+    cursor: &mut usize,
+    line_start: usize,
+    line_end: usize,
+) -> Vec<Range<usize>> {
+    while *cursor < matches.len() && matches[*cursor].end <= line_start {
+        *cursor += 1;
+    }
+    let mut out = Vec::new();
+    let mut j = *cursor;
+    while j < matches.len() && matches[j].start < line_end {
+        let start = matches[j].start.max(line_start);
+        let end = matches[j].end.min(line_end);
+        if end > start {
+            out.push(start..end);
+        }
+        j += 1;
+    }
+    out
 }
 
 /// The state struct (T) passed from `prepaint` to `paint`.
@@ -394,6 +424,14 @@ impl RenderOnce for EditorCanvas {
                 let mut visible_line_layouts: Vec<crate::editor::VisibleLineLayout> = Vec::new();
                 let mut current_y = bounds.top();
                 let mut computed_cursor_pixel = None;
+                // Highlight-all wash, cloned once per frame; the per-line walk
+                // below advances linearly through both ascending lists.
+                let search_wash: Vec<Range<usize>> = if editor.search_highlight_all {
+                    editor.search_matches.clone()
+                } else {
+                    Vec::new()
+                };
+                let mut wash_cursor = 0;
 
                 for row in scroll_row..total_lines {
                     if current_y >= bounds.bottom() {
@@ -568,6 +606,47 @@ impl RenderOnce for EditorCanvas {
                         }
                     }
 
+                    let mut search_match_quads = Vec::new();
+                    for sub in wash_ranges_for_line(
+                        &search_wash,
+                        &mut wash_cursor,
+                        line_start_byte,
+                        line_end_byte,
+                    ) {
+                        let raw_start = sub
+                            .start
+                            .saturating_sub(line_start_byte)
+                            .min(line_text.len());
+                        let raw_end = sub.end.saturating_sub(line_start_byte).min(line_text.len());
+                        let disp_start = concealed.source_to_display(raw_start);
+                        let disp_end = concealed.source_to_display(raw_end);
+                        if disp_end <= disp_start {
+                            continue;
+                        }
+                        let (Some(s), Some(e)) = (
+                            text_line.position_for_index(disp_start, metrics.line_height),
+                            text_line.position_for_index(disp_end, metrics.line_height),
+                        ) else {
+                            continue;
+                        };
+                        // Same visual line: exact wash. Wrapped matches fall
+                        // back to the remainder of the first visual line.
+                        let (x, width) = if s.y == e.y && e.x > s.x {
+                            (s.x, e.x - s.x)
+                        } else {
+                            let edge =
+                                (bounds.right() - px(12.0)).max(line_text_origin_x + s.x + px(4.0));
+                            (s.x, edge - (line_text_origin_x + s.x))
+                        };
+                        search_match_quads.push(fill(
+                            Bounds::new(
+                                point(line_text_origin_x + x, current_y + s.y),
+                                size(width.max(px(4.0)), metrics.line_height),
+                            ),
+                            theme.search_match,
+                        ));
+                    }
+
                     let quote_bar_quad = if metrics.is_quote {
                         Some(fill(
                             Bounds::new(
@@ -692,6 +771,7 @@ impl RenderOnce for EditorCanvas {
                         empty_selection_quad,
                         cursor_quad,
                         task_checkbox_quad,
+                        search_match_quads,
                     });
 
                     let checkbox_box_x = if has_task {
@@ -770,6 +850,10 @@ impl RenderOnce for EditorCanvas {
                         );
                     }
 
+                    for quad in line.search_match_quads {
+                        window.paint_quad(quad);
+                    }
+
                     if let Some(empty_sel) = line.empty_selection_quad {
                         window.paint_quad(empty_sel);
                     }
@@ -792,5 +876,59 @@ impl RenderOnce for EditorCanvas {
             },
         )
         .size_full()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::wash_ranges_for_line;
+    use std::ops::Range;
+
+    fn matches_vec(ranges: &[Range<usize>]) -> Vec<Range<usize>> {
+        ranges.to_vec()
+    }
+
+    #[test]
+    fn wash_ranges_clip_and_advance_linearly() {
+        let matches = matches_vec(&[0..3, 8..11, 20..25]);
+        let mut cursor = 0;
+
+        // Line 0..7 overlaps only the first match, clamped.
+        assert_eq!(
+            wash_ranges_for_line(&matches, &mut cursor, 0, 7),
+            vec![0..3]
+        );
+        // Next line skips the consumed range without rescanning.
+        assert_eq!(
+            wash_ranges_for_line(&matches, &mut cursor, 7, 15),
+            vec![8..11]
+        );
+        assert_eq!(cursor, 1);
+        // No overlap yields nothing but keeps the cursor.
+        assert!(wash_ranges_for_line(&matches, &mut cursor, 12, 18).is_empty());
+        assert_eq!(
+            wash_ranges_for_line(&matches, &mut cursor, 18, 30),
+            vec![20..25]
+        );
+        // Past the end stays empty.
+        assert!(wash_ranges_for_line(&matches, &mut cursor, 30, 40).is_empty());
+    }
+
+    #[test]
+    fn wash_ranges_split_cross_line_matches() {
+        let matches = matches_vec(&[5..15, 30..35]);
+        let mut cursor = 0;
+        assert_eq!(
+            wash_ranges_for_line(&matches, &mut cursor, 0, 10),
+            vec![5..10]
+        );
+        assert_eq!(
+            wash_ranges_for_line(&matches, &mut cursor, 10, 20),
+            vec![10..15]
+        );
+        assert_eq!(
+            wash_ranges_for_line(&matches, &mut cursor, 20, 40),
+            vec![30..35]
+        );
     }
 }

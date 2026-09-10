@@ -260,6 +260,51 @@ impl SearchState {
     }
 }
 
+/// Collects `(range, expanded_text)` pairs for `query` in `text`, with
+/// 0-based ascending ranges.
+///
+/// Ranges are non-empty and on char boundaries. Supports `$1` / `$name`
+/// capture expansion in regex mode; literal mode uses `replacement` verbatim.
+/// [`replace_all_query`] applies these to a whole buffer; line-scoped
+/// substitutes (`:s` without `%`) collect on a line slice and offset the
+/// ranges by the line start.
+pub fn collect_replacements(
+    text: &str,
+    query: &SearchQuery,
+    replacement: &str,
+) -> Result<Vec<(Range<usize>, String)>, EditorError> {
+    let re = compile_query(query)?;
+    let mut replacements = Vec::new();
+    if query.is_regex {
+        // Per-match `$1` / `$name` capture expansion.
+        for caps in re.captures_iter(text) {
+            let m = caps.get(0).expect("captures_iter always yields group 0");
+            let range = m.start()..m.end();
+            if range.is_empty() {
+                continue;
+            }
+            if !(text.is_char_boundary(range.start) && text.is_char_boundary(range.end)) {
+                continue;
+            }
+            let mut expanded = String::new();
+            caps.expand(replacement, &mut expanded);
+            replacements.push((range, expanded));
+        }
+    } else {
+        for m in re.find_iter(text) {
+            let range = m.start()..m.end();
+            if range.is_empty() {
+                continue;
+            }
+            if !(text.is_char_boundary(range.start) && text.is_char_boundary(range.end)) {
+                continue;
+            }
+            replacements.push((range, replacement.to_string()));
+        }
+    }
+    Ok(replacements)
+}
+
 /// Replaces all matches of `query` with `replacement` as a **single**
 /// undoable transaction. Supports `$1` / `$name` capture expansion in regex
 /// mode; literal mode uses `replacement` verbatim. Returns the number of
@@ -269,37 +314,40 @@ pub fn replace_all_query(
     query: &SearchQuery,
     replacement: &str,
 ) -> Result<usize, EditorError> {
-    let re = compile_query(query)?;
     let text = buffer.text().to_string();
-    let mut replacements = Vec::new();
-    if query.is_regex {
-        // Per-match `$1` / `$name` capture expansion.
-        for caps in re.captures_iter(&text) {
-            let m = caps.get(0).expect("captures_iter always yields group 0");
-            let range = m.start()..m.end();
-            if range.is_empty() {
-                continue;
-            }
-            if !(buffer.is_char_boundary(range.start) && buffer.is_char_boundary(range.end)) {
-                continue;
-            }
-            let mut expanded = String::new();
-            caps.expand(replacement, &mut expanded);
-            replacements.push((range, expanded));
-        }
-    } else {
-        for m in re.find_iter(&text) {
-            let range = m.start()..m.end();
-            if range.is_empty() {
-                continue;
-            }
-            if !(buffer.is_char_boundary(range.start) && buffer.is_char_boundary(range.end)) {
-                continue;
-            }
-            replacements.push((range, replacement.to_string()));
-        }
-    }
+    let replacements = collect_replacements(&text, query, replacement)?;
     Ok(buffer.replace_many(replacements))
+}
+
+/// Replaces the single match `range` with `replacement` (undoable).
+///
+/// Returns `Ok(false)` without touching the buffer when `range` is empty,
+/// out of bounds, or not a current match of `query`. Regex replacements
+/// expand `$1` / `$name` captures.
+pub fn replace_one_query(
+    buffer: &mut EditorBuffer,
+    query: &SearchQuery,
+    range: Range<usize>,
+    replacement: &str,
+) -> Result<bool, EditorError> {
+    if range.is_empty() || range.end > buffer.len_bytes() {
+        return Ok(false);
+    }
+    if !buffer.is_char_boundary(range.start) || !buffer.is_char_boundary(range.end) {
+        return Ok(false);
+    }
+    let text = buffer.text().to_string();
+    let expanded = collect_replacements(&text, query, replacement)?
+        .into_iter()
+        .find(|(r, _)| *r == range)
+        .map(|(_, expanded)| expanded);
+    match expanded {
+        Some(expanded) => {
+            buffer.replace_range(range, &expanded);
+            Ok(true)
+        }
+        None => Ok(false),
+    }
 }
 
 #[cfg(test)]
@@ -512,5 +560,55 @@ mod tests {
         let bad = SearchQuery::new("(", true, false, true);
         let err = replace_all_query(&mut buffer, &bad, "x").unwrap_err();
         assert!(matches!(err, EditorError::InvalidRegex { .. }));
+    }
+
+    #[test]
+    fn replace_one_query_replaces_exact_match_only() {
+        let mut buffer = EditorBuffer::new("foo bar foo");
+        assert!(replace_one_query(&mut buffer, &SearchQuery::literal("foo"), 0..3, "baz").unwrap());
+        assert_eq!(buffer.text().to_string(), "baz bar foo");
+        buffer.undo();
+        assert_eq!(buffer.text().to_string(), "foo bar foo");
+
+        // Not a match boundary: untouched.
+        assert!(
+            !replace_one_query(&mut buffer, &SearchQuery::literal("foo"), 1..4, "baz").unwrap()
+        );
+        assert_eq!(buffer.text().to_string(), "foo bar foo");
+
+        // Empty / out-of-bounds ranges: untouched.
+        assert!(
+            !replace_one_query(&mut buffer, &SearchQuery::literal("foo"), 0..0, "baz").unwrap()
+        );
+        assert!(
+            !replace_one_query(&mut buffer, &SearchQuery::literal("foo"), 0..99, "baz").unwrap()
+        );
+    }
+
+    #[test]
+    fn replace_one_query_expands_regex_captures() {
+        let mut buffer = EditorBuffer::new("ab cd");
+        let query = SearchQuery::new(r"(\w)(\w)", true, false, true);
+        assert!(replace_one_query(&mut buffer, &query, 0..2, "$2$1").unwrap());
+        assert_eq!(buffer.text().to_string(), "ba cd");
+    }
+
+    #[test]
+    fn collect_replacements_supports_line_scoped_offsets() {
+        let mut buffer = EditorBuffer::new("foo one\nfoo two\n");
+        let query = SearchQuery::literal("foo");
+        // Simulate `:s` on row 1: collect on the line slice, offset by line start.
+        let line_start = buffer.point_to_offset(crate::Point::new(1, 0));
+        let line = buffer.line_to_string(1);
+        let local = collect_replacements(&line, &query, "bar").unwrap();
+        assert_eq!(local.len(), 1);
+        let scoped: Vec<(Range<usize>, String)> = local
+            .into_iter()
+            .map(|(r, s)| (r.start + line_start..r.end + line_start, s))
+            .collect();
+        assert_eq!(buffer.replace_many(scoped), 1);
+        assert_eq!(buffer.text().to_string(), "foo one\nbar two\n");
+        buffer.undo();
+        assert_eq!(buffer.text().to_string(), "foo one\nfoo two\n");
     }
 }
