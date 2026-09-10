@@ -6,15 +6,36 @@ use twrite_core::{KeyEvent, Modifiers};
 /// Arrow keys arrive under different names per platform/backend (`left` vs
 /// `arrowleft`); they are normalized to the canonical `arrow*` form that the
 /// core prompt and hook keymaps match on.
+///
+/// Printable characters come from [`Keystroke::key_char`] — the character
+/// that would actually be typed (`"A"` with Shift held, layout-aware) —
+///
+/// rather than [`Keystroke::key`], which only names the physical key (`"a"`).
+/// Using `key` would make capitals, shifted symbols, and non-US layouts
+/// untypeable. `key_char` is honored only for genuine text input: command
+/// combos (Ctrl/Cmd held) keep physical key names so `Ctrl+B`-style bindings
+/// keep matching, and Option/Alt-modified keys keep theirs too unless the
+/// platform prefers character input (e.g. AltGr, macOS Option accents).
 pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
     let keystroke = &event.keystroke;
+    let mods = &keystroke.modifiers;
     let key_str = match keystroke.key.as_str() {
         "space" => " ".to_string(),
         "left" => "arrowleft".to_string(),
         "right" => "arrowright".to_string(),
         "up" => "arrowup".to_string(),
         "down" => "arrowdown".to_string(),
-        _ => keystroke.key.clone(),
+        _ => match &keystroke.key_char {
+            Some(text)
+                if text.chars().count() == 1
+                    && !mods.control
+                    && !mods.platform
+                    && (!mods.alt || event.prefer_character_input) =>
+            {
+                text.clone()
+            }
+            _ => keystroke.key.clone(),
+        },
     };
 
     Some(KeyEvent {
@@ -26,4 +47,122 @@ pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
             meta: keystroke.modifiers.platform,
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn keystroke(
+        key: &str,
+        key_char: Option<&str>,
+        modifiers: gpui::Modifiers,
+        prefer_character_input: bool,
+    ) -> KeyDownEvent {
+        KeyDownEvent {
+            keystroke: gpui::Keystroke {
+                key: key.to_string(),
+                key_char: key_char.map(|s| s.to_string()),
+                modifiers,
+            },
+            is_held: false,
+            prefer_character_input,
+        }
+    }
+
+    fn plain(key: &str, key_char: Option<&str>) -> KeyDownEvent {
+        keystroke(key, key_char, gpui::Modifiers::default(), false)
+    }
+
+    #[test]
+    fn shift_letter_yields_capital_with_shift_held() {
+        let event = keystroke(
+            "a",
+            Some("A"),
+            gpui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            false,
+        );
+        let translated = translate_key_down(&event).unwrap();
+        assert_eq!(translated.key, "A");
+        assert!(translated.modifiers.shift);
+    }
+
+    #[test]
+    fn plain_letter_passes_through() {
+        let translated = translate_key_down(&plain("a", Some("a"))).unwrap();
+        assert_eq!(translated.key, "a");
+        assert!(!translated.modifiers.shift);
+    }
+
+    #[test]
+    fn shifted_symbol_uses_typed_character() {
+        let event = keystroke(
+            "/",
+            Some("?"),
+            gpui::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+            false,
+        );
+        assert_eq!(translate_key_down(&event).unwrap().key, "?");
+    }
+
+    #[test]
+    fn command_combos_keep_physical_key_names() {
+        let event = keystroke(
+            "b",
+            Some("b"),
+            gpui::Modifiers {
+                control: true,
+                ..Default::default()
+            },
+            false,
+        );
+        let translated = translate_key_down(&event).unwrap();
+        assert_eq!(translated.key, "b");
+        assert!(translated.modifiers.ctrl);
+    }
+
+    #[test]
+    fn alt_combos_keep_key_names_unless_character_preferred() {
+        let alt = gpui::Modifiers {
+            alt: true,
+            ..Default::default()
+        };
+        // Alt+C stays a toggle binding by default.
+        let translated = translate_key_down(&keystroke("c", Some("ç"), alt, false)).unwrap();
+        assert_eq!(translated.key, "c");
+        assert!(translated.modifiers.alt);
+
+        // ...unless the platform prefers character input (AltGr, accents).
+        let translated = translate_key_down(&keystroke("c", Some("ç"), alt, true)).unwrap();
+        assert_eq!(translated.key, "ç");
+    }
+
+    #[test]
+    fn multichar_or_missing_key_char_falls_back_to_key() {
+        // IME composition sequences are not text input yet.
+        let translated = translate_key_down(&plain("a", Some("aeiou"))).unwrap();
+        assert_eq!(translated.key, "a");
+        // Modifier-only combos carry no character.
+        let translated = translate_key_down(&plain("s", None)).unwrap();
+        assert_eq!(translated.key, "s");
+    }
+
+    #[test]
+    fn named_keys_and_aliases_are_untouched() {
+        assert_eq!(
+            translate_key_down(&plain("enter", None)).unwrap().key,
+            "enter"
+        );
+        assert_eq!(
+            translate_key_down(&plain("left", None)).unwrap().key,
+            "arrowleft"
+        );
+        assert_eq!(translate_key_down(&plain("space", None)).unwrap().key, " ");
+    }
 }
