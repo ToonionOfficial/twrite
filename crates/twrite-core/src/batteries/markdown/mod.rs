@@ -19,6 +19,7 @@
 mod config;
 mod highlight;
 mod hook;
+mod inline;
 mod links;
 mod table;
 
