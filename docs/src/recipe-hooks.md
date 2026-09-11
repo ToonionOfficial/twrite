@@ -91,7 +91,31 @@ impl EditorHook for WordCountAndSaveHook {
 }
 ```
 
-## 4. Hook Execution Order
+## 4. Context Menu Items
+
+Right-click opens a menu of built-in edit rows (Undo/Redo/Cut/Copy/Paste/Delete/Select All) followed by hook rows. Contribute rows with `context_menu_items` and handle clicks with `on_context_menu_action` (run before built-in dispatch; return `Consumed` to halt, including to suppress a default by reusing its id like `"copy"`):
+
+```rust
+use twrite::{ContextMenuContext, ContextMenuItem, EditorHook, HookContext, HookOutcome};
+
+impl EditorHook for MyCustomHook {
+    fn context_menu_items(&self, _ctx: &ContextMenuContext) -> Vec<ContextMenuItem> {
+        vec![ContextMenuItem::with_hint("my-action", "Do thing", "Ctrl+D")]
+    }
+
+    fn on_context_menu_action(&mut self, ctx: &mut HookContext, id: &str) -> HookOutcome {
+        if id == "my-action" {
+            // ... mutate ctx.buffer / ctx.selection ...
+            return HookOutcome::Consumed;
+        }
+        HookOutcome::PassThrough
+    }
+}
+```
+
+Toggle the menu with `EditorConfig.context_menu` and the built-in rows with `EditorConfig.show_default_menu_items`.
+
+## 5. Hook Execution Order
 
 Hooks run in the order they were added to `Editor`:
 

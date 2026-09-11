@@ -11,6 +11,36 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if let Some(key_event) = crate::input::translate_key_down(event) {
+            if self.context_menu.is_open() {
+                let plain = !key_event.modifiers.ctrl
+                    && !key_event.modifiers.alt
+                    && !key_event.modifiers.meta;
+                match key_event.key.as_str() {
+                    "escape" => {
+                        self.dismiss_context_menu(cx);
+                        return;
+                    }
+                    "arrowup" | "up" if plain => {
+                        self.move_context_menu_selection(false, cx);
+                        return;
+                    }
+                    "arrowdown" | "down" if plain => {
+                        self.move_context_menu_selection(true, cx);
+                        return;
+                    }
+                    "enter" if plain => {
+                        if self.context_menu_selected.is_some() {
+                            self.activate_context_menu_selected(window, cx);
+                        } else {
+                            self.dismiss_context_menu(cx);
+                        }
+                        return;
+                    }
+                    // Any other key dismisses the menu and falls through
+                    // so typing still lands in the buffer.
+                    _ => self.dismiss_context_menu(cx),
+                }
+            }
             self.dispatch_key(&key_event, Some(window), cx);
         }
     }

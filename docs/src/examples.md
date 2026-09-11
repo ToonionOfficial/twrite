@@ -12,6 +12,7 @@ file header repeats its number and prerequisites:
 5. **`markdown`**: the battery pattern: one `enable_markdown()` call plus a
    stock `SearchHook` (needs `--features markdown`).
 6. **`vim`**: the full modal system on hooks alone; read last.
+7. **`context_menu`** (supplemental, after `hooks`): the expandable right-click menu — built-in edit rows plus hook-contributed UPPERCASE/separator actions.
 
 Run any of them with `cargo run --example <name>` (add `--features
 markdown` for the markdown demo).

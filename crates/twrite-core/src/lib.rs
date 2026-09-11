@@ -5,6 +5,8 @@
 pub mod batteries;
 /// Text buffer implementation backed by a Rope.
 pub mod buffer;
+/// Headless right-click context menu state and item merging.
+pub mod context_menu;
 /// 2D text coordinates (row and column).
 pub mod coordinates;
 /// App-level hook effects (save, load, quit, messages) for headless frontends.
@@ -36,6 +38,11 @@ pub mod selection;
 pub mod syntax;
 
 pub use buffer::EditorBuffer;
+pub use context_menu::{
+    COPY_ID, CUT_ID, ContextMenuCaps, ContextMenuContext, ContextMenuItem, ContextMenuState,
+    DELETE_ID, PASTE_ID, REDO_ID, SELECT_ALL_ID, UNDO_ID, collect_context_items,
+    default_context_items,
+};
 pub use coordinates::Point;
 pub use effect::HookEffect;
 pub use error::{EditorError, Result as EditorResult};

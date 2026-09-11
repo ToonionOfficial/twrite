@@ -17,6 +17,11 @@ pub struct EditorConfig {
     pub block_cursor: bool,
     /// Whether the cursor should blink when focused.
     pub cursor_blink: bool,
+    /// Whether right-click opens the expandable context menu.
+    pub context_menu: bool,
+    /// Whether the built-in edit rows (Undo/Redo/Cut/Copy/Paste/Delete/Select All)
+    /// lead the context menu. Hooks always append after them.
+    pub show_default_menu_items: bool,
     /// Whether to soft-wrap lines at the viewport boundary.
     pub line_wrap: bool,
     /// Base font family override (`None` auto-selects, see below).
@@ -44,6 +49,8 @@ impl Default for EditorConfig {
             highlight_active_line: false,
             block_cursor: false,
             cursor_blink: true,
+            context_menu: true,
+            show_default_menu_items: true,
             line_wrap: true,
             font_family: None,
             code_font_family: None,
