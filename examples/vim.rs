@@ -34,6 +34,10 @@ struct VimHook {
     /// Whether Visual mode is linewise (`V`) rather than charwise (`v`).
     visual_linewise: bool,
     search: SearchHook,
+    /// Whether the open search came from `/` / `?` (vim-modal: `Enter`
+    /// submits and dismisses) rather than the shared `Ctrl+F` toolbar
+    /// (which stays open across `Enter`).
+    search_modal: bool,
     /// Forward (`/`) or backward (`?`) for `n` / `N`.
     search_backward: bool,
     /// One-shot status line (search counts, `:w` feedback, `E...` errors).
@@ -47,6 +51,7 @@ impl VimHook {
             pending_key: None,
             visual_linewise: false,
             search: SearchHook::new(),
+            search_modal: false,
             search_backward: false,
             status_override: None,
         }
@@ -350,7 +355,24 @@ impl EditorHook for VimHook {
         // `:` ex-commands are handled here. Either way nothing else runs.
         if ctx.prompt.is_open() {
             if ctx.prompt.spec().is_some_and(|s| s.id == SEARCH_PROMPT_ID) {
+                // Vim-style submit: `/query<Enter>` jumps and dismisses so
+                // `n` / `N` work afterwards. The shared `Ctrl+F` toolbar
+                // (search_modal unset) stays open across `Enter` as before.
+                // `Ctrl+Enter` (replace) and toggles are unaffected.
+                let plain_enter = event.key == "enter"
+                    && !event.modifiers.ctrl
+                    && !event.modifiers.alt
+                    && !event.modifiers.meta;
                 let outcome = self.search.on_key(ctx, event);
+                if self.search_modal && plain_enter {
+                    // Prompt only: the query, matches, and highlight wash
+                    // stay alive for `n` / `N`.
+                    ctx.prompt.close();
+                    self.search_modal = false;
+                } else if !ctx.prompt.is_open() {
+                    // Escape-cancelled or otherwise closed.
+                    self.search_modal = false;
+                }
                 self.sync_search_status();
                 return outcome;
             }
@@ -467,6 +489,18 @@ impl EditorHook for VimHook {
             }
 
             VimMode::Normal => {
+                // Search function keys (Ctrl+F / Ctrl+H / F3) share the owned
+                // SearchHook; a consumed key abandons any pending operator.
+                // This runs before the Ctrl gate below so the advertised
+                // search keys reach the hook instead of passing through.
+                let outcome = self.search.on_key(ctx, event);
+                if outcome == HookOutcome::Consumed {
+                    self.pending_key = None;
+                    self.sync_search_status();
+                    return HookOutcome::Consumed;
+                }
+                self.status_override = None;
+
                 if event.modifiers.ctrl {
                     match event.key.as_str() {
                         "r" => {
@@ -476,16 +510,6 @@ impl EditorHook for VimHook {
                         _ => return HookOutcome::PassThrough,
                     }
                 }
-
-                // Search function keys (Ctrl+F / Ctrl+H / F3) share the owned
-                // SearchHook; a consumed key abandons any pending operator.
-                let outcome = self.search.on_key(ctx, event);
-                if outcome == HookOutcome::Consumed {
-                    self.pending_key = None;
-                    self.sync_search_status();
-                    return HookOutcome::Consumed;
-                }
-                self.status_override = None;
 
                 if let Some(pending) = self.pending_key.take() {
                     match (pending, event.key.as_str()) {
@@ -557,6 +581,7 @@ impl EditorHook for VimHook {
                     "/" => {
                         self.pending_key = None;
                         self.search_backward = false;
+                        self.search_modal = true;
                         self.search.open_search(ctx, "");
                         self.sync_search_status();
                         HookOutcome::Consumed
@@ -564,6 +589,7 @@ impl EditorHook for VimHook {
                     "?" => {
                         self.pending_key = None;
                         self.search_backward = true;
+                        self.search_modal = true;
                         self.search.open_search(ctx, "");
                         self.sync_search_status();
                         HookOutcome::Consumed
@@ -600,6 +626,9 @@ impl EditorHook for VimHook {
                                 self.search_backward = false;
                                 self.search.open_search(ctx, &word);
                                 self.search.navigate_next_from(ctx, from, true);
+                                // Jumped already: dismiss so a later `Enter`
+                                // doesn't skip to the following match.
+                                ctx.prompt.close();
                                 self.sync_search_status();
                             }
                             None => {
@@ -617,6 +646,9 @@ impl EditorHook for VimHook {
                                 self.search_backward = true;
                                 self.search.open_search(ctx, &word);
                                 self.search.navigate_prev_from(ctx, from, true);
+                                // Jumped already: dismiss so a later `Enter`
+                                // doesn't skip to the following match.
+                                ctx.prompt.close();
                                 self.sync_search_status();
                             }
                             None => {
@@ -763,7 +795,7 @@ mod tests {
     use super::VimHook;
     use twrite::{
         CursorStyle, EditorBuffer, EditorHook, HookContext, HookEffect, HookOutcome, KeyEvent,
-        PromptState, Selection,
+        Modifiers, PromptState, Selection,
     };
 
     fn harness(
@@ -795,8 +827,44 @@ mod tests {
         effects: &mut Vec<HookEffect>,
         key: &str,
     ) -> HookOutcome {
+        press_mod(
+            vim,
+            buffer,
+            selection,
+            cursor_style,
+            prompt,
+            effects,
+            key,
+            false,
+            false,
+            false,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn press_mod(
+        vim: &mut VimHook,
+        buffer: &mut EditorBuffer,
+        selection: &mut Option<Selection>,
+        cursor_style: &mut CursorStyle,
+        prompt: &mut PromptState,
+        effects: &mut Vec<HookEffect>,
+        key: &str,
+        ctrl: bool,
+        alt: bool,
+        shift: bool,
+    ) -> HookOutcome {
+        let event = KeyEvent {
+            key: key.to_string(),
+            modifiers: Modifiers {
+                ctrl,
+                alt,
+                shift,
+                meta: false,
+            },
+        };
         let mut ctx = HookContext::new(buffer, selection, cursor_style, prompt, effects);
-        vim.on_key(&mut ctx, &KeyEvent::plain(key))
+        vim.on_key(&mut ctx, &event)
     }
 
     #[test]
@@ -873,6 +941,138 @@ mod tests {
         assert_eq!(vim.status_text(), Some("-- NORMAL --"));
     }
 
+    fn press_keys(
+        vim: &mut VimHook,
+        buffer: &mut EditorBuffer,
+        selection: &mut Option<Selection>,
+        cursor_style: &mut CursorStyle,
+        prompt: &mut PromptState,
+        effects: &mut Vec<HookEffect>,
+        keys: &[&str],
+    ) {
+        for key in keys {
+            press(vim, buffer, selection, cursor_style, prompt, effects, key);
+        }
+    }
+
+    #[test]
+    fn slash_enter_submits_closes_and_enables_n() {
+        let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
+            harness("foo bar foo");
+        press_keys(
+            &mut vim,
+            &mut buffer,
+            &mut selection,
+            &mut style,
+            &mut prompt,
+            &mut effects,
+            &["/", "f", "o", "o", "enter"],
+        );
+        // Submitted and dismissed: `n` / `N` now navigate.
+        assert!(!prompt.is_open());
+        assert!(!vim.search_modal);
+        assert_eq!(selection.unwrap().byte_range(), 0..3);
+        press_keys(
+            &mut vim,
+            &mut buffer,
+            &mut selection,
+            &mut style,
+            &mut prompt,
+            &mut effects,
+            &["n"],
+        );
+        assert_eq!(selection.unwrap().byte_range(), 8..11);
+        press_keys(
+            &mut vim,
+            &mut buffer,
+            &mut selection,
+            &mut style,
+            &mut prompt,
+            &mut effects,
+            &["N"],
+        );
+        assert_eq!(selection.unwrap().byte_range(), 0..3);
+    }
+
+    #[test]
+    fn ctrl_f_enter_keeps_toolbar_open() {
+        let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
+            harness("foo bar foo");
+        press_mod(
+            &mut vim,
+            &mut buffer,
+            &mut selection,
+            &mut style,
+            &mut prompt,
+            &mut effects,
+            "f",
+            true,
+            false,
+            false,
+        );
+        assert!(prompt.is_open());
+        for key in ["f", "o", "o", "enter"] {
+            press(
+                &mut vim,
+                &mut buffer,
+                &mut selection,
+                &mut style,
+                &mut prompt,
+                &mut effects,
+                key,
+            );
+        }
+        // Shared toolbar behavior: `Enter` navigates but stays open.
+        assert!(prompt.is_open());
+        assert_eq!(selection.unwrap().byte_range(), 0..3);
+    }
+
+    #[test]
+    fn star_jumps_and_closes_prompt() {
+        let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
+            harness("foo bar foo");
+        press(
+            &mut vim,
+            &mut buffer,
+            &mut selection,
+            &mut style,
+            &mut prompt,
+            &mut effects,
+            "*",
+        );
+        assert!(!prompt.is_open());
+        assert_eq!(selection.unwrap().byte_range(), 8..11);
+        press(
+            &mut vim,
+            &mut buffer,
+            &mut selection,
+            &mut style,
+            &mut prompt,
+            &mut effects,
+            "n",
+        );
+        assert_eq!(selection.unwrap().byte_range(), 0..3);
+    }
+
+    #[test]
+    fn escape_cancels_slash_search() {
+        let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
+            harness("foo bar foo");
+        for key in ["/", "f", "escape"] {
+            press(
+                &mut vim,
+                &mut buffer,
+                &mut selection,
+                &mut style,
+                &mut prompt,
+                &mut effects,
+                key,
+            );
+        }
+        assert!(!prompt.is_open());
+        assert!(!vim.search_modal);
+    }
+
     #[test]
     fn visual_v_toggles_back_to_charwise() {
         let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
@@ -908,7 +1108,7 @@ fn main() {
             |window, cx| {
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(
-                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l or arrow keys : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v / V : enter Visual mode (charwise / linewise)\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b, G, gg\n  * v / V : charwise / linewise selection (V selects whole lines)\n  * ggVG : select the whole document\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search, n / N : next / previous match\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n  * Alt+C / Alt+W / Alt+H : Match Case / Whole Word / Highlight All, Up/Down : prev/next match\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
+                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l or arrow keys : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v / V : enter Visual mode (charwise / linewise)\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b, G, gg\n  * v / V : charwise / linewise selection (V selects whole lines)\n  * ggVG : select the whole document\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search; Enter submits and closes, then n / N : next / previous match\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n  * Alt+C / Alt+W / Alt+H : Match Case / Whole Word / Highlight All, Up/Down : prev/next match\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
                         cx,
                     );
                     ed.config.line_numbers = true;

@@ -128,9 +128,13 @@ impl EditorHook for MinimalVimHook {
 }
 ```
 
-## 4. Full Vim Implementation Reference
+## 4. Search Submit and `n` / `N`
 
-For a complete implementation that includes operators (`d`, `c`, `y`), motions, multi-key sequences (`gg`, `dd`), count prefixes (`3w`), ex-commands (`:w`, `:q`), and `/` search forwarding, inspect the repository example:
+The stock `SearchHook` is a persistent toolbar: `Enter` navigates but leaves the prompt open. For vim-modal `/` / `?`, track a `search_modal` flag when opening the search and, on plain `Enter`, delegate to the hook and then close just the prompt (keeping the query, matches, and highlight wash for `n` / `N`). The shared `Ctrl+F` toolbar path leaves the flag unset, so it keeps its stay-open behavior. `*` / `#` jump immediately and dismiss at once, so a later `Enter` can't skip a match.
+
+## 5. Full Vim Implementation Reference
+
+For a complete implementation that includes operators (`d`, `c`, `y`), motions, multi-key sequences (`gg`, `dd`), count prefixes (`3w`), ex-commands (`:w`, `:q`), `/` search forwarding, and linewise Visual mode (`V`, `ggVG`), inspect the repository example:
 
 ```sh
 cargo run --example vim
