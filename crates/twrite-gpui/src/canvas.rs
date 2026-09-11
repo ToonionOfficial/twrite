@@ -697,7 +697,10 @@ impl RenderOnce for EditorCanvas {
                             current_y + pos.y + metrics.line_height,
                         ));
 
-                        if !is_all_selected {
+                        let should_draw_cursor =
+                            !is_all_selected && (!config.cursor_blink || editor.cursor_visible);
+
+                        if should_draw_cursor {
                             let style = if config.block_cursor {
                                 twrite_core::CursorStyle::Block
                             } else {

@@ -15,6 +15,8 @@ pub struct EditorConfig {
     pub highlight_active_line: bool,
     /// Default cursor shape: true for block, false for line/bar.
     pub block_cursor: bool,
+    /// Whether the cursor should blink when focused.
+    pub cursor_blink: bool,
     /// Whether to soft-wrap lines at the viewport boundary.
     pub line_wrap: bool,
     /// Base font family override (`None` auto-selects, see below).
@@ -41,6 +43,7 @@ impl Default for EditorConfig {
             tab_size: 4,
             highlight_active_line: false,
             block_cursor: false,
+            cursor_blink: true,
             line_wrap: true,
             font_family: None,
             code_font_family: None,
@@ -205,5 +208,11 @@ mod tests {
             config.code_font(&host, Some(&selected)).family.as_ref(),
             "Selected"
         );
+    }
+
+    #[test]
+    fn cursor_blink_defaults_to_true() {
+        let config = EditorConfig::default();
+        assert!(config.cursor_blink);
     }
 }

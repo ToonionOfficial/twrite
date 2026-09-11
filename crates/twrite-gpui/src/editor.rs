@@ -50,6 +50,10 @@ pub struct Editor {
     pub selection: Option<Selection>,
     /// Active visual cursor style (Bar, Block, Underline, Hidden).
     pub cursor_style: CursorStyle,
+    /// Whether the visual cursor is currently visible in its blink cycle.
+    pub cursor_visible: bool,
+    /// Background timer task driving cursor blinking.
+    blink_task: Option<Task<()>>,
     /// Whether the user is currently mouse-drag selecting text.
     pub is_selecting: bool,
     /// Active selection granularity for drag selection.
@@ -168,7 +172,7 @@ impl Editor {
         } else {
             CursorStyle::Bar
         };
-        Self {
+        let mut ed = Self {
             buffer: EditorBuffer::new(initial_text),
             theme: EditorTheme::default(),
             config,
@@ -183,6 +187,8 @@ impl Editor {
             scroll_row: 0,
             selection: None,
             cursor_style,
+            cursor_visible: true,
+            blink_task: None,
             is_selecting: false,
             selection_granularity: SelectionGranularity::Character,
             drag_initial_range: None,
@@ -197,7 +203,47 @@ impl Editor {
             file_path: None,
             search_matches: Vec::new(),
             search_highlight_all: false,
+        };
+        ed.reset_blink_cursor(cx);
+        ed
+    }
+
+    /// Resets the cursor blink cycle to visible and schedules periodic toggling.
+    pub fn reset_blink_cursor(&mut self, cx: &mut Context<Self>) {
+        self.cursor_visible = true;
+        drop(self.blink_task.take());
+        if !self.config.cursor_blink {
+            return;
         }
+
+        self.blink_task = Some(cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(500))
+                    .await;
+                let res = this.update(cx, |editor, cx| {
+                    if !editor.config.cursor_blink {
+                        editor.cursor_visible = true;
+                        false
+                    } else {
+                        editor.cursor_visible = !editor.cursor_visible;
+                        cx.notify();
+                        true
+                    }
+                });
+                match res {
+                    Ok(true) => {}
+                    _ => break,
+                }
+            }
+        }));
+    }
+
+    /// Sets whether cursor blinking is enabled and resets the blink cycle.
+    pub fn set_cursor_blink(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        self.config.cursor_blink = enabled;
+        self.reset_blink_cursor(cx);
+        cx.notify();
     }
 
     /// Adds an editor hook to the execution chain.
@@ -731,6 +777,7 @@ impl Editor {
         window: Option<&Window>,
         cx: &mut Context<Self>,
     ) {
+        self.reset_blink_cursor(cx);
         let initial_version = self.buffer.version();
         let mut consumed = false;
 
@@ -1043,6 +1090,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.focus_handle.focus(window, cx);
+        self.reset_blink_cursor(cx);
 
         if event.click_count == 1
             && !event.modifiers.shift
@@ -1145,6 +1193,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         if self.is_selecting {
+            self.reset_blink_cursor(cx);
             let offset = self.offset_for_position(event.position, window);
             match self.selection_granularity {
                 SelectionGranularity::Character => {
@@ -1253,6 +1302,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.reset_blink_cursor(cx);
         let delta_lines = match event.delta {
             ScrollDelta::Lines(delta) => -delta.y,
             ScrollDelta::Pixels(delta) => -(delta.y / self.config.line_height),
