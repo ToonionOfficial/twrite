@@ -57,11 +57,13 @@ jobs:
           mkdir -p site/docs
           # Guides under /docs (book.toml sets site-url accordingly).
           cp -r docs/book/. site/docs/
-          # API reference under /docs/api.
+          # Entire rustdoc tree under /docs/api: per-crate pages plus the
+          # shared static.files/ (CSS/JS/fonts), search index, help/settings
+          # pages, and rendered sources. Copying only the crate dirs orphans
+          # every shared asset and ships unstyled pages.
           mkdir -p site/docs/api
-          cp -r target/doc/twrite site/docs/api/
-          cp -r target/doc/twrite_core site/docs/api/
-          cp -r target/doc/twrite_gpui site/docs/api/
+          cp -r target/doc/. site/docs/api/
+          rm -f site/docs/api/.lock
           # Custom domain (CNAME) lives at the artifact root.
           echo "notes.toonion.net" > site/CNAME
           # Placeholder root page until the landing page exists.
