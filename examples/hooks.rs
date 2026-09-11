@@ -9,7 +9,10 @@
 //! Next: `syntax` (highlighting) or `prompt` (input boxes).
 use gpui::*;
 use gpui_platform::application;
-use twrite::{AutoPairsHook, Editor, EditorBuffer, EditorHook, HookContext, HookOutcome, KeyEvent};
+use twrite::{
+    AutoPairsHook, ContextMenuContext, ContextMenuItem, Editor, EditorBuffer, EditorHook,
+    HookContext, HookOutcome, KeyEvent,
+};
 
 /// A custom hook showing the three most-used hook methods.
 ///
@@ -72,6 +75,26 @@ impl EditorHook for ScratchHook {
             }
         }
 
+        HookOutcome::PassThrough
+    }
+
+    fn context_menu_items(&self, _ctx: &ContextMenuContext) -> Vec<ContextMenuItem> {
+        vec![
+            ContextMenuItem::with_hint("scratch.duplicate-line", "Duplicate line", "Ctrl+D"),
+            ContextMenuItem::new("scratch.word-count", &self.status_line.to_lowercase()).disabled(),
+        ]
+    }
+
+    fn on_context_menu_action(&mut self, ctx: &mut HookContext, id: &str) -> HookOutcome {
+        if id == "scratch.duplicate-line" {
+            let row = ctx.buffer.cursor_point().row;
+            let line_start = ctx.buffer.point_to_offset(twrite::Point::new(row, 0));
+            let stripped = ctx.buffer.line_to_string(row);
+            let stripped = stripped.trim_end_matches(['\r', '\n']);
+            ctx.buffer
+                .replace_range(line_start..line_start, &format!("{stripped}\n"));
+            return HookOutcome::Consumed;
+        }
         HookOutcome::PassThrough
     }
 

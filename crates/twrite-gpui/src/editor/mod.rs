@@ -1,4 +1,5 @@
 mod clipboard;
+mod context_menu;
 mod geometry;
 mod keyboard;
 mod mouse;
@@ -9,8 +10,8 @@ use std::sync::Arc;
 
 use gpui::{Bounds, Context, FocusHandle, Font, Pixels, Point, SharedString, Task};
 use twrite_core::{
-    CursorStyle, EditorBuffer, EditorHook, HookEffect, PromptState, SearchSnapshot, Selection,
-    SyntaxHighlighter,
+    ContextMenuState, CursorStyle, EditorBuffer, EditorHook, HookEffect, PromptState,
+    SearchSnapshot, Selection, SyntaxHighlighter,
 };
 
 use crate::{config::EditorConfig, fps::FrameStats, layout_cache::LayoutCache, theme::EditorTheme};
@@ -78,6 +79,12 @@ pub struct Editor {
     /// Shared headless prompt / input-box state, passed to hooks via
     /// [`twrite_core::HookContext`] and rendered by [`crate::prompt_bar::PromptBar`] when open.
     pub prompt: PromptState,
+    /// Headless right-click menu state (items merged from defaults + hooks).
+    pub context_menu: ContextMenuState,
+    /// Window-pixel anchor where the menu was opened; clamped at render time.
+    pub context_menu_anchor: Option<Point<Pixels>>,
+    /// Keyboard-selected row inside the open menu, if any.
+    pub context_menu_selected: Option<usize>,
     /// App-level requests queued by hooks; [`Self::flush_effects`] executes
     /// file effects inline, hosts drain the rest via [`Self::take_effects`].
     pub pending_effects: Vec<HookEffect>,
@@ -189,6 +196,9 @@ impl Editor {
             visible_lines: Vec::new(),
             frame_stats: FrameStats::new(),
             prompt: PromptState::new(),
+            context_menu: ContextMenuState::new(),
+            context_menu_anchor: None,
+            context_menu_selected: None,
             pending_effects: Vec::new(),
             file_path: None,
             search_matches: Vec::new(),

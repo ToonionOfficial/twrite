@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{EditorBuffer, Selection};
+use crate::{ContextMenuContext, ContextMenuItem, EditorBuffer, Selection};
 use crate::{HookEffect, PromptState};
 
 /// Keyboard modifier keys state.
@@ -134,6 +134,24 @@ pub trait EditorHook: 'static {
     /// operate on `row` directly rather than the current cursor row, preserve the
     /// cursor offset when appropriate, and return `Consumed` to halt propagation.
     fn on_click(&mut self, _ctx: &mut HookContext, _row: usize, _col: usize) -> HookOutcome {
+        HookOutcome::PassThrough
+    }
+
+    /// Contributes right-click context menu rows for the given click.
+    ///
+    /// Rows append after the built-in edit actions (Cut/Copy/Paste/...);
+    /// returning an item with a well-known id (e.g. `"copy"`) overrides
+    /// that default in place. The default is no rows.
+    fn context_menu_items(&self, _ctx: &ContextMenuContext) -> Vec<ContextMenuItem> {
+        Vec::new()
+    }
+
+    /// Handles activation of a context menu row by `id`.
+    ///
+    /// Runs before the built-in edit dispatch; return `Consumed` to halt
+    /// (including to suppress a default with the same id). The default
+    /// passes through to built-in handling.
+    fn on_context_menu_action(&mut self, _ctx: &mut HookContext, _id: &str) -> HookOutcome {
         HookOutcome::PassThrough
     }
 

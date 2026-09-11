@@ -41,6 +41,7 @@ impl Render for Editor {
         let root = root
             .on_key_down(cx.listener(Self::handle_key_down))
             .on_mouse_down(MouseButton::Left, cx.listener(Self::handle_mouse_down))
+            .on_mouse_down(MouseButton::Right, cx.listener(Self::handle_right_click))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::handle_mouse_up))
             .on_mouse_up_out(
                 MouseButton::Left,
@@ -73,6 +74,7 @@ impl Render for Editor {
                     .child(EditorCanvas::new(cx.entity().clone())),
             );
 
+        let root = root.child(self.render_context_menu(cx));
         if !self.prompt.is_open() {
             return root;
         }

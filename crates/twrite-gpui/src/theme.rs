@@ -97,6 +97,16 @@ pub struct EditorTheme {
     pub line_number: Hsla,
     /// Gutter line number color for the line containing the cursor.
     pub line_number_active: Hsla,
+    /// Background fill for the context menu popup.
+    pub menu_bg: Hsla,
+    /// Border color for the context menu popup.
+    pub menu_border: Hsla,
+    /// Hover fill for context menu rows.
+    pub menu_hover: Hsla,
+    /// Primary text color for context menu rows.
+    pub menu_fg: Hsla,
+    /// Hint (keybinding) text color for context menu rows.
+    pub menu_hint: Hsla,
     /// Palette for syntax highlighting tokens.
     pub syntax: SyntaxTheme,
 }
@@ -111,6 +121,11 @@ impl Default for EditorTheme {
             search_match: hsla(0.12, 0.8, 0.65, 0.25),
             line_number: rgb(0x6c7086).into(),
             line_number_active: rgb(0xcdd6f4).into(),
+            menu_bg: rgb(0x1e1e2e).into(),
+            menu_border: rgb(0x45475a).into(),
+            menu_hover: rgb(0x313244).into(),
+            menu_fg: rgb(0xcdd6f4).into(),
+            menu_hint: rgb(0x6c7086).into(),
             syntax: SyntaxTheme::default(),
         }
     }

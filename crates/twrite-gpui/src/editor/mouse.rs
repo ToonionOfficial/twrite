@@ -13,6 +13,9 @@ impl Editor {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A left-click outside the menu dismisses it, then proceeds
+        // normally so the click still moves the cursor.
+        self.dismiss_context_menu(cx);
         self.focus_handle.focus(window, cx);
         self.reset_blink_cursor(cx);
 
@@ -224,6 +227,7 @@ impl Editor {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.dismiss_context_menu(cx);
         self.reset_blink_cursor(cx);
         let delta_lines = match event.delta {
             ScrollDelta::Lines(delta) => -delta.y,

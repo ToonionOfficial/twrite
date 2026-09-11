@@ -552,6 +552,16 @@ impl EditorBuffer {
         }
     }
 
+    /// Returns whether an undo transaction is available.
+    pub fn can_undo(&self) -> bool {
+        !self.history.undo_stack.is_empty()
+    }
+
+    /// Returns whether a redo transaction is available.
+    pub fn can_redo(&self) -> bool {
+        !self.history.redo_stack.is_empty()
+    }
+
     /// Redoes the most recently undone transaction.
     ///
     /// If there is no transaction to redo, this method does nothing.
