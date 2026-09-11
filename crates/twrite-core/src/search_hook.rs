@@ -14,7 +14,7 @@ fn search_spec() -> PromptSpec {
     PromptSpec::new(
         SEARCH_PROMPT_ID,
         "/",
-        "Search",
+        "Find in page",
         PromptPlacement::BottomBar,
         true,
     )
@@ -54,6 +54,7 @@ pub struct SearchHook {
     query_text: String,
     replacement: String,
     replace_mode: bool,
+    prompt_is_replace: bool,
     active: bool,
     status_cache: String,
     case_sensitive: bool,
@@ -68,6 +69,7 @@ impl Default for SearchHook {
             query_text: String::new(),
             replacement: String::new(),
             replace_mode: false,
+            prompt_is_replace: false,
             active: false,
             status_cache: "SEARCH".to_string(),
             case_sensitive: true,
@@ -124,6 +126,16 @@ impl SearchHook {
         self.highlight_all
     }
 
+    /// Whether replace mode is active.
+    pub fn is_replace_mode(&self) -> bool {
+        self.replace_mode
+    }
+
+    /// Whether the active input prompt is currently the replace field.
+    pub fn is_replace_prompt(&self) -> bool {
+        self.prompt_is_replace
+    }
+
     /// Builds the active query from the text plus toggle flags.
     /// Returns `None` when the query text is empty.
     pub fn build_query(&self) -> Option<SearchQuery> {
@@ -161,6 +173,7 @@ impl SearchHook {
         ctx.prompt.open(search_spec(), initial);
         self.query_text = initial.to_string();
         self.active = true;
+        self.prompt_is_replace = false;
         self.refresh_from_input(ctx);
     }
 
@@ -172,6 +185,8 @@ impl SearchHook {
         let replacement = self.replacement.clone();
         ctx.prompt.open(replace_spec(), &replacement);
         self.active = true;
+        self.replace_mode = true;
+        self.prompt_is_replace = true;
     }
 
     /// Closes a hook-owned prompt, leaving replace mode.
@@ -179,7 +194,38 @@ impl SearchHook {
         ctx.prompt.close();
         self.active = false;
         self.replace_mode = false;
+        self.prompt_is_replace = false;
         self.update_status();
+    }
+
+    /// Toggles replace mode on and off.
+    pub fn toggle_replace(&mut self, ctx: &mut HookContext) {
+        if self.replace_mode {
+            self.replace_mode = false;
+            if self.prompt_is_replace {
+                self.focus_search(ctx);
+            }
+        } else {
+            self.open_replace(ctx);
+        }
+    }
+
+    /// Switches prompt focus to the search query field.
+    pub fn focus_search(&mut self, ctx: &mut HookContext) {
+        if self.prompt_is_replace {
+            self.replacement = ctx.prompt.input().to_string();
+            let query = self.query_text.clone();
+            ctx.prompt.open(search_spec(), &query);
+            self.prompt_is_replace = false;
+            self.refresh_from_input(ctx);
+        }
+    }
+
+    /// Switches prompt focus to the replacement text field.
+    pub fn focus_replace(&mut self, ctx: &mut HookContext) {
+        if !self.prompt_is_replace {
+            self.open_replace(ctx);
+        }
     }
 
     /// Re-scans from the prompt input with the current toggle flags.
@@ -281,10 +327,12 @@ impl SearchHook {
     /// advances to the following match. Returns `Ok(false)` when there is
     /// nothing to replace.
     pub fn replace_current(&mut self, ctx: &mut HookContext) -> Result<bool, EditorError> {
+        if ctx.prompt.spec().is_some_and(|s| s.id == REPLACE_PROMPT_ID) {
+            self.replacement = ctx.prompt.input().to_string();
+        }
         if self.query_text.is_empty() {
             return Ok(false);
         }
-        // Refresh against external buffer edits first.
         let _ = self.state.refresh(ctx.buffer);
         let from = ctx.buffer.cursor_offset();
         let target = self
@@ -299,7 +347,8 @@ impl SearchHook {
                     .iter()
                     .find(|m| m.start >= from)
                     .cloned()
-            });
+            })
+            .or_else(|| self.state.matches().first().cloned());
         let Some(target) = target else {
             return Ok(false);
         };
@@ -318,6 +367,9 @@ impl SearchHook {
     /// Replaces all matches as a single undoable transaction, reporting the
     /// count in the prompt message. Returns the number of replacements.
     pub fn replace_all(&mut self, ctx: &mut HookContext) -> Result<usize, EditorError> {
+        if ctx.prompt.spec().is_some_and(|s| s.id == REPLACE_PROMPT_ID) {
+            self.replacement = ctx.prompt.input().to_string();
+        }
         let Some(query) = self.build_query() else {
             return Ok(0);
         };
@@ -359,7 +411,18 @@ impl EditorHook for SearchHook {
                 .is_some_and(|s| s.id == SEARCH_PROMPT_ID || s.id == REPLACE_PROMPT_ID);
 
         if owns_prompt {
-            // Handled before the prompt sees them (it would ignore them).
+            if key_lower == "f" && mods.ctrl && !mods.alt && !mods.meta {
+                self.focus_search(ctx);
+                return HookOutcome::Consumed;
+            }
+            if event.key == "tab" && !mods.ctrl && !mods.alt && !mods.meta && self.replace_mode {
+                if self.prompt_is_replace {
+                    self.focus_search(ctx);
+                } else {
+                    self.focus_replace(ctx);
+                }
+                return HookOutcome::Consumed;
+            }
             if event.key == "enter" && mods.ctrl && !mods.alt && !mods.meta {
                 let _ = self.replace_current(ctx);
                 return HookOutcome::Consumed;
@@ -380,7 +443,6 @@ impl EditorHook for SearchHook {
                 self.toggle_highlight();
                 return HookOutcome::Consumed;
             }
-            // Up/Down walk matches on our prompts (history moves to Alt+Up/Down).
             if (event.key == "arrowup" || event.key == "up") && !mods.ctrl && !mods.meta {
                 if mods.alt {
                     ctx.prompt.history_prev();
@@ -398,7 +460,7 @@ impl EditorHook for SearchHook {
                 return HookOutcome::Consumed;
             }
             if key_lower == "h" && mods.ctrl && !mods.alt && !mods.meta {
-                self.open_replace(ctx);
+                self.toggle_replace(ctx);
                 return HookOutcome::Consumed;
             }
             if event.key == "f3" && !mods.ctrl && !mods.alt && !mods.meta {
@@ -412,7 +474,9 @@ impl EditorHook for SearchHook {
             let is_replace = ctx.prompt.spec().is_some_and(|s| s.id == REPLACE_PROMPT_ID);
             match ctx.prompt.handle_key(event) {
                 PromptAction::Editing => {
-                    if !is_replace {
+                    if is_replace {
+                        self.replacement = ctx.prompt.input().to_string();
+                    } else {
                         self.refresh_from_input(ctx);
                     }
                     HookOutcome::Consumed
@@ -423,6 +487,7 @@ impl EditorHook for SearchHook {
                         let query = self.query_text.clone();
                         ctx.prompt.open(search_spec(), &query);
                         self.replace_mode = true;
+                        self.prompt_is_replace = false;
                         self.refresh_from_input(ctx);
                     } else {
                         self.query_text = input;
@@ -433,11 +498,10 @@ impl EditorHook for SearchHook {
                 PromptAction::Cancelled => {
                     self.active = false;
                     self.replace_mode = false;
+                    self.prompt_is_replace = false;
                     self.update_status();
                     HookOutcome::Consumed
                 }
-                // Swallow anything else while our prompt is open so no
-                // keystroke leaks to hooks behind us or the buffer.
                 PromptAction::Ignored => HookOutcome::Consumed,
             }
         } else if !ctx.prompt.is_open() {
@@ -455,7 +519,6 @@ impl EditorHook for SearchHook {
                 self.open_replace(ctx);
                 return HookOutcome::Consumed;
             }
-            // Toggles apply while active, even with the prompt closed.
             if key_lower == "c" && mods.alt && !mods.ctrl && !mods.meta && self.active {
                 self.toggle_case(ctx);
                 return HookOutcome::Consumed;
@@ -484,7 +547,6 @@ impl EditorHook for SearchHook {
             }
             HookOutcome::PassThrough
         } else {
-            // A foreign prompt is open: stay out of the way.
             HookOutcome::PassThrough
         }
     }
@@ -508,6 +570,10 @@ impl EditorHook for SearchHook {
             highlight_all: self.highlight_all,
             matches: self.state.matches().to_vec(),
             current: self.state.current_index(),
+            replace_mode: self.replace_mode,
+            is_replace_prompt: self.prompt_is_replace,
+            query: self.query_text.clone(),
+            replacement: self.replacement.clone(),
         })
     }
 }
@@ -882,5 +948,72 @@ mod tests {
         hook.close(&mut ctx);
         assert!(!ctx.prompt.is_open());
         assert!(!hook.is_active());
+    }
+
+    #[test]
+    fn replace_while_typing_in_replace_prompt_with_ctrl_enter_and_alt_a() {
+        let mut h = Harness::new("alpha beta alpha");
+        h.key_mod("f", true, false, false);
+        for k in ["a", "l", "p", "h", "a"] {
+            h.key(k);
+        }
+        assert_eq!(h.hook.match_count(), 2);
+
+        assert_eq!(h.key_mod("h", true, false, false), HookOutcome::Consumed);
+        assert_eq!(h.prompt.spec().unwrap().id, REPLACE_PROMPT_ID);
+
+        for k in ["o", "m", "e", "g", "a"] {
+            h.key(k);
+        }
+        assert_eq!(h.hook.replacement(), "omega");
+
+        assert_eq!(
+            h.key_mod("enter", true, false, false),
+            HookOutcome::Consumed
+        );
+        assert_eq!(h.ctx_text(), "omega beta alpha");
+
+        assert_eq!(h.key_mod("a", false, true, false), HookOutcome::Consumed);
+        assert_eq!(h.ctx_text(), "omega beta omega");
+    }
+
+    #[test]
+    fn tab_toggles_between_search_and_replace_in_replace_mode() {
+        let mut h = Harness::new("one two one");
+        h.key_mod("f", true, false, false);
+        for k in ["o", "n", "e"] {
+            h.key(k);
+        }
+        h.key_mod("h", true, false, false);
+        assert!(h.hook.is_replace_mode());
+        assert!(h.hook.is_replace_prompt());
+
+        h.key("tab");
+        assert!(!h.hook.is_replace_prompt());
+        assert_eq!(h.prompt.spec().unwrap().id, SEARCH_PROMPT_ID);
+        assert_eq!(h.prompt.input(), "one");
+
+        h.key("tab");
+        assert!(h.hook.is_replace_prompt());
+        assert_eq!(h.prompt.spec().unwrap().id, REPLACE_PROMPT_ID);
+    }
+
+    #[test]
+    fn search_snapshot_reflects_replace_state() {
+        let mut h = Harness::new("test test");
+        h.key_mod("f", true, false, false);
+        h.type_into_prompt("test");
+        let snap = h.hook.search_snapshot().unwrap();
+        assert_eq!(snap.query, "test");
+        assert!(!snap.replace_mode);
+        assert!(!snap.is_replace_prompt);
+
+        h.key_mod("h", true, false, false);
+        h.type_into_prompt("passed");
+        let snap = h.hook.search_snapshot().unwrap();
+        assert_eq!(snap.query, "test");
+        assert_eq!(snap.replacement, "passed");
+        assert!(snap.replace_mode);
+        assert!(snap.is_replace_prompt);
     }
 }
