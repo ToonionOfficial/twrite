@@ -16,7 +16,7 @@ twrite = { git = "https://github.com/ToonionOfficial/twrite", version = "0.7" }
 ```
 
 Linux also needs GPUI system libraries; see the
-[full setup](https://notes.toonion.net/docs/getting-started.html).
+[full setup](https://toonionofficial.github.io/twrite/docs/getting-started.html).
 
 ## Usage
 
