@@ -19,9 +19,7 @@ pub mod theme;
 
 pub use canvas::{EditorCanvas, LineMetrics, RunFonts, build_line_text_runs};
 pub use config::EditorConfig;
-pub use editor::{
-    Editor, FaceAvailability, SelectionGranularity, VisibleLineLayout, VisibleLink,
-};
+pub use editor::{Editor, FaceAvailability, SelectionGranularity, VisibleLineLayout, VisibleLink};
 pub use fps::{FrameStats, fps_badge};
 pub use layout_cache::{CachedInput, LayoutCache};
 pub use prompt_bar::PromptBar;
