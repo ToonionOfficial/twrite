@@ -8,7 +8,7 @@ In your `Cargo.toml`, enable the optional `markdown` feature flag:
 
 ```toml
 [dependencies]
-twrite = { version = "0.6", features = ["markdown"] }
+twrite = { version = "0.7", features = ["markdown"] }
 ```
 
 ## 2. One-Line Initialization

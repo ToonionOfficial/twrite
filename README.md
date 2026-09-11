@@ -12,7 +12,7 @@ Full guides plus the API reference live at
 TWrite is not on crates.io yet; depend on git:
 
 ```toml
-twrite = { git = "https://github.com/ToonionOfficial/twrite", version = "0.6" }
+twrite = { git = "https://github.com/ToonionOfficial/twrite", version = "0.7" }
 ```
 
 Linux also needs GPUI system libraries; see the
