@@ -8,6 +8,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Blinking cursor support (`twrite-gpui`)**:
+  - Configurable periodic cursor blinking via `EditorConfig::cursor_blink` (defaults to `true`).
+  - Cursor blink resets to fully visible immediately on keyboard typing, mouse navigation/selection, and scrolling.
+  - New `Editor::reset_blink_cursor` and `Editor::set_cursor_blink` API methods for external control and configuration.
 - **Multi-click selection & drag-expansion snapping (`twrite-core`, `twrite-gpui`)**:
   - Double-click highlights the clicked word under the cursor; triple-click highlights the entire line (including trailing line terminator).
   - Multi-click drag selection extends with boundary snapping: dragging after double-click expands word-by-word; dragging after triple-click expands line-by-line.
