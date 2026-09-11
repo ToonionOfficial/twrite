@@ -8,9 +8,7 @@
 //! Run with: `cargo run --example context_menu`
 use gpui::*;
 use gpui_platform::application;
-use twrite::{
-    ContextMenuContext, ContextMenuItem, Editor, EditorHook, HookContext, HookOutcome,
-};
+use twrite::{ContextMenuContext, ContextMenuItem, Editor, EditorHook, HookContext, HookOutcome};
 
 /// Demo hook contributing two context menu rows.
 #[derive(Default)]
@@ -18,9 +16,7 @@ struct MenuDemoHook;
 
 impl EditorHook for MenuDemoHook {
     fn context_menu_items(&self, ctx: &ContextMenuContext) -> Vec<ContextMenuItem> {
-        let has_selection = ctx
-            .selection
-            .is_some_and(|s| !s.byte_range().is_empty());
+        let has_selection = ctx.selection.is_some_and(|s| !s.byte_range().is_empty());
         let mut uppercase =
             ContextMenuItem::with_hint("demo.uppercase", "UPPERCASE selection", "Ctrl+U");
         uppercase.enabled = has_selection;
@@ -30,18 +26,13 @@ impl EditorHook for MenuDemoHook {
         ]
     }
 
-    fn on_context_menu_action(
-        &mut self,
-        ctx: &mut HookContext,
-        id: &str,
-    ) -> HookOutcome {
+    fn on_context_menu_action(&mut self, ctx: &mut HookContext, id: &str) -> HookOutcome {
         match id {
             "demo.uppercase" => {
                 if let Some(sel) = ctx.selection.take() {
                     let range = sel.byte_range();
                     if !range.is_empty() {
-                        let text =
-                            ctx.buffer.text().byte_slice(range.clone()).to_string();
+                        let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
                         ctx.buffer.replace_range(range, &text.to_uppercase());
                     }
                 }

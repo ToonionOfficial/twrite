@@ -330,12 +330,20 @@ impl Editor {
             }
         }
 
+        // The label flexes and truncates with an ellipsis so long text
+        // (e.g. "UPPERCASE selection" plus a hint) never overflows the
+        // fixed-width popup; the hint keeps its size via flex_shrink_0.
+        let label = div().flex_1().truncate().child(item.label.clone());
         if let Some(hint) = &item.hint {
-            row = row
-                .child(item.label.clone())
-                .child(div().text_xs().text_color(hint_color).child(hint.clone()));
+            row = row.child(label).child(
+                div()
+                    .flex_shrink_0()
+                    .text_xs()
+                    .text_color(hint_color)
+                    .child(hint.clone()),
+            );
         } else {
-            row = row.child(item.label.clone());
+            row = row.child(label);
         }
 
         if !enabled {
