@@ -5,6 +5,17 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Expandable right-click context menu (`twrite-core`, `twrite-gpui`)**:
+  - Headless `context_menu` module in `twrite-core`: `ContextMenuItem` (id, label, hint, enabled, divider), `ContextMenuCaps` (host-supplied clipboard/undo/selection capabilities), `ContextMenuContext` (click row/col snapshot for hooks), and `ContextMenuState` (open/items store mirroring `PromptState`).
+  - Built-in edit rows with enablement matrix: Undo, Redo, Cut, Copy, Paste, Delete, Select All.
+  - New `EditorHook` methods: `context_menu_items` (hook rows append after built-ins; reusing a well-known id overrides that default in place) and `on_context_menu_action` (runs before built-in dispatch; `Consumed` halts).
+  - GPUI right-click handling with VS Code-style selection policy (click inside selection keeps it, else cursor moves), custom themed overlay (`EditorTheme::menu_*`) with viewport clamping, keyboard navigation (`Up`/`Down` + `Enter`, `Escape` dismisses), and `EditorConfig::{context_menu, show_default_menu_items}` flags.
+  - New `EditorBuffer::{can_undo, can_redo}` helpers.
+  - New `context_menu` example (hook-contributed UPPERCASE/separator actions) and `recipe-context-menu.md` docs page; `hooks` example gains demo menu rows.
+
 ## [0.6.0] - 2026-09-11
 
 ### Added
