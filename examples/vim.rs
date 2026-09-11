@@ -1148,10 +1148,7 @@ fn main() {
                         cx,
                     );
                     ed.config.line_numbers = true;
-                    // No explicit family: the editor auto-selects the first
-                    // platform monospace with bold + italic faces (see
-                    // `Editor::face_availability`). Set `ed.config.font_family
-                    // explicitly to override (e.g. Menlo, Consolas).
+
                     let mut vim = VimHook::new();
                     let mut ctx = HookContext::new(
                         &mut ed.buffer,
