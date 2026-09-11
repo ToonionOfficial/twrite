@@ -36,7 +36,7 @@ fn sync_cursor(mode: VimMode, ctx: &mut HookContext) {
 In `on_key`:
 - In **Normal Mode**: consume keys to execute commands (`h`, `j`, `k`, `l`, `w`, `b`, `x`, `u`). When `i` or `a` is pressed, switch to `Insert`.
 - In **Insert Mode**: pass keys through so characters are typed into the buffer. When `Escape` is pressed, consume it and switch back to `Normal`.
-- In **Visual Mode**: move selection range endpoints. When `Escape` or `y` is pressed, return to `Normal`.
+- In **Visual Mode**: move selection range endpoints. When `Escape` or `y` is pressed, return to `Normal`. The full example adds a linewise variant: `V` selects whole lines (`-- VISUAL LINE --`), motions grow by line, and `G` / `gg` extend to the document bottom / top — so `ggVG` selects everything.
 
 Here is a minimal demonstration:
 
@@ -128,9 +128,13 @@ impl EditorHook for MinimalVimHook {
 }
 ```
 
-## 4. Full Vim Implementation Reference
+## 4. Search Submit and `n` / `N`
 
-For a complete implementation that includes operators (`d`, `c`, `y`), motions, multi-key sequences (`gg`, `dd`), count prefixes (`3w`), ex-commands (`:w`, `:q`), and `/` search forwarding, inspect the repository example:
+The stock `SearchHook` is a persistent toolbar: `Enter` navigates but leaves the prompt open. For vim-modal `/` / `?`, track a `search_modal` flag when opening the search and, on plain `Enter`, delegate to the hook and then close just the prompt (keeping the query, matches, and highlight wash for `n` / `N`). The shared `Ctrl+F` toolbar path leaves the flag unset, so it keeps its stay-open behavior. `*` / `#` jump immediately and dismiss at once, so a later `Enter` can't skip a match. Since submit leaves the hook active, `Escape` (with the prompt closed) deactivates it again — clearing the highlight wash and the `SEARCH` status.
+
+## 5. Full Vim Implementation Reference
+
+For a complete implementation that includes operators (`d`, `c`, `y`), motions, multi-key sequences (`gg`, `dd`), count prefixes (`3w`), ex-commands (`:w`, `:q`), `/` search forwarding, and linewise Visual mode (`V`, `ggVG`), inspect the repository example:
 
 ```sh
 cargo run --example vim
