@@ -98,8 +98,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `parse_delimiter_row`, `find_unescaped_pipes`, `split_table_cells`,
   `TableBlock` / `TableRowKind` / `TableAlignment`, and
   `TABLE_{HEADER,CELL,DELIMITER}_TAG` custom tags (`markdown.table.*`,
-  styled with existing `Punctuation` / `Bold` / `Dimmed` — pipes are never
-  `Hidden` so concealment preserves column mapping). `MarkdownConfig::{visual_tables,
+  styled with existing `Punctuation` / `Bold` / `Dimmed` (pipes are never
+  `Hidden`, so concealment preserves column mapping). `MarkdownConfig::{visual_tables,
   table_navigation}` (both default `true`) and `MarkdownHook` `Tab` /
   `Shift+Tab` cell navigation (appends a skeleton row past the last cell)
   plus `Enter` row continuation / blank-row table exit.
