@@ -36,7 +36,7 @@ fn sync_cursor(mode: VimMode, ctx: &mut HookContext) {
 In `on_key`:
 - In **Normal Mode**: consume keys to execute commands (`h`, `j`, `k`, `l`, `w`, `b`, `x`, `u`). When `i` or `a` is pressed, switch to `Insert`.
 - In **Insert Mode**: pass keys through so characters are typed into the buffer. When `Escape` is pressed, consume it and switch back to `Normal`.
-- In **Visual Mode**: move selection range endpoints. When `Escape` or `y` is pressed, return to `Normal`.
+- In **Visual Mode**: move selection range endpoints. When `Escape` or `y` is pressed, return to `Normal`. The full example adds a linewise variant: `V` selects whole lines (`-- VISUAL LINE --`), motions grow by line, and `G` / `gg` extend to the document bottom / top — so `ggVG` selects everything.
 
 Here is a minimal demonstration:
 
