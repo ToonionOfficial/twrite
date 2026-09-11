@@ -57,6 +57,31 @@ jobs:
           mkdir -p site/docs
           # Guides under /docs (book.toml sets site-url accordingly).
           cp -r docs/book/. site/docs/
+          # Bust cache on toc.js and search index so CDN/browsers do not serve stale sidebars.
+          find site/docs -name '*.html' -exec sed -i 's|src="\([^"]*toc\.js\)"|src="\1?v='${{ github.sha }}'"|g' {} +
+          if [ -f site/docs/searcher.js ]; then
+            sed -i 's|searchindex\.json|searchindex.json?v='${{ github.sha }}'|g' site/docs/searcher.js
+          fi
+          # Fallback redirects for renamed guide pages to avoid 404s from stale caches or bookmarks.
+          for pair in "guide-hook.html:recipe-hooks.html" "guide-prompt.html:recipe-prompt.html" "guide-search.html:recipe-search.html" "vim.html:recipe-vim.html"; do
+            old="${pair%%:*}"
+            new="${pair##*:}"
+            cat > "site/docs/$old" <<EOF
+            <!DOCTYPE html>
+            <html lang="en">
+              <head>
+                <meta charset="utf-8">
+                <title>Redirecting...</title>
+                <link rel="canonical" href="$new">
+                <meta http-equiv="refresh" content="0; url=$new">
+                <script>window.location.replace("$new");</script>
+              </head>
+              <body>
+                <p>This page has moved to <a href="$new">$new</a>.</p>
+              </body>
+            </html>
+          EOF
+          done
           # Entire rustdoc tree under /docs/api: per-crate pages plus the
           # shared static.files/ (CSS/JS/fonts), search index, help/settings
           # pages, and rendered sources. Copying only the crate dirs orphans
