@@ -7,6 +7,33 @@ TWrite is a fast, modular text editor crate for Rust. Leveraging the GPU-acceler
 Full guides plus the API reference live at
 [notes.toonion.net/docs](https://notes.toonion.net/docs).
 
+## Install
+
+TWrite is not on crates.io yet; depend on git:
+
+```toml
+twrite = { git = "https://github.com/ToonionOfficial/twrite", version = "0.5" }
+```
+
+Linux also needs GPUI system libraries; see the
+[full setup](https://notes.toonion.net/docs/getting-started.html).
+
+## Usage
+
+```rust
+use twrite::{Editor, SearchHook};
+
+let editor = cx.new(|cx| {
+    let mut ed = Editor::new("Hello, TWrite!", cx);
+    ed.config.line_numbers = true;
+    ed.add_hook(SearchHook::new()); // Ctrl+F find, Ctrl+H replace
+    ed
+});
+```
+
+`cx` is your GPUI window context; `examples/simple.rs` shows the complete
+shell around this fragment.
+
 ## Getting started
 
 Run the examples in order; each builds on the previous one:
@@ -23,3 +50,9 @@ cargo run --example vim       # 6. a full modal Vim system on hooks alone
 The pattern everywhere is the same: `Editor` owns the buffer, hooks
 (`EditorHook` + `HookContext`) own behavior, and batteries bundle the two.
 Start from `examples/simple.rs` and follow the `Next:` pointers.
+
+## Links
+
+- [Documentation](https://notes.toonion.net/docs) (guides plus API reference)
+- [Changelog](CHANGELOG.md)
+- [License](LICENSE)
