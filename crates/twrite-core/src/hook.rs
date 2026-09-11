@@ -171,6 +171,14 @@ pub struct SearchSnapshot {
     pub matches: Vec<Range<usize>>,
     /// Index of the current match, if navigation has occurred.
     pub current: Option<usize>,
+    /// Whether replace mode is active in the search panel.
+    pub replace_mode: bool,
+    /// Whether the active input prompt is currently the replace field.
+    pub is_replace_prompt: bool,
+    /// Current search query string.
+    pub query: String,
+    /// Current replacement string.
+    pub replacement: String,
 }
 
 /// Built-in hook that automatically inserts closing quotes, brackets, and braces, wraps selected text, and steps over closing pairs.

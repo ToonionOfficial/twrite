@@ -18,6 +18,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - New boundary helpers in `twrite-core`: `find_word_range_at`, `find_line_range_at`, and convenience methods `EditorBuffer::{word_range_at, line_range_at}`.
   - New `twrite_gpui::SelectionGranularity` enum (`Character`, `Word`, `Line`) tracking active drag granularity on `Editor`.
   - Hyperlink opening and task checkbox toggling restricted to single clicks (`click_count == 1`) so double-clicking links selects text without re-opening browsers.
+- **Find & replace toolbar UI redesign (`twrite-gpui`)**:
+  - Replaced abbreviated chips (`Aa`, `W`, `All`) with full-word checkboxes (`Highlight All`, `Match Case`, `Whole Words`) with keyboard mnemonic underlines.
+  - Redesigned search bar with rounded framed input box, `Find in page` placeholder, caret steppers (`^`, `v`), and close button (`✕`).
+  - Added expandable replace row with `Replace with` input box and interactive `Replace` and `Replace All` action buttons.
+- **Modularized editor and markdown syntax engines (`twrite-core`, `twrite-gpui`)**:
+  - Modularized `crates/twrite-gpui/src/editor.rs` into focused submodules: `mod`, `mouse`, `keyboard`, `clipboard`, `geometry`, and `render`.
+  - Extracted inline markdown syntax parser into `crates/twrite-core/src/batteries/markdown/inline.rs`.
+
+### Fixed
+- **Find & replace UX fixes (`twrite-core`, `twrite-gpui`)**:
+  - Fixed keyboard submit on replace: pressing `Enter` while focused in the replace input replaces the current match and advances to the next match.
+  - Fixed mouse click closing replace box: clicking into the replace box focuses it cleanly without toggling/closing, and toolbar background clicks no longer propagate to the editor canvas.
+  - Normal bar cursor in prompt inputs: replaced inverted block cursor with a standard vertical bar cursor in text inputs (`find`, `replace`, and prompt line).
+  - Extended text navigation & editing shortcuts in prompts: added `Ctrl+Left` / `Ctrl+Right` (word movement), `Ctrl+Backspace` / `Ctrl+Delete` (word deletion), `Ctrl+K` (clear to end), and `Alt`/`Meta` equivalents.
+- **Find & replace functionality (`twrite-core`, `twrite-gpui`)**:
+  - Fixed replacement text not updating while editing in the replace prompt.
+  - Fixed `replace_current` and `replace_all` failing to read live input from the active prompt.
+  - Added wrap-around match replacement in `replace_current` when the cursor is past the last match.
+  - Added `Tab` shortcut and click-to-focus navigation between find and replace fields.
+  - Exposed `replace_mode`, `is_replace_prompt`, `query`, and `replacement` on `SearchSnapshot`.
 
 ## [0.5.0] - 2026-09-10
 
