@@ -36,6 +36,9 @@ impl PromptBar {
             .bg(rgb(0x11111b))
             .px(px(12.0))
             .py(px(6.0))
+            .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                cx.stop_propagation();
+            })
             .flex()
             .flex_col()
             .gap_1()
@@ -68,6 +71,9 @@ impl PromptBar {
                         .border_color(rgb(0x45475a))
                         .bg(rgb(0x181825))
                         .p(px(8.0))
+                        .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                            cx.stop_propagation();
+                        })
                         .child(Self::search_toolbar_inner(prompt, &snapshot, cx)),
                 );
         }
@@ -86,6 +92,9 @@ impl PromptBar {
                     .bg(rgb(0x1e1e2e))
                     .px(px(12.0))
                     .py(px(8.0))
+                    .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                        cx.stop_propagation();
+                    })
                     .flex()
                     .flex_col()
                     .gap_1()
@@ -108,6 +117,9 @@ impl PromptBar {
             .bg(rgb(0x181825))
             .px(px(12.0))
             .py(px(6.0))
+            .on_mouse_down(MouseButton::Left, |_event, _window, cx| {
+                cx.stop_propagation();
+            })
             .child(Self::search_toolbar_inner(prompt, snapshot, cx))
     }
 
@@ -165,7 +177,7 @@ impl PromptBar {
                 cursor_idx,
                 "Find in page",
                 is_find_active,
-                "f",
+                "focus_search",
                 cx,
             ))
             .child(Self::stepper_button("search-step-prev", "^", "arrowup", cx))
@@ -246,7 +258,7 @@ impl PromptBar {
                 cursor_idx,
                 "Replace with",
                 is_replace_active,
-                "h",
+                "focus_replace",
                 cx,
             ))
             .child(Self::action_button(
@@ -311,7 +323,7 @@ impl PromptBar {
         if let Some(cursor_offset) = cursor {
             if text.is_empty() {
                 box_div = box_div
-                    .child(div().w(px(1.5)).h(px(14.0)).bg(rgb(0x89b4fa)).mr(px(2.0)))
+                    .child(div().w(px(1.5)).h(px(15.0)).bg(rgb(0x89b4fa)).mr(px(2.0)))
                     .child(
                         div()
                             .text_sm()
@@ -321,22 +333,15 @@ impl PromptBar {
             } else {
                 let cursor = cursor_offset.min(text.len());
                 let before = text[..cursor].to_string();
-                let rest = &text[cursor..];
-                let mut chars = rest.chars();
-                let (under, after) = match chars.next() {
-                    Some(ch) => (ch.to_string(), chars.as_str().to_string()),
-                    None => (" ".to_string(), String::new()),
-                };
-                box_div = box_div
-                    .child(div().text_sm().text_color(rgb(0xcdd6f4)).child(before))
-                    .child(
-                        div()
-                            .bg(rgb(0x89b4fa))
-                            .text_sm()
-                            .text_color(rgb(0x11111b))
-                            .child(under),
-                    )
-                    .child(div().text_sm().text_color(rgb(0xcdd6f4)).child(after));
+                let after = text[cursor..].to_string();
+                if !before.is_empty() {
+                    box_div =
+                        box_div.child(div().text_sm().text_color(rgb(0xcdd6f4)).child(before));
+                }
+                box_div = box_div.child(div().w(px(1.5)).h(px(15.0)).bg(rgb(0x89b4fa)));
+                if !after.is_empty() {
+                    box_div = box_div.child(div().text_sm().text_color(rgb(0xcdd6f4)).child(after));
+                }
             }
         } else if text.is_empty() {
             box_div = box_div.child(
@@ -354,15 +359,15 @@ impl PromptBar {
             );
         }
 
-        if !focused {
-            box_div = box_div.on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
-                    this.press_search_key(focus_key, true, false, false, Some(window), cx);
-                    cx.stop_propagation();
-                }),
-            );
-        }
+        box_div = box_div.on_mouse_down(
+            MouseButton::Left,
+            cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
+                if !focused {
+                    this.press_search_key(focus_key, false, false, false, Some(window), cx);
+                }
+                cx.stop_propagation();
+            }),
+        );
 
         box_div
     }
@@ -504,7 +509,7 @@ impl PromptBar {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
-                    this.press_search_key("h", true, false, false, Some(window), cx);
+                    this.press_search_key("toggle_replace", false, false, false, Some(window), cx);
                     cx.stop_propagation();
                 }),
             )
@@ -563,7 +568,7 @@ impl PromptBar {
             )
     }
 
-    /// `prefix + before-cursor + block cursor + after-cursor` flowing as one
+    /// `prefix + before-cursor + bar cursor + after-cursor` flowing as one
     /// line (no growing spacers: the cursor stays glued to the text), or the
     /// placeholder when the input is empty.
     fn input_row(prompt: &PromptState) -> Div {
@@ -583,36 +588,29 @@ impl PromptBar {
 
         if prompt.input().is_empty() {
             let placeholder = spec.map(|s| s.placeholder.as_str()).unwrap_or("");
-            row = row.child(
-                div()
-                    .text_sm()
-                    .text_color(rgb(0x6c7086))
-                    .child(placeholder.to_string()),
-            );
+            row = row
+                .child(div().w(px(1.5)).h(px(15.0)).bg(rgb(0x89b4fa)).mr(px(2.0)))
+                .child(
+                    div()
+                        .text_sm()
+                        .text_color(rgb(0x6c7086))
+                        .child(placeholder.to_string()),
+                );
         } else {
             let cursor = prompt.cursor().min(prompt.input().len());
             let before = prompt.input()[..cursor].to_string();
-            let rest = &prompt.input()[cursor..];
-            let mut chars = rest.chars();
-            let (under, after) = match chars.next() {
-                Some(ch) => (ch.to_string(), chars.as_str().to_string()),
-                None => (" ".to_string(), String::new()),
-            };
-            row = row.child(
-                div()
-                    .flex()
-                    .flex_row()
-                    .items_center()
-                    .child(div().text_sm().text_color(rgb(0xcdd6f4)).child(before))
-                    .child(
-                        div()
-                            .bg(rgb(0x89b4fa))
-                            .text_sm()
-                            .text_color(rgb(0x11111b))
-                            .child(under),
-                    )
-                    .child(div().text_sm().text_color(rgb(0xcdd6f4)).child(after)),
-            );
+            let after = prompt.input()[cursor..].to_string();
+            let mut input_content = div().flex().flex_row().items_center();
+            if !before.is_empty() {
+                input_content =
+                    input_content.child(div().text_sm().text_color(rgb(0xcdd6f4)).child(before));
+            }
+            input_content = input_content.child(div().w(px(1.5)).h(px(15.0)).bg(rgb(0x89b4fa)));
+            if !after.is_empty() {
+                input_content =
+                    input_content.child(div().text_sm().text_color(rgb(0xcdd6f4)).child(after));
+            }
+            row = row.child(input_content);
         }
         row
     }

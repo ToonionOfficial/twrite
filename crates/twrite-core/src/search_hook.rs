@@ -411,6 +411,18 @@ impl EditorHook for SearchHook {
                 .is_some_and(|s| s.id == SEARCH_PROMPT_ID || s.id == REPLACE_PROMPT_ID);
 
         if owns_prompt {
+            if event.key == "focus_search" {
+                self.focus_search(ctx);
+                return HookOutcome::Consumed;
+            }
+            if event.key == "focus_replace" {
+                self.focus_replace(ctx);
+                return HookOutcome::Consumed;
+            }
+            if event.key == "toggle_replace" {
+                self.toggle_replace(ctx);
+                return HookOutcome::Consumed;
+            }
             if key_lower == "f" && mods.ctrl && !mods.alt && !mods.meta {
                 self.focus_search(ctx);
                 return HookOutcome::Consumed;
@@ -460,7 +472,13 @@ impl EditorHook for SearchHook {
                 return HookOutcome::Consumed;
             }
             if key_lower == "h" && mods.ctrl && !mods.alt && !mods.meta {
-                self.toggle_replace(ctx);
+                if !self.replace_mode {
+                    self.open_replace(ctx);
+                } else if !self.prompt_is_replace {
+                    self.focus_replace(ctx);
+                } else {
+                    self.toggle_replace(ctx);
+                }
                 return HookOutcome::Consumed;
             }
             if event.key == "f3" && !mods.ctrl && !mods.alt && !mods.meta {
@@ -484,11 +502,7 @@ impl EditorHook for SearchHook {
                 PromptAction::Submitted(input) => {
                     if is_replace {
                         self.replacement = input;
-                        let query = self.query_text.clone();
-                        ctx.prompt.open(search_spec(), &query);
-                        self.replace_mode = true;
-                        self.prompt_is_replace = false;
-                        self.refresh_from_input(ctx);
+                        let _ = self.replace_current(ctx);
                     } else {
                         self.query_text = input;
                         self.navigate_next(ctx, true);
@@ -770,7 +784,6 @@ mod tests {
         for k in ["b", "a", "r"] {
             h.key(k);
         }
-        h.key("enter");
         h.with_ctx(|ctx, hook| {
             assert_eq!(hook.replace_all(ctx).unwrap(), 2);
         });
@@ -897,27 +910,17 @@ mod tests {
             h.key(k);
         }
 
-        // Ctrl+H stashes the query and asks for replacement text.
         assert_eq!(h.key_mod("h", true, false, false), HookOutcome::Consumed);
         assert_eq!(h.prompt.spec().unwrap().id, REPLACE_PROMPT_ID);
         for k in ["b", "a", "z"] {
             h.key(k);
         }
         assert_eq!(h.key("enter"), HookOutcome::Consumed);
-        // Back on the search prompt with the query restored.
-        assert_eq!(h.prompt.spec().unwrap().id, SEARCH_PROMPT_ID);
-        assert_eq!(h.prompt.input(), "foo");
+        assert_eq!(h.prompt.spec().unwrap().id, REPLACE_PROMPT_ID);
         assert_eq!(h.hook.replacement(), "baz");
-
-        // Ctrl+Enter replaces the match at the cursor and advances.
-        assert_eq!(
-            h.key_mod("enter", true, false, false),
-            HookOutcome::Consumed
-        );
         assert_eq!(h.ctx_text(), "baz bar foo");
         assert_eq!(h.selection.unwrap().byte_range(), 8..11);
 
-        // Alt+A replaces the rest in one undo step.
         assert_eq!(h.key_mod("a", false, true, false), HookOutcome::Consumed);
         assert_eq!(h.ctx_text(), "baz bar baz");
         assert_eq!(h.prompt.message(), Some("Replaced 1 match"));

@@ -268,10 +268,9 @@ impl PromptState {
         }
     }
 
-    /// Deletes back to the previous blank-separated word start (`Ctrl+W`).
+    /// Deletes back to the previous blank-separated word start (`Ctrl+W`, `Ctrl+Backspace`).
     pub fn delete_word_before(&mut self) {
         self.abandon_history();
-        // Trailing whitespace first, then the word itself.
         while self.cursor > 0
             && self.input[..self.cursor]
                 .chars()
@@ -290,11 +289,78 @@ impl PromptState {
         }
     }
 
+    /// Deletes from the cursor forward across the next word (`Ctrl+Delete`).
+    pub fn delete_word_after(&mut self) {
+        self.abandon_history();
+        while self.cursor < self.input.len()
+            && self.input[self.cursor..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+        {
+            self.delete_after_cursor();
+        }
+        while self.cursor < self.input.len()
+            && self.input[self.cursor..]
+                .chars()
+                .next()
+                .is_some_and(|c| !c.is_whitespace())
+        {
+            self.delete_after_cursor();
+        }
+    }
+
     /// Clears everything before the cursor (`Ctrl+U`).
     pub fn clear_to_start(&mut self) {
         self.abandon_history();
         self.input.drain(..self.cursor);
         self.cursor = 0;
+    }
+
+    /// Clears everything after the cursor (`Ctrl+K`).
+    pub fn clear_to_end(&mut self) {
+        self.abandon_history();
+        self.input.truncate(self.cursor);
+    }
+
+    /// Moves the input cursor to the start of the previous word (`Ctrl+Left`).
+    pub fn move_word_left(&mut self) {
+        while self.cursor > 0
+            && self.input[..self.cursor]
+                .chars()
+                .next_back()
+                .is_some_and(|c| c.is_whitespace())
+        {
+            self.cursor = self.prev_boundary(self.cursor);
+        }
+        while self.cursor > 0
+            && self.input[..self.cursor]
+                .chars()
+                .next_back()
+                .is_some_and(|c| !c.is_whitespace())
+        {
+            self.cursor = self.prev_boundary(self.cursor);
+        }
+    }
+
+    /// Moves the input cursor to the end of the current or next word (`Ctrl+Right`).
+    pub fn move_word_right(&mut self) {
+        while self.cursor < self.input.len()
+            && self.input[self.cursor..]
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_whitespace())
+        {
+            self.cursor = self.next_boundary(self.cursor);
+        }
+        while self.cursor < self.input.len()
+            && self.input[self.cursor..]
+                .chars()
+                .next()
+                .is_some_and(|c| !c.is_whitespace())
+        {
+            self.cursor = self.next_boundary(self.cursor);
+        }
     }
 
     /// Moves the input cursor one char left.
@@ -433,16 +499,44 @@ impl PromptState {
                 }
                 PromptAction::Editing
             }
+            "backspace" if (mods.ctrl || mods.alt) && !mods.meta => {
+                self.delete_word_before();
+                PromptAction::Editing
+            }
+            "backspace" if mods.meta && !mods.ctrl && !mods.alt => {
+                self.clear_to_start();
+                PromptAction::Editing
+            }
             "backspace" if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.backspace();
+                PromptAction::Editing
+            }
+            "delete" if (mods.ctrl || mods.alt) && !mods.meta => {
+                self.delete_word_after();
                 PromptAction::Editing
             }
             "delete" if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.delete_after_cursor();
                 PromptAction::Editing
             }
+            "arrowleft" | "left" if (mods.ctrl || mods.alt) && !mods.meta => {
+                self.move_word_left();
+                PromptAction::Editing
+            }
+            "arrowleft" | "left" if mods.meta && !mods.ctrl && !mods.alt => {
+                self.move_home();
+                PromptAction::Editing
+            }
             "arrowleft" | "left" if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.move_left();
+                PromptAction::Editing
+            }
+            "arrowright" | "right" if (mods.ctrl || mods.alt) && !mods.meta => {
+                self.move_word_right();
+                PromptAction::Editing
+            }
+            "arrowright" | "right" if mods.meta && !mods.ctrl && !mods.alt => {
+                self.move_end();
                 PromptAction::Editing
             }
             "arrowright" | "right" if !mods.ctrl && !mods.alt && !mods.meta => {
@@ -460,6 +554,10 @@ impl PromptState {
             key if mods.ctrl && !mods.alt && !mods.meta => match key.to_lowercase().as_str() {
                 "u" => {
                     self.clear_to_start();
+                    PromptAction::Editing
+                }
+                "k" => {
+                    self.clear_to_end();
                     PromptAction::Editing
                 }
                 "w" => {
@@ -568,6 +666,16 @@ mod tests {
             key: k.to_string(),
             modifiers: Modifiers {
                 ctrl: true,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn alt(k: &str) -> KeyEvent {
+        KeyEvent {
+            key: k.to_string(),
+            modifiers: Modifiers {
+                alt: true,
                 ..Default::default()
             },
         }
@@ -721,6 +829,39 @@ mod tests {
         assert_eq!(prompt.handle_key(&ctrl("e")), PromptAction::Editing);
         assert_eq!(prompt.cursor(), 5);
         assert_eq!(prompt.handle_key(&ctrl("u")), PromptAction::Editing);
+        assert_eq!(prompt.input(), "");
+    }
+
+    #[test]
+    fn word_movement_and_deletion_shortcuts() {
+        let mut prompt = PromptState::new();
+        prompt.open(search_spec(), "");
+        prompt.insert("hello beautiful world");
+
+        assert_eq!(prompt.handle_key(&ctrl("arrowleft")), PromptAction::Editing);
+        assert_eq!(prompt.cursor(), 16);
+        assert_eq!(prompt.handle_key(&ctrl("arrowleft")), PromptAction::Editing);
+        assert_eq!(prompt.cursor(), 6);
+        assert_eq!(
+            prompt.handle_key(&ctrl("arrowright")),
+            PromptAction::Editing
+        );
+        assert_eq!(prompt.cursor(), 15);
+
+        assert_eq!(prompt.handle_key(&ctrl("delete")), PromptAction::Editing);
+        assert_eq!(prompt.input(), "hello beautiful");
+
+        assert_eq!(prompt.handle_key(&ctrl("backspace")), PromptAction::Editing);
+        assert_eq!(prompt.input(), "hello ");
+
+        prompt.insert("world");
+        assert_eq!(prompt.handle_key(&alt("backspace")), PromptAction::Editing);
+        assert_eq!(prompt.input(), "hello ");
+
+        prompt.move_home();
+        prompt.insert("new ");
+        prompt.move_home();
+        assert_eq!(prompt.handle_key(&ctrl("k")), PromptAction::Editing);
         assert_eq!(prompt.input(), "");
     }
 
