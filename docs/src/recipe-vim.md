@@ -130,7 +130,7 @@ impl EditorHook for MinimalVimHook {
 
 ## 4. Search Submit and `n` / `N`
 
-The stock `SearchHook` is a persistent toolbar: `Enter` navigates but leaves the prompt open. For vim-modal `/` / `?`, track a `search_modal` flag when opening the search and, on plain `Enter`, delegate to the hook and then close just the prompt (keeping the query, matches, and highlight wash for `n` / `N`). The shared `Ctrl+F` toolbar path leaves the flag unset, so it keeps its stay-open behavior. `*` / `#` jump immediately and dismiss at once, so a later `Enter` can't skip a match.
+The stock `SearchHook` is a persistent toolbar: `Enter` navigates but leaves the prompt open. For vim-modal `/` / `?`, track a `search_modal` flag when opening the search and, on plain `Enter`, delegate to the hook and then close just the prompt (keeping the query, matches, and highlight wash for `n` / `N`). The shared `Ctrl+F` toolbar path leaves the flag unset, so it keeps its stay-open behavior. `*` / `#` jump immediately and dismiss at once, so a later `Enter` can't skip a match. Since submit leaves the hook active, `Escape` (with the prompt closed) deactivates it again — clearing the highlight wash and the `SEARCH` status.
 
 ## 5. Full Vim Implementation Reference
 

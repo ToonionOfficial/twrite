@@ -380,6 +380,13 @@ impl EditorHook for VimHook {
         }
 
         if event.key == "escape" || (event.modifiers.ctrl && event.key == "[") {
+            // Dismiss a lingering search highlight: submit leaves the hook
+            // active (query + wash for `n` / `N`), so `Escape` is the way
+            // back to a clean viewport.
+            if self.search.is_active() {
+                self.search.close(ctx);
+            }
+            self.search_modal = false;
             self.enter_normal_mode(ctx);
             self.status_override = None;
             return HookOutcome::Consumed;
@@ -1055,6 +1062,35 @@ mod tests {
     }
 
     #[test]
+    fn escape_clears_highlight_after_submit() {
+        let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
+            harness("foo bar foo");
+        press_keys(
+            &mut vim,
+            &mut buffer,
+            &mut selection,
+            &mut style,
+            &mut prompt,
+            &mut effects,
+            &["/", "f", "o", "o", "enter"],
+        );
+        assert!(vim.search.is_active());
+        assert!(vim.search_snapshot().is_some());
+        press_keys(
+            &mut vim,
+            &mut buffer,
+            &mut selection,
+            &mut style,
+            &mut prompt,
+            &mut effects,
+            &["escape"],
+        );
+        assert!(!vim.search.is_active());
+        assert!(vim.search_snapshot().is_none());
+        assert_eq!(vim.status_text(), Some("-- NORMAL --"));
+    }
+
+    #[test]
     fn escape_cancels_slash_search() {
         let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
             harness("foo bar foo");
@@ -1108,7 +1144,7 @@ fn main() {
             |window, cx| {
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(
-                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l or arrow keys : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v / V : enter Visual mode (charwise / linewise)\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b, G, gg\n  * v / V : charwise / linewise selection (V selects whole lines)\n  * ggVG : select the whole document\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search; Enter submits and closes, then n / N : next / previous match\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n  * Alt+C / Alt+W / Alt+H : Match Case / Whole Word / Highlight All, Up/Down : prev/next match\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
+                        "# Vim Mode in TWrite\n\nThis entire Vim modal editing system is powered by an EditorHook.\nZero lines of Vim code exist in the core twrite engine!\n\nKeybindings supported:\n- Normal Mode (Block cursor):\n  * h, j, k, l or arrow keys : move cursor\n  * w, b : next / previous word\n  * 0, $ : line start / line end\n  * G, gg : document bottom / document top\n  * x : delete character\n  * dd : delete current line\n  * dw : delete word\n  * u : undo, Ctrl+r : redo\n  * i, a : enter Insert mode\n  * o, O : open line below / above and enter Insert mode\n  * v / V : enter Visual mode (charwise / linewise)\n- Visual Mode:\n  * Expand selection with h/j/k/l, w, b, G, gg\n  * v / V : charwise / linewise selection (V selects whole lines)\n  * ggVG : select the whole document\n  * d or x : delete selection and return to Normal\n  * Escape : cancel selection\n- Search (prompt box, powered by SearchHook):\n  * /, ? : forward / backward search; Enter submits and closes, then n / N : next / previous match, Escape : clear highlight\n  * *, # : word under cursor forward / backward\n  * Ctrl+F : search, Ctrl+H : replace, Ctrl+Enter : replace one, Alt+A : replace all\n  * Alt+C / Alt+W / Alt+H : Match Case / Whole Word / Highlight All, Up/Down : prev/next match\n- Ex commands (:):\n  * :w [path], :q, :q!, :wq, :e path, :<num> (go to line)\n  * :s/old/new/[g][i], :%s/old/new/[g][i] (regex, $1 captures)\n- Insert Mode (Bar cursor):\n  * Type normally\n  * Escape : return to Normal mode\n",
                         cx,
                     );
                     ed.config.line_numbers = true;
