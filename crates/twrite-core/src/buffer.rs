@@ -207,6 +207,17 @@ impl EditorBuffer {
         crate::movement::find_line_end(&self.text, self.cursor)
     }
 
+    /// Returns the byte range of the word, punctuation token, or whitespace run containing `offset`.
+    pub fn word_range_at(&self, offset: usize) -> Range<usize> {
+        crate::movement::find_word_range_at(&self.text, offset)
+    }
+
+    /// Returns the byte range of the full line containing `offset`, including
+    /// any trailing line terminator.
+    pub fn line_range_at(&self, offset: usize) -> Range<usize> {
+        crate::movement::find_line_range_at(&self.text, offset)
+    }
+
     /// Moves the cursor to the start of the previous word.
     pub fn move_cursor_prev_word(&mut self) {
         self.cursor = self.prev_word_offset();

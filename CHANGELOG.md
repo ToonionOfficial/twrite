@@ -5,6 +5,16 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Multi-click selection & drag-expansion snapping (`twrite-core`, `twrite-gpui`)**:
+  - Double-click highlights the clicked word under the cursor; triple-click highlights the entire line (including trailing line terminator).
+  - Multi-click drag selection extends with boundary snapping: dragging after double-click expands word-by-word; dragging after triple-click expands line-by-line.
+  - New boundary helpers in `twrite-core`: `find_word_range_at`, `find_line_range_at`, and convenience methods `EditorBuffer::{word_range_at, line_range_at}`.
+  - New `twrite_gpui::SelectionGranularity` enum (`Character`, `Word`, `Line`) tracking active drag granularity on `Editor`.
+  - Hyperlink opening and task checkbox toggling restricted to single clicks (`click_count == 1`) so double-clicking links selects text without re-opening browsers.
+
 ## [0.5.0] - 2026-09-10
 
 ### Added

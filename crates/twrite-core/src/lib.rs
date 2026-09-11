@@ -51,8 +51,8 @@ pub use markdown::{
     table_block_at, table_block_at_with_fences, table_layouts, table_layouts_with_fences,
 };
 pub use movement::{
-    CharKind, classify_char, find_line_end, find_line_start, find_next_word_end,
-    find_prev_word_start,
+    CharKind, classify_char, find_line_end, find_line_range_at, find_line_start,
+    find_next_word_end, find_prev_word_start, find_word_range_at,
 };
 pub use prompt::{
     PromptAction, PromptItem, PromptPlacement, PromptSpec, PromptState, fuzzy_filter, fuzzy_score,
@@ -322,6 +322,15 @@ mod tests {
         );
 
         let _ = std::fs::remove_file(&file_path);
+    }
+
+    #[test]
+    fn test_buffer_word_and_line_range_at() {
+        let buffer = EditorBuffer::new("hello world\nsecond line");
+        assert_eq!(buffer.word_range_at(2), 0..5);
+        assert_eq!(buffer.word_range_at(6), 6..11);
+        assert_eq!(buffer.line_range_at(3), 0..12);
+        assert_eq!(buffer.line_range_at(15), 12..23);
     }
 
     fn buffer_version_rand() -> u64 {

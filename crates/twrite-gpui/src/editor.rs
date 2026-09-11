@@ -52,6 +52,10 @@ pub struct Editor {
     pub cursor_style: CursorStyle,
     /// Whether the user is currently mouse-drag selecting text.
     pub is_selecting: bool,
+    /// Active selection granularity for drag selection.
+    pub selection_granularity: SelectionGranularity,
+    /// Anchor range for multi-click drag selection expansion.
+    pub drag_initial_range: Option<Range<usize>>,
     /// Whether the mouse cursor is currently hovering over an interactive task checkbox.
     pub is_hovering_task: bool,
     /// Target URL if the mouse cursor is currently hovering over a hyperlink.
@@ -81,6 +85,18 @@ pub struct Editor {
     pub search_matches: Vec<Range<usize>>,
     /// Whether the highlight-all wash is enabled (from the search snapshot).
     pub search_highlight_all: bool,
+}
+
+/// Selection granularity when mouse-drag selecting text.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SelectionGranularity {
+    /// Character-by-character selection.
+    #[default]
+    Character,
+    /// Word-by-word selection (initiated by double-click).
+    Word,
+    /// Line-by-line selection (initiated by triple-click).
+    Line,
 }
 
 /// A hyperlink visible on screen with its screen pixel bounds and target URL.
@@ -168,6 +184,8 @@ impl Editor {
             selection: None,
             cursor_style,
             is_selecting: false,
+            selection_granularity: SelectionGranularity::Character,
+            drag_initial_range: None,
             is_hovering_task: false,
             hovered_link: None,
             last_bounds: None,
@@ -1026,19 +1044,15 @@ impl Editor {
     ) {
         self.focus_handle.focus(window, cx);
 
-        // If clicking on a hyperlink, open the URL in the default browser
-        if !event.modifiers.shift
+        if event.click_count == 1
+            && !event.modifiers.shift
             && let Some(url) = self.link_at_position(event.position)
         {
             cx.open_url(&url);
             return;
         }
 
-        // Dispatch clicks to hooks first (e.g. MarkdownHook toggles task checkboxes).
-        // Hooks operate on buffer (row, col) coordinates and decide interactivity
-        // themselves via their own config.
-        if !event.modifiers.shift {
-            // Copy hit-test scalars first: `offset_for_position` needs `&mut`.
+        if event.click_count == 1 && !event.modifiers.shift {
             let clicked = find_visible_line(&self.visible_lines, event.position.y)
                 .map(|l| (l.row, l.line_start_byte, l.line_len_bytes));
 
@@ -1086,16 +1100,37 @@ impl Editor {
 
         let offset = self.offset_for_position(event.position, window);
         self.is_selecting = true;
-        self.buffer.set_cursor_offset(offset);
 
-        if event.modifiers.shift {
-            if let Some(sel) = self.selection {
-                self.selection = Some(Selection::range(sel.anchor, offset));
+        if event.click_count == 2 {
+            let word = self.buffer.word_range_at(offset);
+            self.selection_granularity = SelectionGranularity::Word;
+            self.drag_initial_range = Some(word.clone());
+            self.buffer.set_cursor_offset(word.end);
+            self.selection = Some(Selection::range(word.start, word.end));
+        } else if event.click_count >= 3 {
+            let line = self.buffer.line_range_at(offset);
+            self.selection_granularity = SelectionGranularity::Line;
+            self.drag_initial_range = Some(line.clone());
+            self.buffer.set_cursor_offset(line.end);
+            self.selection = Some(Selection::range(line.start, line.end));
+        } else {
+            self.selection_granularity = SelectionGranularity::Character;
+            self.drag_initial_range = None;
+            self.buffer.set_cursor_offset(offset);
+
+            if event.modifiers.shift {
+                if let Some(sel) = self.selection {
+                    self.selection = Some(Selection::range(sel.anchor, offset));
+                } else {
+                    self.selection = Some(Selection::point(offset));
+                }
             } else {
                 self.selection = Some(Selection::point(offset));
             }
-        } else {
-            self.selection = Some(Selection::point(offset));
+        }
+
+        for hook in &mut self.hooks {
+            hook.on_selection_change(&self.buffer, self.selection.as_ref());
         }
 
         self.scroll_to_cursor(Some(window));
@@ -1111,17 +1146,62 @@ impl Editor {
     ) {
         if self.is_selecting {
             let offset = self.offset_for_position(event.position, window);
-            if self.buffer.cursor_offset() != offset || self.selection.is_none() {
-                self.buffer.set_cursor_offset(offset);
+            match self.selection_granularity {
+                SelectionGranularity::Character => {
+                    if self.buffer.cursor_offset() != offset || self.selection.is_none() {
+                        self.buffer.set_cursor_offset(offset);
 
-                if let Some(sel) = self.selection {
-                    self.selection = Some(Selection::range(sel.anchor, offset));
-                } else {
-                    self.selection = Some(Selection::point(offset));
+                        if let Some(sel) = self.selection {
+                            self.selection = Some(Selection::range(sel.anchor, offset));
+                        } else {
+                            self.selection = Some(Selection::point(offset));
+                        }
+
+                        for hook in &mut self.hooks {
+                            hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                        }
+                        self.scroll_to_cursor(Some(window));
+                        cx.notify();
+                    }
                 }
-
-                self.scroll_to_cursor(Some(window));
-                cx.notify();
+                SelectionGranularity::Word => {
+                    let initial = self.drag_initial_range.clone().unwrap_or(offset..offset);
+                    let word = self.buffer.word_range_at(offset);
+                    let (anchor, head) = if offset >= initial.start {
+                        (initial.start, word.end.max(initial.end))
+                    } else {
+                        (initial.end, word.start)
+                    };
+                    let new_sel = Selection::range(anchor, head);
+                    if self.selection != Some(new_sel) {
+                        self.selection = Some(new_sel);
+                        self.buffer.set_cursor_offset(head);
+                        for hook in &mut self.hooks {
+                            hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                        }
+                        self.scroll_to_cursor(Some(window));
+                        cx.notify();
+                    }
+                }
+                SelectionGranularity::Line => {
+                    let initial = self.drag_initial_range.clone().unwrap_or(offset..offset);
+                    let line = self.buffer.line_range_at(offset);
+                    let (anchor, head) = if offset >= initial.start {
+                        (initial.start, line.end.max(initial.end))
+                    } else {
+                        (initial.end, line.start)
+                    };
+                    let new_sel = Selection::range(anchor, head);
+                    if self.selection != Some(new_sel) {
+                        self.selection = Some(new_sel);
+                        self.buffer.set_cursor_offset(head);
+                        for hook in &mut self.hooks {
+                            hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                        }
+                        self.scroll_to_cursor(Some(window));
+                        cx.notify();
+                    }
+                }
             }
         } else {
             let hovering = self.is_position_over_task_checkbox(event.position, window);
@@ -1144,10 +1224,15 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         self.is_selecting = false;
+        self.drag_initial_range = None;
+        self.selection_granularity = SelectionGranularity::Character;
         if let Some(sel) = self.selection
             && sel.is_empty()
         {
             self.selection = None;
+        }
+        for hook in &mut self.hooks {
+            hook.on_selection_change(&self.buffer, self.selection.as_ref());
         }
         let hovering = self.is_position_over_task_checkbox(event.position, window);
         let hovered_link = self.link_at_position(event.position);
@@ -1226,6 +1311,16 @@ impl Render for Editor {
                 MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
                     this.is_selecting = false;
+                    this.drag_initial_range = None;
+                    this.selection_granularity = SelectionGranularity::Character;
+                    if let Some(sel) = this.selection
+                        && sel.is_empty()
+                    {
+                        this.selection = None;
+                    }
+                    for hook in &mut this.hooks {
+                        hook.on_selection_change(&this.buffer, this.selection.as_ref());
+                    }
                     let changed = this.is_hovering_task || this.hovered_link.is_some();
                     this.is_hovering_task = false;
                     this.hovered_link = None;

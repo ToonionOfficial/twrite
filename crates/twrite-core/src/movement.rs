@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use ropey::Rope;
 
 /// Character classification used for word-boundary detection.
@@ -166,6 +168,107 @@ pub fn find_line_end(text: &Rope, cursor_byte: usize) -> usize {
     text.char_to_byte(line_start_char + line_len_chars)
 }
 
+/// Finds the byte range of the word, punctuation token, or whitespace run containing `cursor_byte`.
+///
+/// If `cursor_byte` points to whitespace or a line break immediately following a word or
+/// punctuation token on the same line, the preceding token is selected. Otherwise, the
+/// continuous token of the same [`CharKind`] spanning `cursor_byte` is returned, never
+/// crossing line boundaries.
+pub fn find_word_range_at(text: &Rope, cursor_byte: usize) -> Range<usize> {
+    let total_bytes = text.len_bytes();
+    let cursor_byte = cursor_byte.min(total_bytes);
+    if total_bytes == 0 {
+        return 0..0;
+    }
+
+    let total_chars = text.len_chars();
+    let char_idx = text.byte_to_char(cursor_byte);
+
+    let target_idx = if char_idx >= total_chars {
+        if char_idx > 0 {
+            let prev = text.char(char_idx - 1);
+            if prev != '\n' && prev != '\r' {
+                char_idx - 1
+            } else {
+                return cursor_byte..cursor_byte;
+            }
+        } else {
+            return cursor_byte..cursor_byte;
+        }
+    } else {
+        let curr = text.char(char_idx);
+        if curr == '\n' || curr == '\r' {
+            if char_idx > 0 {
+                let prev = text.char(char_idx - 1);
+                if prev != '\n' && prev != '\r' {
+                    char_idx - 1
+                } else {
+                    return cursor_byte..cursor_byte;
+                }
+            } else {
+                return cursor_byte..cursor_byte;
+            }
+        } else if classify_char(curr) == CharKind::Whitespace && char_idx > 0 {
+            let prev = text.char(char_idx - 1);
+            if prev != '\n' && prev != '\r' && classify_char(prev) != CharKind::Whitespace {
+                char_idx - 1
+            } else {
+                char_idx
+            }
+        } else {
+            char_idx
+        }
+    };
+
+    let target_char = text.char(target_idx);
+    let target_kind = classify_char(target_char);
+
+    let mut start_idx = target_idx;
+    while start_idx > 0 {
+        let prev = text.char(start_idx - 1);
+        if prev == '\n' || prev == '\r' || classify_char(prev) != target_kind {
+            break;
+        }
+        start_idx -= 1;
+    }
+
+    let mut end_idx = target_idx + 1;
+    while end_idx < total_chars {
+        let next = text.char(end_idx);
+        if next == '\n' || next == '\r' || classify_char(next) != target_kind {
+            break;
+        }
+        end_idx += 1;
+    }
+
+    let start_byte = text.char_to_byte(start_idx);
+    let end_byte = text.char_to_byte(end_idx);
+    start_byte..end_byte
+}
+
+/// Returns the byte range of the full line containing `cursor_byte`, including
+/// any trailing line terminator (`\n` or `\r\n`).
+pub fn find_line_range_at(text: &Rope, cursor_byte: usize) -> Range<usize> {
+    let total_bytes = text.len_bytes();
+    let cursor_byte = cursor_byte.min(total_bytes);
+    if total_bytes == 0 {
+        return 0..0;
+    }
+
+    let char_idx = text.byte_to_char(cursor_byte);
+    let line_idx = text.char_to_line(char_idx);
+    let line_start_char = text.line_to_char(line_idx);
+    let start = text.char_to_byte(line_start_char);
+
+    let end = if line_idx + 1 < text.len_lines() {
+        text.line_to_byte(line_idx + 1)
+    } else {
+        total_bytes
+    };
+
+    start..end
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,5 +349,70 @@ mod tests {
 
         assert_eq!(find_line_start(&text, 25), 23);
         assert_eq!(find_line_end(&text, 25), 28);
+    }
+
+    #[test]
+    fn test_find_word_range_at() {
+        let text = Rope::from_str("hello world, foo.bar();\nsecond line");
+
+        assert_eq!(find_word_range_at(&text, 0), 0..5);
+        assert_eq!(find_word_range_at(&text, 2), 0..5);
+        assert_eq!(find_word_range_at(&text, 5), 0..5);
+
+        assert_eq!(find_word_range_at(&text, 6), 6..11);
+        assert_eq!(find_word_range_at(&text, 10), 6..11);
+
+        assert_eq!(find_word_range_at(&text, 11), 11..12);
+
+        assert_eq!(find_word_range_at(&text, 12), 11..12);
+
+        assert_eq!(find_word_range_at(&text, 13), 13..16);
+        assert_eq!(find_word_range_at(&text, 16), 16..17);
+        assert_eq!(find_word_range_at(&text, 17), 17..20);
+        assert_eq!(find_word_range_at(&text, 20), 20..23);
+        assert_eq!(find_word_range_at(&text, 21), 20..23);
+        assert_eq!(find_word_range_at(&text, 22), 20..23);
+
+        assert_eq!(find_word_range_at(&text, 23), 20..23);
+
+        assert_eq!(find_word_range_at(&text, 24), 24..30);
+
+        let empty = Rope::from_str("");
+        assert_eq!(find_word_range_at(&empty, 0), 0..0);
+
+        let unicode = Rope::from_str("مرحبا بالعالم");
+        assert_eq!(find_word_range_at(&unicode, 0), 0..10);
+    }
+
+    #[test]
+    fn test_find_word_range_multiple_spaces() {
+        let text = Rope::from_str("hello   world");
+        assert_eq!(find_word_range_at(&text, 5), 0..5);
+        assert_eq!(find_word_range_at(&text, 6), 5..8);
+        assert_eq!(find_word_range_at(&text, 7), 5..8);
+        assert_eq!(find_word_range_at(&text, 8), 8..13);
+    }
+
+    #[test]
+    fn test_find_line_range_at() {
+        let text = Rope::from_str("first line\nsecond line\nthird");
+
+        assert_eq!(find_line_range_at(&text, 0), 0..11);
+        assert_eq!(find_line_range_at(&text, 5), 0..11);
+        assert_eq!(find_line_range_at(&text, 10), 0..11);
+
+        assert_eq!(find_line_range_at(&text, 11), 11..23);
+        assert_eq!(find_line_range_at(&text, 15), 11..23);
+
+        assert_eq!(find_line_range_at(&text, 23), 23..28);
+        assert_eq!(find_line_range_at(&text, 27), 23..28);
+        assert_eq!(find_line_range_at(&text, 28), 23..28);
+
+        let crlf = Rope::from_str("first\r\nsecond\r\n");
+        assert_eq!(find_line_range_at(&crlf, 2), 0..7);
+        assert_eq!(find_line_range_at(&crlf, 8), 7..15);
+
+        let empty = Rope::from_str("");
+        assert_eq!(find_line_range_at(&empty, 0), 0..0);
     }
 }
