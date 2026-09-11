@@ -1,7 +1,8 @@
 # Examples Tour
 
-The six examples in `examples/` are the recommended reading order: each
-file header repeats its number and prerequisites:
+The examples in `examples/` are the recommended reading order: the
+numbered 1–6 sequence plus one supplemental demo. Each file header repeats
+its number and prerequisites:
 
 1. **`simple`**: bare window plus stock find. Start here.
 2. **`hooks`**: a custom hook (`Ctrl+D` duplicate-line, list continuation,

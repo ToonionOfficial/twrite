@@ -40,3 +40,7 @@ path = "../../examples/vim.rs"
 name = "markdown"
 path = "../../examples/markdown.rs"
 required-features = ["markdown"]
+
+[[example]]
+name = "context_menu"
+path = "../../examples/context_menu.rs"
