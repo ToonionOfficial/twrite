@@ -1,18 +1,18 @@
 # TWrite
 
-[![Docs](https://img.shields.io/badge/docs-notes.toonion.net%2Fdocs-blue)](https://notes.toonion.net/docs)
+[![Docs](https://img.shields.io/badge/docs-notes.toonion.net%2Fdocs-blue)](https://toonionofficial.github.io/twrite/docs)
 
 TWrite is a fast, modular text editor crate for Rust. Leveraging the GPU-accelerated GPUI framework developed by [Zed](https://github.com/zed-industries/zed), it provides a responsive, extensible base for building modern text, Markdown, and custom-language editors
 
 Full guides plus the API reference live at
-[notes.toonion.net/docs](https://notes.toonion.net/docs).
+[https://toonionofficial.github.io/twrite/docs](https://toonionofficial.github.io/twrite/docs).
 
 ## Install
 
 TWrite is not on crates.io yet; depend on git:
 
 ```toml
-twrite = { git = "https://github.com/ToonionOfficial/twrite", version = "0.5" }
+twrite = { git = "https://github.com/ToonionOfficial/twrite", version = "0.6" }
 ```
 
 Linux also needs GPUI system libraries; see the
@@ -53,6 +53,6 @@ Start from `examples/simple.rs` and follow the `Next:` pointers.
 
 ## Links
 
-- [Documentation](https://notes.toonion.net/docs) (guides plus API reference)
+- [Documentation](https://toonionofficial.github.io/twrite/docs) (guides plus API reference)
 - [Changelog](CHANGELOG.md)
 - [License](LICENSE)
