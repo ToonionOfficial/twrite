@@ -1,0 +1,17 @@
+[book]
+title = "TWrite Docs"
+authors = ["Toonion"]
+description = "Guides and patterns for the TWrite GPU-accelerated text editor crate"
+language = "en"
+src = "src"
+# Served from notes.toonion.net/docs: every asset, search, and
+# cross-link is rooted here. Do not remove.
+site-url = "/docs/"
+
+[build]
+build-dir = "book"
+
+[output.html]
+git-repository-url = "https://github.com/ToonionOfficial/twrite"
+edit-url-template = "https://github.com/ToonionOfficial/twrite/edit/main/docs/{path}"
+search.enable = true

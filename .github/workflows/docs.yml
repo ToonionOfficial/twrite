@@ -1,0 +1,91 @@
+name: Docs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Pages deploys need these; least privilege otherwise.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: github-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libfontconfig1-dev \
+            libwayland-dev \
+            libx11-xcb-dev \
+            libxkbcommon-x11-dev \
+            libxkbcommon-dev
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install mdBook
+        uses: taiki-e/install-action@v2
+        with:
+          tool: mdbook@0.4.43
+
+      - name: Build guide
+        run: mdbook build docs
+
+      - name: Build API reference
+        run: cargo doc --no-deps --all-features --workspace --lib
+
+      - name: Assemble Pages artifact
+        run: |
+          rm -rf site
+          mkdir -p site/docs
+          # Guides under /docs (book.toml sets site-url accordingly).
+          cp -r docs/book/. site/docs/
+          # API reference under /docs/api.
+          mkdir -p site/docs/api
+          cp -r target/doc/twrite site/docs/api/
+          cp -r target/doc/twrite_core site/docs/api/
+          cp -r target/doc/twrite_gpui site/docs/api/
+          # Custom domain (CNAME) lives at the artifact root.
+          echo "notes.toonion.net" > site/CNAME
+          # Placeholder root page until the landing page exists.
+          cat > site/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+            <head><meta charset="utf-8"><title>TWrite</title></head>
+            <body><p>TWrite docs live at <a href="/docs/">notes.toonion.net/docs</a>.</p></body>
+          </html>
+          HTML
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
