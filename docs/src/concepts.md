@@ -52,7 +52,7 @@ match ctx.prompt.handle_key(event) {
 
 Typing, history, `Tab` completion, and `Esc` come free; `PromptBar` draws
 whatever is open with no per-client rendering code. See
-[Custom Prompts](guide-prompt.md) for the full pattern.
+[Command Palettes & Prompts](recipe-prompt.md) for the full pattern.
 
 ## Batteries
 
