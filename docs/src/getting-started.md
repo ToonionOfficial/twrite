@@ -23,15 +23,15 @@ edition = "2024"
 
 [dependencies]
 gpui = "0.2"
-twrite = "0.8"
+twrite = "0.9"
 
 # Optional: To enable the full Markdown battery, use:
-# twrite = { version = "0.8", features = ["markdown"] }
+# twrite = { version = "0.9", features = ["markdown"] }
 
 # Wayland-only (or otherwise trimmed) backends: official `gpui` folds the old
 # gpui_platform crate into itself, so select features on both lines.
 # gpui = { version = "0.2", default-features = false, features = ["wayland"] }
-# twrite = { version = "0.8", default-features = false, features = ["wayland"] }
+# twrite = { version = "0.9", default-features = false, features = ["wayland"] }
 ```
 
 ## 3. Your First Editor Application
