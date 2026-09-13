@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/twrite", "crates/twrite-core", "crates/twrite-gpui"]
 
 [workspace.package]
-version = "0.9.1"
+version = "0.9.2"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/ToonionOfficial/twrite"
@@ -17,6 +17,6 @@ unicode-width = "0.2"
 pulldown-cmark = { version = "0.12", default-features = false }
 gpui = "0.2.2"
 
-twrite = { version = "0.9.1", path = "crates/twrite" }
-twrite-core = { version = "0.9.1", path = "crates/twrite-core" }
-twrite-gpui = { version = "0.9.1", path = "crates/twrite-gpui" }
+twrite = { version = "0.9.2", path = "crates/twrite" }
+twrite-core = { version = "0.9.2", path = "crates/twrite-core" }
+twrite-gpui = { version = "0.9.2", path = "crates/twrite-gpui" }
