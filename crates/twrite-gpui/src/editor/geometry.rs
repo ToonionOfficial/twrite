@@ -1,7 +1,7 @@
 use gpui::{Pixels, Point, TextRun, Window, point, px};
 use twrite_core::Selection;
 
-use crate::canvas::{RunFonts, build_line_text_runs};
+use crate::canvas::{LineMetrics, RunFonts, build_line_text_runs};
 
 use super::{Editor, VisibleLineLayout};
 
@@ -191,7 +191,6 @@ impl Editor {
             let task_state = target_line.task_state;
             let text_origin_x = target_line.text_origin_x;
             let line_top = target_line.top;
-            let line_height = target_line.line_height;
             let raw_line = self.buffer.line_to_string(row);
             let line_text = raw_line.trim_end_matches(['\r', '\n']);
 
@@ -199,6 +198,8 @@ impl Editor {
                 return line_start_byte;
             }
 
+            let base_font_size = self.config.font_size;
+            let base_line_height = self.config.line_height;
             let cursor_row = self.buffer.cursor_point().row;
             let highlighter_rev = self.highlighter_rev;
             let host_font = window.text_style().font();
@@ -214,6 +215,16 @@ impl Editor {
             );
             let concealed = &cached.concealed;
 
+            // Mirror paint: headings shape at a scaled font size, so hit-test
+            // must use the same metrics or clicks drift on concealed lines.
+            let metrics = LineMetrics::for_line(
+                line_text,
+                &concealed.display_text,
+                &cached.spans,
+                base_font_size,
+                base_line_height,
+            );
+
             let is_checked_task =
                 task_state == Some(true) && line_text.len() != concealed.display_text.len();
 
@@ -227,7 +238,7 @@ impl Editor {
                 None,
                 &fonts,
                 &self.theme,
-                false,
+                metrics.is_code_block,
                 is_checked_task,
             );
 
@@ -242,7 +253,7 @@ impl Editor {
                 .text_system()
                 .shape_text(
                     concealed.display_text.clone().into(),
-                    self.config.font_size,
+                    metrics.font_size,
                     &runs,
                     wrap_width,
                     None,
@@ -256,7 +267,7 @@ impl Editor {
             let rel_pos = point(line_rel_x, line_rel_y);
 
             let col_display = text_line
-                .closest_index_for_position(rel_pos, line_height)
+                .closest_index_for_position(rel_pos, metrics.line_height)
                 .unwrap_or_else(|idx| idx);
 
             let col_src = concealed.display_to_source(col_display);
