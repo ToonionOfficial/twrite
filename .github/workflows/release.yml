@@ -49,6 +49,11 @@ jobs:
       - name: Verify Examples Compile
         run: cargo check --workspace --examples
 
+      - name: Publish to crates.io
+        run: cargo publish --workspace --locked
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
