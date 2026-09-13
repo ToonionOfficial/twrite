@@ -5,6 +5,24 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.0] - 2026-09-13
+
+### Changed
+- **Structured `KeyCode` enum replaces stringly key names (breaking)**:
+  - New crossterm-style `twrite_core::KeyCode` (`Char`, `Enter`/`Tab`/`Escape`/
+    `Backspace`/`Delete`/`Insert`, arrows, `Home`/`End`/`PageUp`/`PageDown`,
+    `F(u8)`, `Unidentified`). Space is `Char(' ')`, not a named variant.
+  - `KeyEvent { key: String }` becomes `{ code: KeyCode, … }`;
+    `translate_key_down` is now the single GPUI-string boundary (verified
+    against gpui 0.2.2's Linux keysym table).
+  - `ContextMenuItem::with_hint` takes `KeyHint`; hints render as kbd chips
+    (one per modifier + key) instead of free text.
+  - Synthetic prompt-bar actions (`focus_search`, …) leave the key channel
+    for a dedicated `SearchAction` channel (`EditorHook::on_search_action`,
+    `Editor::press_search_action`).
+  - `EditorHook::before_insert(&str)` becomes `before_insert(char)`;
+    `Modifiers` gains `ctrl`/`alt`/`shift`/`meta` constructors.
+
 ## [0.8.0] - 2026-09-13
 
 ### Changed

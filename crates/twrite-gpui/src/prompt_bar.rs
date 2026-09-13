@@ -1,5 +1,5 @@
 use gpui::*;
-use twrite_core::{PromptState, SearchSnapshot};
+use twrite_core::{KeyCode, PromptState, SearchAction, SearchSnapshot};
 
 use crate::editor::Editor;
 
@@ -177,14 +177,19 @@ impl PromptBar {
                 cursor_idx,
                 "Find in page",
                 is_find_active,
-                "focus_search",
+                SearchAction::FocusSearch,
                 cx,
             ))
-            .child(Self::stepper_button("search-step-prev", "^", "arrowup", cx))
+            .child(Self::stepper_button(
+                "search-step-prev",
+                "^",
+                KeyCode::Up,
+                cx,
+            ))
             .child(Self::stepper_button(
                 "search-step-next",
                 "v",
-                "arrowdown",
+                KeyCode::Down,
                 cx,
             ));
 
@@ -203,7 +208,7 @@ impl PromptBar {
                 "Highlight All",
                 Some(0),
                 snapshot.highlight_all,
-                "h",
+                KeyCode::Char('h'),
                 cx,
             ))
             .child(Self::checkbox(
@@ -211,7 +216,7 @@ impl PromptBar {
                 "Match Case",
                 Some(6),
                 snapshot.case_sensitive,
-                "c",
+                KeyCode::Char('c'),
                 cx,
             ))
             .child(Self::checkbox(
@@ -219,7 +224,7 @@ impl PromptBar {
                 "Whole Words",
                 Some(0),
                 snapshot.whole_word,
-                "w",
+                KeyCode::Char('w'),
                 cx,
             ))
             .child(div().flex_1())
@@ -258,13 +263,13 @@ impl PromptBar {
                 cursor_idx,
                 "Replace with",
                 is_replace_active,
-                "focus_replace",
+                SearchAction::FocusReplace,
                 cx,
             ))
             .child(Self::action_button(
                 "search-btn-replace",
                 "Replace",
-                "enter",
+                KeyCode::Enter,
                 true,
                 false,
                 cx,
@@ -272,7 +277,7 @@ impl PromptBar {
             .child(Self::action_button(
                 "search-btn-replace-all",
                 "Replace All",
-                "a",
+                KeyCode::Char('a'),
                 false,
                 true,
                 cx,
@@ -297,7 +302,7 @@ impl PromptBar {
         cursor: Option<usize>,
         placeholder: &'static str,
         focused: bool,
-        focus_key: &'static str,
+        focus_action: SearchAction,
         cx: &mut Context<Editor>,
     ) -> Stateful<Div> {
         let border_color = if focused {
@@ -363,7 +368,7 @@ impl PromptBar {
             MouseButton::Left,
             cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
                 if !focused {
-                    this.press_search_key(focus_key, false, false, false, Some(window), cx);
+                    this.press_search_action(focus_action, Some(window), cx);
                 }
                 cx.stop_propagation();
             }),
@@ -378,7 +383,7 @@ impl PromptBar {
         label: &'static str,
         underline_index: Option<usize>,
         checked: bool,
-        alt_key: &'static str,
+        alt_key: KeyCode,
         cx: &mut Context<Editor>,
     ) -> Stateful<Div> {
         let box_bg = if checked {
@@ -460,7 +465,7 @@ impl PromptBar {
     fn stepper_button(
         id: &'static str,
         label: &'static str,
-        key: &'static str,
+        key: KeyCode,
         cx: &mut Context<Editor>,
     ) -> Stateful<Div> {
         div()
@@ -509,7 +514,7 @@ impl PromptBar {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
-                    this.press_search_key("toggle_replace", false, false, false, Some(window), cx);
+                    this.press_search_action(SearchAction::ToggleReplace, Some(window), cx);
                     cx.stop_propagation();
                 }),
             )
@@ -519,7 +524,7 @@ impl PromptBar {
     fn action_button(
         id: &'static str,
         label: &'static str,
-        key: &'static str,
+        key: KeyCode,
         ctrl: bool,
         alt: bool,
         cx: &mut Context<Editor>,
@@ -562,7 +567,7 @@ impl PromptBar {
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _event: &MouseDownEvent, window, cx| {
-                    this.press_search_key("escape", false, false, false, Some(window), cx);
+                    this.press_search_key(KeyCode::Escape, false, false, false, Some(window), cx);
                     cx.stop_propagation();
                 }),
             )

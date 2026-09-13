@@ -1,3 +1,4 @@
+use crate::KeyCode;
 use crate::hook::KeyEvent;
 
 /// Where a frontend should render an open prompt.
@@ -467,15 +468,15 @@ impl PromptState {
             return PromptAction::Ignored;
         }
         let mods = &event.modifiers;
-        match event.key.as_str() {
-            "escape" => {
+        match &event.code {
+            KeyCode::Escape => {
                 self.close();
                 PromptAction::Cancelled
             }
-            "enter" if !mods.ctrl && !mods.alt && !mods.meta => {
+            KeyCode::Enter if !mods.ctrl && !mods.alt && !mods.meta => {
                 PromptAction::Submitted(self.submit())
             }
-            "tab" => {
+            KeyCode::Tab => {
                 if self.selected_item().is_some() {
                     self.complete_selected();
                     PromptAction::Editing
@@ -483,7 +484,7 @@ impl PromptState {
                     PromptAction::Ignored
                 }
             }
-            "arrowup" | "up" if !mods.ctrl && !mods.alt && !mods.meta => {
+            KeyCode::Up if !mods.ctrl && !mods.alt && !mods.meta => {
                 if self.items.is_empty() {
                     self.history_prev();
                 } else {
@@ -491,7 +492,7 @@ impl PromptState {
                 }
                 PromptAction::Editing
             }
-            "arrowdown" | "down" if !mods.ctrl && !mods.alt && !mods.meta => {
+            KeyCode::Down if !mods.ctrl && !mods.alt && !mods.meta => {
                 if self.items.is_empty() {
                     self.history_next();
                 } else {
@@ -499,92 +500,86 @@ impl PromptState {
                 }
                 PromptAction::Editing
             }
-            "backspace" if (mods.ctrl || mods.alt) && !mods.meta => {
+            KeyCode::Backspace if (mods.ctrl || mods.alt) && !mods.meta => {
                 self.delete_word_before();
                 PromptAction::Editing
             }
-            "backspace" if mods.meta && !mods.ctrl && !mods.alt => {
+            KeyCode::Backspace if mods.meta && !mods.ctrl && !mods.alt => {
                 self.clear_to_start();
                 PromptAction::Editing
             }
-            "backspace" if !mods.ctrl && !mods.alt && !mods.meta => {
+            KeyCode::Backspace if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.backspace();
                 PromptAction::Editing
             }
-            "delete" if (mods.ctrl || mods.alt) && !mods.meta => {
+            KeyCode::Delete if (mods.ctrl || mods.alt) && !mods.meta => {
                 self.delete_word_after();
                 PromptAction::Editing
             }
-            "delete" if !mods.ctrl && !mods.alt && !mods.meta => {
+            KeyCode::Delete if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.delete_after_cursor();
                 PromptAction::Editing
             }
-            "arrowleft" | "left" if (mods.ctrl || mods.alt) && !mods.meta => {
+            KeyCode::Left if (mods.ctrl || mods.alt) && !mods.meta => {
                 self.move_word_left();
                 PromptAction::Editing
             }
-            "arrowleft" | "left" if mods.meta && !mods.ctrl && !mods.alt => {
+            KeyCode::Left if mods.meta && !mods.ctrl && !mods.alt => {
                 self.move_home();
                 PromptAction::Editing
             }
-            "arrowleft" | "left" if !mods.ctrl && !mods.alt && !mods.meta => {
+            KeyCode::Left if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.move_left();
                 PromptAction::Editing
             }
-            "arrowright" | "right" if (mods.ctrl || mods.alt) && !mods.meta => {
+            KeyCode::Right if (mods.ctrl || mods.alt) && !mods.meta => {
                 self.move_word_right();
                 PromptAction::Editing
             }
-            "arrowright" | "right" if mods.meta && !mods.ctrl && !mods.alt => {
+            KeyCode::Right if mods.meta && !mods.ctrl && !mods.alt => {
                 self.move_end();
                 PromptAction::Editing
             }
-            "arrowright" | "right" if !mods.ctrl && !mods.alt && !mods.meta => {
+            KeyCode::Right if !mods.ctrl && !mods.alt && !mods.meta => {
                 self.move_right();
                 PromptAction::Editing
             }
-            "home" => {
+            KeyCode::Home => {
                 self.move_home();
                 PromptAction::Editing
             }
-            "end" => {
+            KeyCode::End => {
                 self.move_end();
                 PromptAction::Editing
             }
-            key if mods.ctrl && !mods.alt && !mods.meta => match key.to_lowercase().as_str() {
-                "u" => {
-                    self.clear_to_start();
-                    PromptAction::Editing
+            KeyCode::Char(c) if mods.ctrl && !mods.alt && !mods.meta => {
+                match c.to_ascii_lowercase() {
+                    'u' => {
+                        self.clear_to_start();
+                        PromptAction::Editing
+                    }
+                    'k' => {
+                        self.clear_to_end();
+                        PromptAction::Editing
+                    }
+                    'w' => {
+                        self.delete_word_before();
+                        PromptAction::Editing
+                    }
+                    'a' => {
+                        self.move_home();
+                        PromptAction::Editing
+                    }
+                    'e' => {
+                        self.move_end();
+                        PromptAction::Editing
+                    }
+                    _ => PromptAction::Ignored,
                 }
-                "k" => {
-                    self.clear_to_end();
-                    PromptAction::Editing
-                }
-                "w" => {
-                    self.delete_word_before();
-                    PromptAction::Editing
-                }
-                "a" => {
-                    self.move_home();
-                    PromptAction::Editing
-                }
-                "e" => {
-                    self.move_end();
-                    PromptAction::Editing
-                }
-                _ => PromptAction::Ignored,
-            },
-            // Some frontends send the word "space"; normalize to " ".
-            key if !mods.ctrl && !mods.alt && !mods.meta => {
-                if key == "space" {
-                    self.insert(" ");
-                    PromptAction::Editing
-                } else if key.chars().count() == 1 {
-                    self.insert(key);
-                    PromptAction::Editing
-                } else {
-                    PromptAction::Ignored
-                }
+            }
+            KeyCode::Char(c) if !mods.ctrl && !mods.alt && !mods.meta => {
+                self.insert(&c.to_string());
+                PromptAction::Editing
             }
             _ => PromptAction::Ignored,
         }
@@ -642,6 +637,7 @@ pub fn fuzzy_filter(candidates: &[PromptItem], query: &str) -> Vec<(usize, i64)>
 mod tests {
     use super::*;
     use crate::hook::Modifiers;
+    use crate::keycode::KeyCode;
 
     fn search_spec() -> PromptSpec {
         PromptSpec::new("search", "/", "Search", PromptPlacement::BottomBar, true)
@@ -657,13 +653,13 @@ mod tests {
         )
     }
 
-    fn key(k: &str) -> KeyEvent {
-        KeyEvent::plain(k)
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::plain(code)
     }
 
-    fn ctrl(k: &str) -> KeyEvent {
+    fn ctrl(code: KeyCode) -> KeyEvent {
         KeyEvent {
-            key: k.to_string(),
+            code,
             modifiers: Modifiers {
                 ctrl: true,
                 ..Default::default()
@@ -671,9 +667,9 @@ mod tests {
         }
     }
 
-    fn alt(k: &str) -> KeyEvent {
+    fn alt(code: KeyCode) -> KeyEvent {
         KeyEvent {
-            key: k.to_string(),
+            code,
             modifiers: Modifiers {
                 alt: true,
                 ..Default::default()
@@ -685,7 +681,10 @@ mod tests {
     fn open_close_lifecycle() {
         let mut prompt = PromptState::new();
         assert!(!prompt.is_open());
-        assert_eq!(prompt.handle_key(&key("a")), PromptAction::Ignored);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Char('a'))),
+            PromptAction::Ignored
+        );
 
         prompt.open(search_spec(), "init");
         assert!(prompt.is_open());
@@ -763,7 +762,7 @@ mod tests {
 
         prompt.insert("first");
         assert_eq!(
-            prompt.handle_key(&key("enter")),
+            prompt.handle_key(&key(KeyCode::Enter)),
             PromptAction::Submitted("first".to_string())
         );
         // Still open for the caller to close explicitly.
@@ -797,7 +796,10 @@ mod tests {
         let mut prompt = PromptState::new();
         prompt.open(search_spec(), "");
         prompt.insert("abc");
-        assert_eq!(prompt.handle_key(&key("escape")), PromptAction::Cancelled);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Escape)),
+            PromptAction::Cancelled
+        );
         assert!(!prompt.is_open());
         assert_eq!(prompt.input(), "");
     }
@@ -807,14 +809,26 @@ mod tests {
         let mut prompt = PromptState::new();
         prompt.open(search_spec(), "");
 
-        assert_eq!(prompt.handle_key(&key("a")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Char('a'))),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.input(), "a");
-        assert_eq!(prompt.handle_key(&key("backspace")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Backspace)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.input(), "");
-        assert_eq!(prompt.handle_key(&key("arrowleft")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Left)),
+            PromptAction::Editing
+        );
 
         // Plain "space" key name (as sent by some frontends) inserts a space.
-        assert_eq!(prompt.handle_key(&key("space")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Char(' '))),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.input(), " ");
     }
 
@@ -824,11 +838,20 @@ mod tests {
         prompt.open(search_spec(), "");
         prompt.insert("hello");
 
-        assert_eq!(prompt.handle_key(&ctrl("a")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&ctrl(KeyCode::Char('a'))),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.cursor(), 0);
-        assert_eq!(prompt.handle_key(&ctrl("e")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&ctrl(KeyCode::Char('e'))),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.cursor(), 5);
-        assert_eq!(prompt.handle_key(&ctrl("u")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&ctrl(KeyCode::Char('u'))),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.input(), "");
     }
 
@@ -838,30 +861,48 @@ mod tests {
         prompt.open(search_spec(), "");
         prompt.insert("hello beautiful world");
 
-        assert_eq!(prompt.handle_key(&ctrl("arrowleft")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&ctrl(KeyCode::Left)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.cursor(), 16);
-        assert_eq!(prompt.handle_key(&ctrl("arrowleft")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&ctrl(KeyCode::Left)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.cursor(), 6);
         assert_eq!(
-            prompt.handle_key(&ctrl("arrowright")),
+            prompt.handle_key(&ctrl(KeyCode::Right)),
             PromptAction::Editing
         );
         assert_eq!(prompt.cursor(), 15);
 
-        assert_eq!(prompt.handle_key(&ctrl("delete")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&ctrl(KeyCode::Delete)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.input(), "hello beautiful");
 
-        assert_eq!(prompt.handle_key(&ctrl("backspace")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&ctrl(KeyCode::Backspace)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.input(), "hello ");
 
         prompt.insert("world");
-        assert_eq!(prompt.handle_key(&alt("backspace")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&alt(KeyCode::Backspace)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.input(), "hello ");
 
         prompt.move_home();
         prompt.insert("new ");
         prompt.move_home();
-        assert_eq!(prompt.handle_key(&ctrl("k")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&ctrl(KeyCode::Char('k'))),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.input(), "");
     }
 
@@ -893,7 +934,7 @@ mod tests {
         let mut prompt = PromptState::new();
         prompt.open(palette_spec(), "");
         prompt.set_items(vec![PromptItem::with_hint("save-file", "Ctrl+S")]);
-        assert_eq!(prompt.handle_key(&key("tab")), PromptAction::Editing);
+        assert_eq!(prompt.handle_key(&key(KeyCode::Tab)), PromptAction::Editing);
         assert_eq!(prompt.input(), "save-file");
     }
 
@@ -906,12 +947,15 @@ mod tests {
         prompt.insert("y");
 
         // No items: arrows walk history.
-        assert_eq!(prompt.handle_key(&key("arrowup")), PromptAction::Editing);
+        assert_eq!(prompt.handle_key(&key(KeyCode::Up)), PromptAction::Editing);
         assert_eq!(prompt.input(), "x");
 
         // With items: arrows walk the selection instead.
         prompt.set_items(vec![PromptItem::new("one"), PromptItem::new("two")]);
-        assert_eq!(prompt.handle_key(&key("arrowdown")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Down)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.selected_index(), 1);
         assert_eq!(prompt.input(), "x");
     }
@@ -923,18 +967,30 @@ mod tests {
         prompt.insert("ab");
 
         // Both platform spellings work for horizontal movement.
-        assert_eq!(prompt.handle_key(&key("left")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Left)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.cursor(), 1);
-        assert_eq!(prompt.handle_key(&key("arrowleft")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Left)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.cursor(), 0);
-        assert_eq!(prompt.handle_key(&key("right")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Right)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.cursor(), 1);
 
         // And for vertical item navigation.
         prompt.set_items(vec![PromptItem::new("one"), PromptItem::new("two")]);
-        assert_eq!(prompt.handle_key(&key("up")), PromptAction::Editing);
+        assert_eq!(prompt.handle_key(&key(KeyCode::Up)), PromptAction::Editing);
         assert_eq!(prompt.selected_index(), 1);
-        assert_eq!(prompt.handle_key(&key("arrowdown")), PromptAction::Editing);
+        assert_eq!(
+            prompt.handle_key(&key(KeyCode::Down)),
+            PromptAction::Editing
+        );
         assert_eq!(prompt.selected_index(), 0);
     }
 

@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{ContextMenuContext, ContextMenuItem, EditorBuffer, Selection};
+use crate::{ContextMenuContext, ContextMenuItem, EditorBuffer, KeyCode, SearchAction, Selection};
 use crate::{HookEffect, PromptState};
 
 /// Keyboard modifier keys state.
@@ -26,22 +26,58 @@ impl Modifiers {
             meta: false,
         }
     }
+
+    /// Control only (used for `Ctrl+…` keybinding hints).
+    pub const fn ctrl() -> Self {
+        Self {
+            ctrl: true,
+            ..Self::empty()
+        }
+    }
+
+    /// Alt (Option) only.
+    pub const fn alt() -> Self {
+        Self {
+            alt: true,
+            ..Self::empty()
+        }
+    }
+
+    /// Shift only.
+    pub const fn shift() -> Self {
+        Self {
+            shift: true,
+            ..Self::empty()
+        }
+    }
+
+    /// Meta (Command / Windows) only.
+    pub const fn meta() -> Self {
+        Self {
+            meta: true,
+            ..Self::empty()
+        }
+    }
 }
 
 /// A normalized keyboard event passed to editor hooks.
+///
+/// `code` is the structured key identity (see [`KeyCode`]); printable input
+/// arrives as `Char`, so hooks match `KeyCode::Enter` / `KeyCode::Char('d')`
+/// instead of stringly key names.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct KeyEvent {
-    /// The normalized key string (e.g. "a", "enter", "backspace", "escape").
-    pub key: String,
+    /// The structured key identity.
+    pub code: KeyCode,
     /// The active keyboard modifiers during the key event.
     pub modifiers: Modifiers,
 }
 
 impl KeyEvent {
     /// Creates a key event without modifiers.
-    pub fn plain(key: impl Into<String>) -> Self {
+    pub fn plain(code: KeyCode) -> Self {
         Self {
-            key: key.into(),
+            code,
             modifiers: Modifiers::empty(),
         }
     }
@@ -115,8 +151,17 @@ pub trait EditorHook: 'static {
         HookOutcome::PassThrough
     }
 
+    /// Handles a synthetic search-panel action (prompt-bar clicks).
+    ///
+    /// Pointer chrome cannot produce a [`KeyCode`], so actions travel here
+    /// instead of through [`on_key`][Self::on_key]. The default passes
+    /// through; [`SearchHook`][crate::SearchHook] implements this.
+    fn on_search_action(&mut self, _ctx: &mut HookContext, _action: SearchAction) -> HookOutcome {
+        HookOutcome::PassThrough
+    }
+
     /// Intercepts text insertion before it is written to the buffer.
-    fn before_insert(&mut self, _ctx: &mut HookContext, _text: &str) -> HookOutcome {
+    fn before_insert(&mut self, _ctx: &mut HookContext, _text: char) -> HookOutcome {
         HookOutcome::PassThrough
     }
 
@@ -232,7 +277,7 @@ impl EditorHook for AutoPairsHook {
             return HookOutcome::PassThrough;
         }
 
-        if event.key == "backspace" && ctx.selection.is_none() {
+        if event.code == KeyCode::Backspace && ctx.selection.is_none() {
             let cursor = ctx.buffer.cursor_offset();
             if cursor > 0 && cursor < ctx.buffer.len_bytes() {
                 let text = ctx.buffer.text();
@@ -249,9 +294,7 @@ impl EditorHook for AutoPairsHook {
             return HookOutcome::PassThrough;
         }
 
-        if event.key.chars().count() == 1 {
-            let ch = event.key.chars().next().unwrap();
-
+        if let KeyCode::Char(ch) = event.code {
             if let Some(close) = Self::matching_close(ch) {
                 if let Some(sel) = ctx.selection.take() {
                     let range = sel.byte_range();
@@ -316,7 +359,7 @@ mod tests {
 
     impl EditorHook for MockModalHook {
         fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
-            if event.key == "escape" {
+            if event.code == KeyCode::Escape {
                 self.mode = "NORMAL".into();
                 *ctx.cursor_style = CursorStyle::Block;
                 *ctx.selection = None;
@@ -324,18 +367,18 @@ mod tests {
             }
 
             if self.mode == "NORMAL" {
-                match event.key.as_str() {
-                    "i" => {
+                match &event.code {
+                    KeyCode::Char('i') => {
                         self.mode = "INSERT".into();
                         *ctx.cursor_style = CursorStyle::Bar;
                         HookOutcome::Consumed
                     }
-                    "v" => {
+                    KeyCode::Char('v') => {
                         self.mode = "VISUAL".into();
                         *ctx.selection = Some(Selection::point(ctx.buffer.cursor_offset()));
                         HookOutcome::Consumed
                     }
-                    "x" => {
+                    KeyCode::Char('x') => {
                         ctx.buffer.delete();
                         HookOutcome::Consumed
                     }
@@ -372,20 +415,20 @@ mod tests {
 
         assert_eq!(hook.status_text(), Some("NORMAL"));
 
-        let outcome = hook.on_key(&mut ctx, &KeyEvent::plain("i"));
+        let outcome = hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char('i')));
         assert_eq!(outcome, HookOutcome::Consumed);
         assert_eq!(hook.status_text(), Some("INSERT"));
         assert_eq!(*ctx.cursor_style, CursorStyle::Bar);
 
-        let outcome = hook.on_key(&mut ctx, &KeyEvent::plain("a"));
+        let outcome = hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char('a')));
         assert_eq!(outcome, HookOutcome::PassThrough);
 
-        let outcome = hook.on_key(&mut ctx, &KeyEvent::plain("escape"));
+        let outcome = hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Escape));
         assert_eq!(outcome, HookOutcome::Consumed);
         assert_eq!(hook.status_text(), Some("NORMAL"));
         assert_eq!(*ctx.cursor_style, CursorStyle::Block);
 
-        let outcome = hook.on_key(&mut ctx, &KeyEvent::plain("v"));
+        let outcome = hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char('v')));
         assert_eq!(outcome, HookOutcome::Consumed);
         assert_eq!(hook.status_text(), Some("VISUAL"));
         assert!(ctx.selection.is_some());
@@ -408,25 +451,25 @@ mod tests {
             &mut effects,
         );
 
-        let outcome = autopairs.on_key(&mut ctx, &KeyEvent::plain("("));
+        let outcome = autopairs.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char('(')));
         assert_eq!(outcome, HookOutcome::Consumed);
         assert_eq!(ctx.buffer.text().to_string(), "()");
         assert_eq!(ctx.buffer.cursor_offset(), 1);
 
-        let outcome = autopairs.on_key(&mut ctx, &KeyEvent::plain(")"));
+        let outcome = autopairs.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char(')')));
         assert_eq!(outcome, HookOutcome::Consumed);
         assert_eq!(ctx.buffer.text().to_string(), "()");
         assert_eq!(ctx.buffer.cursor_offset(), 2);
 
         ctx.buffer.set_cursor_offset(1);
-        let outcome = autopairs.on_key(&mut ctx, &KeyEvent::plain("backspace"));
+        let outcome = autopairs.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Backspace));
         assert_eq!(outcome, HookOutcome::Consumed);
         assert_eq!(ctx.buffer.text().to_string(), "");
         assert_eq!(ctx.buffer.cursor_offset(), 0);
 
         ctx.buffer.insert("word");
         *ctx.selection = Some(Selection::range(0, 4));
-        let outcome = autopairs.on_key(&mut ctx, &KeyEvent::plain("\""));
+        let outcome = autopairs.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char('"')));
         assert_eq!(outcome, HookOutcome::Consumed);
         assert_eq!(ctx.buffer.text().to_string(), "\"word\"");
     }
@@ -479,15 +522,15 @@ mod tests {
                     }
                 }
             }
-            match event.key.as_str() {
-                "/" => {
+            match &event.code {
+                KeyCode::Char('/') => {
                     ctx.prompt.open(
                         PromptSpec::new("search", "/", "Search", PromptPlacement::BottomBar, true),
                         "",
                     );
                     HookOutcome::Consumed
                 }
-                ":" => {
+                KeyCode::Char(':') => {
                     ctx.prompt.open(
                         PromptSpec::new("vim-ex", ":", "", PromptPlacement::BottomBar, false),
                         "",
@@ -521,11 +564,11 @@ mod tests {
 
         // `/foo` + Enter jumps to the first match and selects it.
         assert_eq!(
-            vim.on_key(&mut ctx, &KeyEvent::plain("/")),
+            vim.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char('/'))),
             HookOutcome::Consumed
         );
         assert!(ctx.prompt.is_open());
-        for k in ["f", "o", "o"] {
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             assert_eq!(
                 vim.on_key(&mut ctx, &KeyEvent::plain(k)),
                 HookOutcome::Consumed
@@ -533,7 +576,7 @@ mod tests {
         }
         assert_eq!(vim.search.match_count(), 2);
         assert_eq!(
-            vim.on_key(&mut ctx, &KeyEvent::plain("enter")),
+            vim.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Enter)),
             HookOutcome::Consumed
         );
         assert!(!ctx.prompt.is_open());
@@ -541,30 +584,30 @@ mod tests {
 
         // `:w` queues a save effect for the host.
         assert_eq!(
-            vim.on_key(&mut ctx, &KeyEvent::plain(":")),
+            vim.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char(':'))),
             HookOutcome::Consumed
         );
         assert_eq!(
-            vim.on_key(&mut ctx, &KeyEvent::plain("w")),
+            vim.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char('w'))),
             HookOutcome::Consumed
         );
         assert_eq!(
-            vim.on_key(&mut ctx, &KeyEvent::plain("enter")),
+            vim.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Enter)),
             HookOutcome::Consumed
         );
         assert_eq!(ctx.effects.as_slice(), &[HookEffect::Save { path: None }]);
 
         // `:q` queues a quit effect.
         assert_eq!(
-            vim.on_key(&mut ctx, &KeyEvent::plain(":")),
+            vim.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char(':'))),
             HookOutcome::Consumed
         );
         assert_eq!(
-            vim.on_key(&mut ctx, &KeyEvent::plain("q")),
+            vim.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Char('q'))),
             HookOutcome::Consumed
         );
         assert_eq!(
-            vim.on_key(&mut ctx, &KeyEvent::plain("enter")),
+            vim.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Enter)),
             HookOutcome::Consumed
         );
         assert_eq!(

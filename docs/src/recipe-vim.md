@@ -58,36 +58,36 @@ impl MinimalVimHook {
 }
 
 impl EditorHook for MinimalVimHook {
-    fn on_key(&mut self, event: &KeyEvent, ctx: &mut HookContext) -> HookOutcome {
+    fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
         match self.mode {
             VimMode::Normal => {
-                match event.key.as_str() {
-                    "i" => {
+                match &event.code {
+                    KeyCode::Char('i') => {
                         self.mode = VimMode::Insert;
                         *ctx.cursor_style = CursorStyle::Bar;
                         return HookOutcome::Consumed;
                     }
-                    "h" | "arrowleft" => {
+                    KeyCode::Char('h') | KeyCode::Left => {
                         ctx.buffer.move_cursor_left();
                         return HookOutcome::Consumed;
                     }
-                    "l" | "arrowright" => {
+                    KeyCode::Char('l') | KeyCode::Right => {
                         ctx.buffer.move_cursor_right();
                         return HookOutcome::Consumed;
                     }
-                    "k" | "arrowup" => {
+                    KeyCode::Char('k') | KeyCode::Up => {
                         ctx.buffer.move_cursor_up();
                         return HookOutcome::Consumed;
                     }
-                    "j" | "arrowdown" => {
+                    KeyCode::Char('j') | KeyCode::Down => {
                         ctx.buffer.move_cursor_down();
                         return HookOutcome::Consumed;
                     }
-                    "x" => {
+                    KeyCode::Char('x') => {
                         ctx.buffer.delete();
                         return HookOutcome::Consumed;
                     }
-                    "u" => {
+                    KeyCode::Char('u') => {
                         ctx.buffer.undo();
                         return HookOutcome::Consumed;
                     }
@@ -98,7 +98,7 @@ impl EditorHook for MinimalVimHook {
                 }
             }
             VimMode::Insert => {
-                if event.key == "escape" {
+                if event.code == KeyCode::Escape {
                     self.mode = VimMode::Normal;
                     *ctx.cursor_style = CursorStyle::Block;
                     return HookOutcome::Consumed;
@@ -107,7 +107,7 @@ impl EditorHook for MinimalVimHook {
                 HookOutcome::PassThrough
             }
             VimMode::Visual => {
-                if event.key == "escape" {
+                if event.code == KeyCode::Escape {
                     self.mode = VimMode::Normal;
                     *ctx.selection = None;
                     *ctx.cursor_style = CursorStyle::Block;

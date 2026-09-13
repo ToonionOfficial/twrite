@@ -332,16 +332,30 @@ impl Editor {
 
         // The label flexes and truncates with an ellipsis so long text
         // (e.g. "UPPERCASE selection" plus a hint) never overflows the
-        // fixed-width popup; the hint keeps its size via flex_shrink_0.
+        // fixed-width popup. Structured hints render as one kbd chip per
+        // part (modifiers in canonical order, then the key); the chip row
+        // keeps its size via flex_shrink_0 so the label truncates first.
         let label = div().flex_1().truncate().child(item.label.clone());
         if let Some(hint) = &item.hint {
-            row = row.child(label).child(
-                div()
-                    .flex_shrink_0()
-                    .text_xs()
-                    .text_color(hint_color)
-                    .child(hint.clone()),
-            );
+            let mut chips = div()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(3.0))
+                .flex_shrink_0();
+            for part in hint.parts() {
+                chips = chips.child(
+                    div()
+                        .px(px(4.0))
+                        .rounded_sm()
+                        .border_1()
+                        .border_color(hint_color)
+                        .text_size(px(10.0))
+                        .text_color(hint_color)
+                        .child(part),
+                );
+            }
+            row = row.child(label).child(chips);
         } else {
             row = row.child(label);
         }

@@ -1,4 +1,6 @@
-use crate::{EditorBuffer, Selection};
+use std::fmt;
+
+use crate::{EditorBuffer, KeyCode, Modifiers, Selection};
 
 /// Well-known context menu item ids for the built-in edit actions.
 ///
@@ -70,8 +72,8 @@ pub struct ContextMenuItem {
     pub id: &'static str,
     /// Primary row text.
     pub label: String,
-    /// Secondary hint text (keybinding shown right-aligned).
-    pub hint: Option<String>,
+    /// Structured keybinding hint, rendered as right-aligned kbd chips.
+    pub hint: Option<KeyHint>,
     /// Whether the row is clickable. Disabled rows render dimmed.
     pub enabled: bool,
     /// Whether a separator renders directly below this row.
@@ -90,12 +92,12 @@ impl ContextMenuItem {
         }
     }
 
-    /// Creates an enabled item with hint text.
-    pub fn with_hint(id: &'static str, label: &str, hint: &str) -> Self {
+    /// Creates an enabled item with a structured keybinding hint.
+    pub fn with_hint(id: &'static str, label: &str, hint: KeyHint) -> Self {
         Self {
             id,
             label: label.to_string(),
-            hint: Some(hint.to_string()),
+            hint: Some(hint),
             enabled: true,
             divider_after: false,
         }
@@ -111,6 +113,79 @@ impl ContextMenuItem {
     pub fn with_divider(mut self) -> Self {
         self.divider_after = true;
         self
+    }
+}
+
+/// Structured keybinding hint for menu rows.
+///
+/// Display is canonicalized (`Ctrl+Shift+Z`), so inconsistent free text
+/// (`"ctrl + l"` vs `"Ctrl+U"`) is impossible by construction. The hinted
+/// key is a [`KeyCode`], shared with hook matching and keymaps.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyHint {
+    /// Active modifiers, rendered first in canonical Ctrl, Alt, Shift, Meta order.
+    pub modifiers: Modifiers,
+    /// The hinted key.
+    pub code: KeyCode,
+}
+
+impl KeyHint {
+    /// Creates a hint. Single ASCII lowercase `Char` keys uppercase for
+    /// canonical form (`Char('l')` and `Char('L')` compare and render
+    /// identically); everything else is stored verbatim.
+    pub fn new(code: KeyCode, modifiers: Modifiers) -> Self {
+        let code = match code {
+            KeyCode::Char(c) if c.is_ascii_lowercase() => KeyCode::Char(c.to_ascii_uppercase()),
+            other => other,
+        };
+        Self { modifiers, code }
+    }
+
+    /// Single-modifier helpers for the common cases.
+    pub fn ctrl(code: KeyCode) -> Self {
+        Self::new(code, Modifiers::ctrl())
+    }
+
+    /// Single-modifier helper (Alt / Option).
+    pub fn alt(code: KeyCode) -> Self {
+        Self::new(code, Modifiers::alt())
+    }
+
+    /// Single-modifier helper.
+    pub fn shift(code: KeyCode) -> Self {
+        Self::new(code, Modifiers::shift())
+    }
+
+    /// Single-modifier helper (Meta / Command / Windows).
+    pub fn meta(code: KeyCode) -> Self {
+        Self::new(code, Modifiers::meta())
+    }
+
+    /// Display parts in render order: active modifiers first (canonical
+    /// Ctrl, Alt, Shift, Meta order), then the display key. One kbd chip
+    /// per part.
+    pub fn parts(&self) -> Vec<String> {
+        let mut parts = Vec::with_capacity(5);
+        if self.modifiers.ctrl {
+            parts.push("Ctrl".to_string());
+        }
+        if self.modifiers.alt {
+            parts.push("Alt".to_string());
+        }
+        if self.modifiers.shift {
+            parts.push("Shift".to_string());
+        }
+        if self.modifiers.meta {
+            parts.push("Meta".to_string());
+        }
+        parts.push(self.code.display());
+        parts
+    }
+}
+
+impl fmt::Display for KeyHint {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.parts().join("+"))
     }
 }
 
@@ -186,23 +261,23 @@ impl ContextMenuState {
 pub fn default_context_items(caps: ContextMenuCaps) -> Vec<ContextMenuItem> {
     let mut items = vec![
         with_enabled(
-            ContextMenuItem::with_hint(UNDO_ID, "Undo", "Ctrl+Z"),
+            ContextMenuItem::with_hint(UNDO_ID, "Undo", KeyHint::ctrl(KeyCode::Char('Z'))),
             caps.can_undo,
         ),
         with_enabled(
-            ContextMenuItem::with_hint(REDO_ID, "Redo", "Ctrl+Y"),
+            ContextMenuItem::with_hint(REDO_ID, "Redo", KeyHint::ctrl(KeyCode::Char('Y'))),
             caps.can_redo,
         ),
         with_enabled(
-            ContextMenuItem::with_hint(CUT_ID, "Cut", "Ctrl+X"),
+            ContextMenuItem::with_hint(CUT_ID, "Cut", KeyHint::ctrl(KeyCode::Char('X'))),
             caps.has_selection,
         ),
         with_enabled(
-            ContextMenuItem::with_hint(COPY_ID, "Copy", "Ctrl+C"),
+            ContextMenuItem::with_hint(COPY_ID, "Copy", KeyHint::ctrl(KeyCode::Char('C'))),
             caps.has_selection,
         ),
         with_enabled(
-            ContextMenuItem::with_hint(PASTE_ID, "Paste", "Ctrl+V"),
+            ContextMenuItem::with_hint(PASTE_ID, "Paste", KeyHint::ctrl(KeyCode::Char('V'))),
             caps.clipboard_has_text,
         ),
         with_enabled(
@@ -211,9 +286,18 @@ pub fn default_context_items(caps: ContextMenuCaps) -> Vec<ContextMenuItem> {
         ),
     ];
     let select_all = if caps.is_full_doc_selected {
-        ContextMenuItem::with_hint(SELECT_ALL_ID, "Select All", "Ctrl+A").disabled()
+        ContextMenuItem::with_hint(
+            SELECT_ALL_ID,
+            "Select All",
+            KeyHint::ctrl(KeyCode::Char('A')),
+        )
+        .disabled()
     } else {
-        ContextMenuItem::with_hint(SELECT_ALL_ID, "Select All", "Ctrl+A")
+        ContextMenuItem::with_hint(
+            SELECT_ALL_ID,
+            "Select All",
+            KeyHint::ctrl(KeyCode::Char('A')),
+        )
     };
     items.push(select_all.with_divider());
     items
@@ -359,6 +443,62 @@ mod tests {
             vec![vec![ContextMenuItem::new("custom", "Custom")]],
         );
         assert_eq!(merged.len(), 1);
+    }
+
+    #[test]
+    fn key_hint_display_is_canonical_order() {
+        let hint = KeyHint::new(
+            KeyCode::Char('z'),
+            Modifiers {
+                shift: true,
+                ctrl: true,
+                ..Modifiers::empty()
+            },
+        );
+        assert_eq!(hint.to_string(), "Ctrl+Shift+Z");
+        assert_eq!(hint.parts(), vec!["Ctrl", "Shift", "Z"]);
+    }
+
+    #[test]
+    fn key_hint_single_letters_normalize_case() {
+        // 'l' and 'L' are the same hint: the old free-text drift
+        // ("ctrl + l" vs "Ctrl+U") cannot be expressed anymore.
+        assert_eq!(
+            KeyHint::new(KeyCode::Char('l'), Modifiers::ctrl()),
+            KeyHint::ctrl(KeyCode::Char('L'))
+        );
+        assert_eq!(KeyHint::ctrl(KeyCode::Char('l')).to_string(), "Ctrl+L");
+    }
+
+    #[test]
+    fn key_hint_named_keys_render_mixed() {
+        assert_eq!(KeyHint::ctrl(KeyCode::Enter).to_string(), "Ctrl+Enter");
+        assert_eq!(KeyHint::ctrl(KeyCode::Char(' ')).to_string(), "Ctrl+ ");
+        assert_eq!(KeyHint::ctrl(KeyCode::Escape).to_string(), "Ctrl+Esc");
+        assert_eq!(
+            KeyHint::ctrl(KeyCode::Backspace).to_string(),
+            "Ctrl+Backspace"
+        );
+        assert_eq!(KeyHint::ctrl(KeyCode::Delete).to_string(), "Ctrl+Delete");
+        assert_eq!(KeyHint::ctrl(KeyCode::Up).to_string(), "Ctrl+↑");
+        assert_eq!(
+            KeyHint::new(KeyCode::F(5), Modifiers::empty()).to_string(),
+            "F5"
+        );
+        assert_eq!(
+            KeyHint::new(KeyCode::Char('/'), Modifiers::empty()).to_string(),
+            "/"
+        );
+    }
+
+    #[test]
+    fn builtin_rows_carry_structured_hints() {
+        let items = default_context_items(caps_all());
+        let undo = items.iter().find(|i| i.id == UNDO_ID).unwrap();
+        assert_eq!(undo.hint, Some(KeyHint::ctrl(KeyCode::Char('Z'))));
+        assert_eq!(undo.hint.as_ref().unwrap().to_string(), "Ctrl+Z");
+        let delete = items.iter().find(|i| i.id == DELETE_ID).unwrap();
+        assert_eq!(delete.hint, None);
     }
 
     #[test]
