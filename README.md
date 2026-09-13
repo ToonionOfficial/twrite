@@ -14,15 +14,21 @@ Full guides plus the API reference live at
 
 ## Install
 
-```toml
-[dependencies]
-gpui = "0.2"
-twrite = "0.9"
+```sh
+cargo add gpui@0.2 twrite
+```
 
-# Optional batteries and backends:
-# twrite = { version = "0.9", features = ["markdown"] }
-# gpui = { version = "0.2", default-features = false, features = ["wayland"] }
-# twrite = { version = "0.9", default-features = false, features = ["wayland"] }
+For Markdown support:
+
+```sh
+cargo add twrite --features markdown
+```
+
+For a specific GPU backend on Linux (Wayland or X11):
+
+```sh
+cargo add gpui@0.2 --no-default-features --features wayland
+cargo add twrite --no-default-features --features wayland
 ```
 
 Linux also needs GPUI system libraries; see the
