@@ -1,6 +1,11 @@
-# TWrite
+<h1 align="center">TWrite</h1>
 
-[![Docs.rs](https://docs.rs/twrite/badge.svg)](https://docs.rs/twrite)
+<p align="center">
+  <a href="https://crates.io/crates/twrite"><img src="https://img.shields.io/crates/v/twrite.svg" alt="Release"></a>
+  <a href="https://docs.rs/twrite"><img src="https://docs.rs/twrite/badge.svg" alt="Docs"></a>
+  <a href="https://github.com/ToonionOfficial/twrite/actions/workflows/ci.yml"><img src="https://github.com/ToonionOfficial/twrite/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/ToonionOfficial/twrite/blob/main/LICENSE"><img src="https://img.shields.io/crates/l/twrite.svg" alt="Licence"></a>
+</p>
 
 TWrite is a fast, modular text editor crate for Rust. Leveraging the GPU-accelerated GPUI framework developed by [Zed](https://github.com/zed-industries/zed), it provides a responsive, extensible base for building modern text, Markdown, and custom-language editors
 
