@@ -159,14 +159,22 @@ impl Editor {
                     self.move_cursor_to(self.buffer.len_bytes(), select);
                 }
                 KeyCode::Up => {
-                    self.scroll_up(1);
+                    self.scroll_and_clamp_cursor(1, false, select);
+                    for hook in &mut self.hooks {
+                        hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                    }
                     self.flush_effects();
+                    self.sync_search_state();
                     cx.notify();
                     return;
                 }
                 KeyCode::Down => {
-                    self.scroll_down(1);
+                    self.scroll_and_clamp_cursor(1, true, select);
+                    for hook in &mut self.hooks {
+                        hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                    }
                     self.flush_effects();
+                    self.sync_search_state();
                     cx.notify();
                     return;
                 }
