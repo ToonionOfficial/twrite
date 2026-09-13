@@ -31,10 +31,7 @@ pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
         "down" => "arrowdown".to_string(),
         _ => match &keystroke.key_char {
             Some(text)
-                if text.chars().count() == 1
-                    && !mods.control
-                    && !mods.platform
-                    && !mods.alt =>
+                if text.chars().count() == 1 && !mods.control && !mods.platform && !mods.alt =>
             {
                 text.clone()
             }
