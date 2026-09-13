@@ -5,6 +5,15 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Heading click mapping in Hidden conceal mode (`twrite-gpui`)**:
+  `offset_for_position` now shapes hit-test text with the same
+  `LineMetrics` font size and code-block flag used by paint, so mouse
+  clicks on concealed headings (`#` through `######`) land on the clicked
+  glyph instead of shifting right.
+
 ## [0.9.1] - 2026-09-13
 
 ### Fixed
