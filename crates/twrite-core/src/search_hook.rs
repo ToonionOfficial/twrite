@@ -1,14 +1,30 @@
 use std::ops::Range;
 
 use crate::{
-    EditorError, EditorHook, HookContext, PromptAction, PromptPlacement, PromptSpec, SearchQuery,
-    SearchState, Selection, replace_all_query, replace_one_query,
+    EditorError, EditorHook, HookContext, KeyCode, PromptAction, PromptPlacement, PromptSpec,
+    SearchQuery, SearchState, Selection, replace_all_query, replace_one_query,
 };
 
 /// Prompt ids owned by [`SearchHook`].
 pub const SEARCH_PROMPT_ID: &str = "search";
 /// Prompt ids owned by [`SearchHook`].
 pub const REPLACE_PROMPT_ID: &str = "replace";
+
+/// Synthetic search-panel actions from pointer chrome (buttons, boxes).
+///
+/// These are *not* keys: they originate from mouse clicks on the prompt bar
+/// and travel on their own channel
+/// ([`EditorHook::on_search_action`]) so [`KeyCode`] stays purely about
+/// physical keys.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SearchAction {
+    /// Focus the find input.
+    FocusSearch,
+    /// Focus the replace input.
+    FocusReplace,
+    /// Toggle the replace section open/closed.
+    ToggleReplace,
+}
 
 fn search_spec() -> PromptSpec {
     PromptSpec::new(
@@ -398,36 +414,55 @@ impl SearchHook {
     }
 }
 
-impl EditorHook for SearchHook {
-    fn on_key(&mut self, ctx: &mut HookContext, event: &crate::KeyEvent) -> crate::HookOutcome {
-        use crate::HookOutcome;
-
-        let key_lower = event.key.to_lowercase();
-        let mods = &event.modifiers;
-        let owns_prompt = ctx.prompt.is_open()
+impl SearchHook {
+    /// Whether this hook currently owns the open prompt (find or replace).
+    fn owns_prompt(&self, ctx: &HookContext) -> bool {
+        ctx.prompt.is_open()
             && ctx
                 .prompt
                 .spec()
-                .is_some_and(|s| s.id == SEARCH_PROMPT_ID || s.id == REPLACE_PROMPT_ID);
+                .is_some_and(|s| s.id == SEARCH_PROMPT_ID || s.id == REPLACE_PROMPT_ID)
+    }
+}
+
+impl EditorHook for SearchHook {
+    fn on_search_action(
+        &mut self,
+        ctx: &mut HookContext,
+        action: SearchAction,
+    ) -> crate::HookOutcome {
+        if !self.owns_prompt(ctx) {
+            return crate::HookOutcome::PassThrough;
+        }
+        match action {
+            SearchAction::FocusSearch => self.focus_search(ctx),
+            SearchAction::FocusReplace => self.focus_replace(ctx),
+            SearchAction::ToggleReplace => self.toggle_replace(ctx),
+        }
+        crate::HookOutcome::Consumed
+    }
+
+    fn on_key(&mut self, ctx: &mut HookContext, event: &crate::KeyEvent) -> crate::HookOutcome {
+        use crate::HookOutcome;
+
+        let lowered: Option<char> = match event.code {
+            KeyCode::Char(c) => Some(c.to_ascii_lowercase()),
+            _ => None,
+        };
+        let mods = &event.modifiers;
+        let owns_prompt = self.owns_prompt(ctx);
 
         if owns_prompt {
-            if event.key == "focus_search" {
+            if lowered == Some('f') && mods.ctrl && !mods.alt && !mods.meta {
                 self.focus_search(ctx);
                 return HookOutcome::Consumed;
             }
-            if event.key == "focus_replace" {
-                self.focus_replace(ctx);
-                return HookOutcome::Consumed;
-            }
-            if event.key == "toggle_replace" {
-                self.toggle_replace(ctx);
-                return HookOutcome::Consumed;
-            }
-            if key_lower == "f" && mods.ctrl && !mods.alt && !mods.meta {
-                self.focus_search(ctx);
-                return HookOutcome::Consumed;
-            }
-            if event.key == "tab" && !mods.ctrl && !mods.alt && !mods.meta && self.replace_mode {
+            if event.code == KeyCode::Tab
+                && !mods.ctrl
+                && !mods.alt
+                && !mods.meta
+                && self.replace_mode
+            {
                 if self.prompt_is_replace {
                     self.focus_search(ctx);
                 } else {
@@ -435,27 +470,27 @@ impl EditorHook for SearchHook {
                 }
                 return HookOutcome::Consumed;
             }
-            if event.key == "enter" && mods.ctrl && !mods.alt && !mods.meta {
+            if event.code == KeyCode::Enter && mods.ctrl && !mods.alt && !mods.meta {
                 let _ = self.replace_current(ctx);
                 return HookOutcome::Consumed;
             }
-            if key_lower == "a" && mods.alt && !mods.ctrl && !mods.meta {
+            if lowered == Some('a') && mods.alt && !mods.ctrl && !mods.meta {
                 let _ = self.replace_all(ctx);
                 return HookOutcome::Consumed;
             }
-            if key_lower == "c" && mods.alt && !mods.ctrl && !mods.meta {
+            if lowered == Some('c') && mods.alt && !mods.ctrl && !mods.meta {
                 self.toggle_case(ctx);
                 return HookOutcome::Consumed;
             }
-            if key_lower == "w" && mods.alt && !mods.ctrl && !mods.meta {
+            if lowered == Some('w') && mods.alt && !mods.ctrl && !mods.meta {
                 self.toggle_word(ctx);
                 return HookOutcome::Consumed;
             }
-            if key_lower == "h" && mods.alt && !mods.ctrl && !mods.meta {
+            if lowered == Some('h') && mods.alt && !mods.ctrl && !mods.meta {
                 self.toggle_highlight();
                 return HookOutcome::Consumed;
             }
-            if (event.key == "arrowup" || event.key == "up") && !mods.ctrl && !mods.meta {
+            if event.code == KeyCode::Up && !mods.ctrl && !mods.meta {
                 if mods.alt {
                     ctx.prompt.history_prev();
                 } else {
@@ -463,7 +498,7 @@ impl EditorHook for SearchHook {
                 }
                 return HookOutcome::Consumed;
             }
-            if (event.key == "arrowdown" || event.key == "down") && !mods.ctrl && !mods.meta {
+            if event.code == KeyCode::Down && !mods.ctrl && !mods.meta {
                 if mods.alt {
                     ctx.prompt.history_next();
                 } else {
@@ -471,7 +506,7 @@ impl EditorHook for SearchHook {
                 }
                 return HookOutcome::Consumed;
             }
-            if key_lower == "h" && mods.ctrl && !mods.alt && !mods.meta {
+            if lowered == Some('h') && mods.ctrl && !mods.alt && !mods.meta {
                 if !self.replace_mode {
                     self.open_replace(ctx);
                 } else if !self.prompt_is_replace {
@@ -481,7 +516,7 @@ impl EditorHook for SearchHook {
                 }
                 return HookOutcome::Consumed;
             }
-            if event.key == "f3" && !mods.ctrl && !mods.alt && !mods.meta {
+            if event.code == KeyCode::F(3) && !mods.ctrl && !mods.alt && !mods.meta {
                 if mods.shift {
                     self.navigate_prev(ctx, true);
                 } else {
@@ -519,13 +554,17 @@ impl EditorHook for SearchHook {
                 PromptAction::Ignored => HookOutcome::Consumed,
             }
         } else if !ctx.prompt.is_open() {
-            if key_lower == "f" && mods.ctrl && !mods.alt && !mods.meta {
+            let lowered: Option<char> = match event.code {
+                KeyCode::Char(c) => Some(c.to_ascii_lowercase()),
+                _ => None,
+            };
+            if lowered == Some('f') && mods.ctrl && !mods.alt && !mods.meta {
                 let initial = self.ctrl_f_initial(ctx);
                 self.replace_mode = false;
                 self.open_search(ctx, &initial);
                 return HookOutcome::Consumed;
             }
-            if key_lower == "h" && mods.ctrl && !mods.alt && !mods.meta {
+            if lowered == Some('h') && mods.ctrl && !mods.alt && !mods.meta {
                 if !self.active {
                     let initial = self.ctrl_f_initial(ctx);
                     self.open_search(ctx, &initial);
@@ -533,19 +572,19 @@ impl EditorHook for SearchHook {
                 self.open_replace(ctx);
                 return HookOutcome::Consumed;
             }
-            if key_lower == "c" && mods.alt && !mods.ctrl && !mods.meta && self.active {
+            if lowered == Some('c') && mods.alt && !mods.ctrl && !mods.meta && self.active {
                 self.toggle_case(ctx);
                 return HookOutcome::Consumed;
             }
-            if key_lower == "w" && mods.alt && !mods.ctrl && !mods.meta && self.active {
+            if lowered == Some('w') && mods.alt && !mods.ctrl && !mods.meta && self.active {
                 self.toggle_word(ctx);
                 return HookOutcome::Consumed;
             }
-            if key_lower == "h" && mods.alt && !mods.ctrl && !mods.meta && self.active {
+            if lowered == Some('h') && mods.alt && !mods.ctrl && !mods.meta && self.active {
                 self.toggle_highlight();
                 return HookOutcome::Consumed;
             }
-            if event.key == "f3"
+            if event.code == KeyCode::F(3)
                 && !mods.ctrl
                 && !mods.alt
                 && !mods.meta
@@ -595,7 +634,9 @@ impl EditorHook for SearchHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{CursorStyle, EditorBuffer, HookContext, HookOutcome, KeyEvent, PromptState};
+    use crate::{
+        CursorStyle, EditorBuffer, HookContext, HookOutcome, KeyCode, KeyEvent, PromptState,
+    };
 
     struct Harness {
         buffer: EditorBuffer,
@@ -618,8 +659,8 @@ mod tests {
             }
         }
 
-        fn key(&mut self, key: &str) -> HookOutcome {
-            let event = KeyEvent::plain(key);
+        fn key(&mut self, code: KeyCode) -> HookOutcome {
+            let event = KeyEvent::plain(code);
             let Harness {
                 buffer,
                 selection,
@@ -632,9 +673,9 @@ mod tests {
             hook.on_key(&mut ctx, &event)
         }
 
-        fn key_mod(&mut self, key: &str, ctrl: bool, alt: bool, shift: bool) -> HookOutcome {
+        fn key_mod(&mut self, code: KeyCode, ctrl: bool, alt: bool, shift: bool) -> HookOutcome {
             let event = KeyEvent {
-                key: key.to_string(),
+                code,
                 modifiers: crate::Modifiers {
                     ctrl,
                     alt,
@@ -660,7 +701,7 @@ mod tests {
 
         fn type_into_prompt(&mut self, text: &str) {
             for ch in text.chars() {
-                self.key(&ch.to_string());
+                self.key(KeyCode::Char(ch));
             }
         }
 
@@ -681,8 +722,8 @@ mod tests {
     #[test]
     fn idle_hook_passes_everything_through() {
         let mut h = Harness::new("hello");
-        assert_eq!(h.key("a"), HookOutcome::PassThrough);
-        assert_eq!(h.key("enter"), HookOutcome::PassThrough);
+        assert_eq!(h.key(KeyCode::Char('a')), HookOutcome::PassThrough);
+        assert_eq!(h.key(KeyCode::Enter), HookOutcome::PassThrough);
         assert!(h.hook.status_text().is_none());
     }
 
@@ -690,7 +731,10 @@ mod tests {
     fn ctrl_f_opens_search_with_selection_as_initial() {
         let mut h = Harness::new("hello world");
         h.selection = Some(Selection::range(0, 5));
-        assert_eq!(h.key_mod("f", true, false, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('f'), true, false, false),
+            HookOutcome::Consumed
+        );
         assert!(h.prompt.is_open());
         assert_eq!(h.prompt.input(), "hello");
         assert_eq!(h.hook.match_count(), 1);
@@ -700,18 +744,21 @@ mod tests {
     #[test]
     fn typing_live_refreshes_and_enter_navigates() {
         let mut h = Harness::new("foo bar foo");
-        assert_eq!(h.key_mod("f", true, false, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('f'), true, false, false),
+            HookOutcome::Consumed
+        );
 
-        for k in ["f", "o", "o"] {
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             assert_eq!(h.key(k), HookOutcome::Consumed);
         }
         assert_eq!(h.hook.match_count(), 2);
 
-        assert_eq!(h.key("enter"), HookOutcome::Consumed);
+        assert_eq!(h.key(KeyCode::Enter), HookOutcome::Consumed);
         assert_eq!(h.selection.unwrap().byte_range(), 0..3);
         assert_eq!(h.hook.status_text(), Some("SEARCH 1/2 [Aa] [w] [H]"));
 
-        assert_eq!(h.key("enter"), HookOutcome::Consumed);
+        assert_eq!(h.key(KeyCode::Enter), HookOutcome::Consumed);
         assert_eq!(h.selection.unwrap().byte_range(), 8..11);
         assert_eq!(h.hook.status_text(), Some("SEARCH 2/2 [Aa] [w] [H]"));
     }
@@ -719,8 +766,8 @@ mod tests {
     #[test]
     fn toggle_case_rescans_case_insensitively() {
         let mut h = Harness::new("Foo foo FOO");
-        h.key_mod("f", true, false, false);
-        for k in ["f", "o", "o"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             h.key(k);
         }
         assert_eq!(h.hook.match_count(), 1);
@@ -741,8 +788,8 @@ mod tests {
     #[test]
     fn toggle_word_filters_substring_matches() {
         let mut h = Harness::new("foo foobar foo");
-        h.key_mod("f", true, false, false);
-        for k in ["f", "o", "o"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             h.key(k);
         }
         assert_eq!(h.hook.match_count(), 3);
@@ -759,8 +806,8 @@ mod tests {
     #[test]
     fn toggle_highlight_flips_without_rescanning() {
         let mut h = Harness::new("foo foo");
-        h.key_mod("f", true, false, false);
-        h.key("f");
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        h.key(KeyCode::Char('f'));
         assert!(h.hook.highlight_all());
 
         h.with_ctx(|ctx, hook| {
@@ -775,13 +822,13 @@ mod tests {
     #[test]
     fn replace_honors_toggle_flags() {
         let mut h = Harness::new("Foo foo");
-        h.key_mod("f", true, false, false);
-        for k in ["f", "o", "o"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             h.key(k);
         }
         h.with_ctx(|ctx, hook| hook.toggle_case(ctx));
-        h.key_mod("h", true, false, false);
-        for k in ["b", "a", "r"] {
+        h.key_mod(KeyCode::Char('h'), true, false, false);
+        for k in [KeyCode::Char('b'), KeyCode::Char('a'), KeyCode::Char('r')] {
             h.key(k);
         }
         h.with_ctx(|ctx, hook| {
@@ -799,10 +846,13 @@ mod tests {
     #[test]
     fn alt_h_toggles_highlight_via_key() {
         let mut h = Harness::new("foo foo");
-        h.key_mod("f", true, false, false);
-        h.key("f");
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        h.key(KeyCode::Char('f'));
         assert!(h.hook.highlight_all());
-        assert_eq!(h.key_mod("h", false, true, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('h'), false, true, false),
+            HookOutcome::Consumed
+        );
         assert!(!h.hook.highlight_all());
         // Prompt stays open; matching is untouched.
         assert!(h.prompt.is_open());
@@ -813,11 +863,11 @@ mod tests {
     fn snapshot_reports_state_while_active() {
         let mut h = Harness::new("foo bar foo");
         assert!(h.hook.search_snapshot().is_none());
-        h.key_mod("f", true, false, false);
-        for k in ["f", "o", "o"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             h.key(k);
         }
-        h.key("enter");
+        h.key(KeyCode::Enter);
         let snap = h.hook.search_snapshot().expect("snapshot while active");
         assert!(snap.active);
         assert!(snap.case_sensitive);
@@ -825,23 +875,29 @@ mod tests {
         assert!(snap.highlight_all);
         assert_eq!(snap.matches, vec![0..3, 8..11]);
         assert_eq!(snap.current, Some(0));
-        h.key("escape");
+        h.key(KeyCode::Escape);
         assert!(h.hook.search_snapshot().is_none());
     }
 
     #[test]
     fn alt_c_and_alt_w_toggle_via_keys() {
         let mut h = Harness::new("Foo foo foobar");
-        h.key_mod("f", true, false, false);
-        for k in ["f", "o", "o"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             h.key(k);
         }
         assert_eq!(h.hook.match_count(), 2);
 
-        assert_eq!(h.key_mod("c", false, true, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('c'), false, true, false),
+            HookOutcome::Consumed
+        );
         assert_eq!(h.hook.match_count(), 3);
 
-        assert_eq!(h.key_mod("w", false, true, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('w'), false, true, false),
+            HookOutcome::Consumed
+        );
         assert_eq!(h.hook.match_count(), 2);
         assert_eq!(
             h.hook.status_text(),
@@ -852,24 +908,24 @@ mod tests {
     #[test]
     fn up_down_navigate_matches_and_alt_reaches_history() {
         let mut h = Harness::new("foo bar foo");
-        h.key_mod("f", true, false, false);
-        for k in ["f", "o", "o"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             h.key(k);
         }
-        h.key("enter");
+        h.key(KeyCode::Enter);
         assert_eq!(h.selection.unwrap().byte_range(), 0..3);
 
         // Down advances instead of walking history.
-        assert_eq!(h.key("down"), HookOutcome::Consumed);
+        assert_eq!(h.key(KeyCode::Down), HookOutcome::Consumed);
         assert_eq!(h.selection.unwrap().byte_range(), 8..11);
-        assert_eq!(h.key("up"), HookOutcome::Consumed);
+        assert_eq!(h.key(KeyCode::Up), HookOutcome::Consumed);
         assert_eq!(h.selection.unwrap().byte_range(), 0..3);
 
         // History moved to Alt+Up.
-        h.key("enter");
+        h.key(KeyCode::Enter);
         h.type_into_prompt("zzz");
         assert_eq!(
-            h.key_mod("arrowup", false, true, false),
+            h.key_mod(KeyCode::Up, false, true, false),
             HookOutcome::Consumed
         );
         assert_eq!(h.prompt.input(), "foo");
@@ -878,50 +934,59 @@ mod tests {
     #[test]
     fn f3_keys_navigate_without_typing() {
         let mut h = Harness::new("aa aa");
-        h.key_mod("f", true, false, false);
-        h.key("a");
-        h.key("a");
-        h.key("enter");
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        h.key(KeyCode::Char('a'));
+        h.key(KeyCode::Char('a'));
+        h.key(KeyCode::Enter);
         assert_eq!(h.selection.unwrap().byte_range(), 0..2);
 
-        assert_eq!(h.key("f3"), HookOutcome::Consumed);
+        assert_eq!(h.key(KeyCode::F(3)), HookOutcome::Consumed);
         assert_eq!(h.selection.unwrap().byte_range(), 3..5);
 
-        assert_eq!(h.key_mod("f3", false, false, true), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::F(3), false, false, true),
+            HookOutcome::Consumed
+        );
         assert_eq!(h.selection.unwrap().byte_range(), 0..2);
     }
 
     #[test]
     fn escape_closes_and_resets_mode() {
         let mut h = Harness::new("foo foo");
-        h.key_mod("f", true, false, false);
+        h.key_mod(KeyCode::Char('f'), true, false, false);
         assert!(h.prompt.is_open());
-        assert_eq!(h.key("escape"), HookOutcome::Consumed);
+        assert_eq!(h.key(KeyCode::Escape), HookOutcome::Consumed);
         assert!(!h.prompt.is_open());
         assert!(h.hook.status_text().is_none());
-        assert_eq!(h.key("a"), HookOutcome::PassThrough);
+        assert_eq!(h.key(KeyCode::Char('a')), HookOutcome::PassThrough);
     }
 
     #[test]
     fn ctrl_h_replace_flow_replaces_current_and_all() {
         let mut h = Harness::new("foo bar foo");
-        h.key_mod("f", true, false, false);
-        for k in ["f", "o", "o"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [KeyCode::Char('f'), KeyCode::Char('o'), KeyCode::Char('o')] {
             h.key(k);
         }
 
-        assert_eq!(h.key_mod("h", true, false, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('h'), true, false, false),
+            HookOutcome::Consumed
+        );
         assert_eq!(h.prompt.spec().unwrap().id, REPLACE_PROMPT_ID);
-        for k in ["b", "a", "z"] {
+        for k in [KeyCode::Char('b'), KeyCode::Char('a'), KeyCode::Char('z')] {
             h.key(k);
         }
-        assert_eq!(h.key("enter"), HookOutcome::Consumed);
+        assert_eq!(h.key(KeyCode::Enter), HookOutcome::Consumed);
         assert_eq!(h.prompt.spec().unwrap().id, REPLACE_PROMPT_ID);
         assert_eq!(h.hook.replacement(), "baz");
         assert_eq!(h.ctx_text(), "baz bar foo");
         assert_eq!(h.selection.unwrap().byte_range(), 8..11);
 
-        assert_eq!(h.key_mod("a", false, true, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('a'), false, true, false),
+            HookOutcome::Consumed
+        );
         assert_eq!(h.ctx_text(), "baz bar baz");
         assert_eq!(h.prompt.message(), Some("Replaced 1 match"));
         h.buffer.undo();
@@ -956,47 +1021,65 @@ mod tests {
     #[test]
     fn replace_while_typing_in_replace_prompt_with_ctrl_enter_and_alt_a() {
         let mut h = Harness::new("alpha beta alpha");
-        h.key_mod("f", true, false, false);
-        for k in ["a", "l", "p", "h", "a"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [
+            KeyCode::Char('a'),
+            KeyCode::Char('l'),
+            KeyCode::Char('p'),
+            KeyCode::Char('h'),
+            KeyCode::Char('a'),
+        ] {
             h.key(k);
         }
         assert_eq!(h.hook.match_count(), 2);
 
-        assert_eq!(h.key_mod("h", true, false, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('h'), true, false, false),
+            HookOutcome::Consumed
+        );
         assert_eq!(h.prompt.spec().unwrap().id, REPLACE_PROMPT_ID);
 
-        for k in ["o", "m", "e", "g", "a"] {
+        for k in [
+            KeyCode::Char('o'),
+            KeyCode::Char('m'),
+            KeyCode::Char('e'),
+            KeyCode::Char('g'),
+            KeyCode::Char('a'),
+        ] {
             h.key(k);
         }
         assert_eq!(h.hook.replacement(), "omega");
 
         assert_eq!(
-            h.key_mod("enter", true, false, false),
+            h.key_mod(KeyCode::Enter, true, false, false),
             HookOutcome::Consumed
         );
         assert_eq!(h.ctx_text(), "omega beta alpha");
 
-        assert_eq!(h.key_mod("a", false, true, false), HookOutcome::Consumed);
+        assert_eq!(
+            h.key_mod(KeyCode::Char('a'), false, true, false),
+            HookOutcome::Consumed
+        );
         assert_eq!(h.ctx_text(), "omega beta omega");
     }
 
     #[test]
     fn tab_toggles_between_search_and_replace_in_replace_mode() {
         let mut h = Harness::new("one two one");
-        h.key_mod("f", true, false, false);
-        for k in ["o", "n", "e"] {
+        h.key_mod(KeyCode::Char('f'), true, false, false);
+        for k in [KeyCode::Char('o'), KeyCode::Char('n'), KeyCode::Char('e')] {
             h.key(k);
         }
-        h.key_mod("h", true, false, false);
+        h.key_mod(KeyCode::Char('h'), true, false, false);
         assert!(h.hook.is_replace_mode());
         assert!(h.hook.is_replace_prompt());
 
-        h.key("tab");
+        h.key(KeyCode::Tab);
         assert!(!h.hook.is_replace_prompt());
         assert_eq!(h.prompt.spec().unwrap().id, SEARCH_PROMPT_ID);
         assert_eq!(h.prompt.input(), "one");
 
-        h.key("tab");
+        h.key(KeyCode::Tab);
         assert!(h.hook.is_replace_prompt());
         assert_eq!(h.prompt.spec().unwrap().id, REPLACE_PROMPT_ID);
     }
@@ -1004,14 +1087,14 @@ mod tests {
     #[test]
     fn search_snapshot_reflects_replace_state() {
         let mut h = Harness::new("test test");
-        h.key_mod("f", true, false, false);
+        h.key_mod(KeyCode::Char('f'), true, false, false);
         h.type_into_prompt("test");
         let snap = h.hook.search_snapshot().unwrap();
         assert_eq!(snap.query, "test");
         assert!(!snap.replace_mode);
         assert!(!snap.is_replace_prompt);
 
-        h.key_mod("h", true, false, false);
+        h.key_mod(KeyCode::Char('h'), true, false, false);
         h.type_into_prompt("passed");
         let snap = h.hook.search_snapshot().unwrap();
         assert_eq!(snap.query, "test");

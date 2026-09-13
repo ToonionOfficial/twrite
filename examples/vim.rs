@@ -11,9 +11,9 @@
 //! Run with: `cargo run --example vim`
 use gpui::*;
 use twrite::{
-    CharKind, CursorStyle, Editor, EditorHook, HookContext, HookEffect, HookOutcome, KeyEvent,
-    Point, PromptAction, PromptPlacement, PromptSpec, SEARCH_PROMPT_ID, SearchHook, SearchQuery,
-    SearchSnapshot, Selection, collect_replacements,
+    CharKind, CursorStyle, Editor, EditorHook, HookContext, HookEffect, HookOutcome, KeyCode,
+    KeyEvent, Point, PromptAction, PromptPlacement, PromptSpec, SEARCH_PROMPT_ID, SearchHook,
+    SearchQuery, SearchSnapshot, Selection, collect_replacements,
 };
 
 /// The operating mode of the Vim state machine.
@@ -358,7 +358,7 @@ impl EditorHook for VimHook {
                 // `n` / `N` work afterwards. The shared `Ctrl+F` toolbar
                 // (search_modal unset) stays open across `Enter` as before.
                 // `Ctrl+Enter` (replace) and toggles are unaffected.
-                let plain_enter = event.key == "enter"
+                let plain_enter = event.code == KeyCode::Enter
                     && !event.modifiers.ctrl
                     && !event.modifiers.alt
                     && !event.modifiers.meta;
@@ -378,7 +378,9 @@ impl EditorHook for VimHook {
             return self.handle_ex_key(ctx, event);
         }
 
-        if event.key == "escape" || (event.modifiers.ctrl && event.key == "[") {
+        if event.code == KeyCode::Escape
+            || (event.modifiers.ctrl && event.code == KeyCode::Char('['))
+        {
             // Dismiss a lingering search highlight: submit leaves the hook
             // active (query + wash for `n` / `N`), so `Escape` is the way
             // back to a clean viewport.
@@ -404,8 +406,8 @@ impl EditorHook for VimHook {
 
                 // `gg` in Visual mode jumps to the top while extending.
                 if let Some(pending) = self.pending_key.take() {
-                    match (pending, event.key.as_str()) {
-                        ('g', "g") => {
+                    match (pending, &event.code) {
+                        ('g', KeyCode::Char('g')) => {
                             self.move_visual(ctx, 0);
                             return HookOutcome::Consumed;
                         }
@@ -415,68 +417,68 @@ impl EditorHook for VimHook {
 
                 let cursor = ctx.buffer.cursor_offset();
 
-                match event.key.as_str() {
-                    "v" => {
+                match &event.code {
+                    KeyCode::Char('v') => {
                         self.visual_linewise = false;
                         HookOutcome::Consumed
                     }
-                    "V" => {
+                    KeyCode::Char('V') => {
                         self.visual_linewise = true;
                         self.snap_visual_to_lines(ctx);
                         HookOutcome::Consumed
                     }
-                    "G" => {
+                    KeyCode::Char('G') => {
                         let target = ctx.buffer.len_bytes();
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "g" => {
+                    KeyCode::Char('g') => {
                         self.pending_key = Some('g');
                         HookOutcome::Consumed
                     }
-                    "h" | "left" | "arrowleft" => {
+                    KeyCode::Char('h') | KeyCode::Left => {
                         let target = cursor.saturating_sub(1);
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "l" | "right" | "arrowright" => {
+                    KeyCode::Char('l') | KeyCode::Right => {
                         let target = (cursor + 1).min(ctx.buffer.len_bytes());
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "k" | "up" | "arrowup" => {
+                    KeyCode::Char('k') | KeyCode::Up => {
                         ctx.buffer.move_cursor_up();
                         let target = ctx.buffer.cursor_offset();
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "j" | "down" | "arrowdown" => {
+                    KeyCode::Char('j') | KeyCode::Down => {
                         ctx.buffer.move_cursor_down();
                         let target = ctx.buffer.cursor_offset();
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "w" => {
+                    KeyCode::Char('w') => {
                         let target = ctx.buffer.next_word_offset();
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "b" => {
+                    KeyCode::Char('b') => {
                         let target = ctx.buffer.prev_word_offset();
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "0" => {
+                    KeyCode::Char('0') => {
                         let target = ctx.buffer.line_start_offset();
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "$" => {
+                    KeyCode::Char('$') => {
                         let target = ctx.buffer.line_end_offset();
                         self.move_visual(ctx, target);
                         HookOutcome::Consumed
                     }
-                    "d" | "x" => {
+                    KeyCode::Char('d') | KeyCode::Char('x') => {
                         if let Some(sel) = ctx.selection.take() {
                             let range = sel.byte_range();
                             if !range.is_empty() {
@@ -486,7 +488,7 @@ impl EditorHook for VimHook {
                         self.enter_normal_mode(ctx);
                         HookOutcome::Consumed
                     }
-                    "y" => {
+                    KeyCode::Char('y') => {
                         self.enter_normal_mode(ctx);
                         HookOutcome::Consumed
                     }
@@ -508,8 +510,8 @@ impl EditorHook for VimHook {
                 self.status_override = None;
 
                 if event.modifiers.ctrl {
-                    match event.key.as_str() {
-                        "r" => {
+                    match &event.code {
+                        KeyCode::Char('r') => {
                             ctx.buffer.redo();
                             return HookOutcome::Consumed;
                         }
@@ -518,8 +520,8 @@ impl EditorHook for VimHook {
                 }
 
                 if let Some(pending) = self.pending_key.take() {
-                    match (pending, event.key.as_str()) {
-                        ('d', "d") => {
+                    match (pending, &event.code) {
+                        ('d', KeyCode::Char('d')) => {
                             let row = ctx.buffer.cursor_point().row;
                             let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
                             let line_end = if row + 1 < ctx.buffer.len_lines() {
@@ -530,11 +532,11 @@ impl EditorHook for VimHook {
                             ctx.buffer.delete_range(line_start..line_end);
                             return HookOutcome::Consumed;
                         }
-                        ('d', "w") => {
+                        ('d', KeyCode::Char('w')) => {
                             ctx.buffer.delete_next_word();
                             return HookOutcome::Consumed;
                         }
-                        ('g', "g") => {
+                        ('g', KeyCode::Char('g')) => {
                             ctx.buffer.set_cursor_offset(0);
                             return HookOutcome::Consumed;
                         }
@@ -542,49 +544,49 @@ impl EditorHook for VimHook {
                     }
                 }
 
-                match event.key.as_str() {
-                    "h" | "left" | "arrowleft" => {
+                match &event.code {
+                    KeyCode::Char('h') | KeyCode::Left => {
                         ctx.buffer.move_cursor_left();
                         HookOutcome::Consumed
                     }
-                    "l" | "right" | "arrowright" => {
+                    KeyCode::Char('l') | KeyCode::Right => {
                         ctx.buffer.move_cursor_right();
                         HookOutcome::Consumed
                     }
-                    "k" | "up" | "arrowup" => {
+                    KeyCode::Char('k') | KeyCode::Up => {
                         ctx.buffer.move_cursor_up();
                         HookOutcome::Consumed
                     }
-                    "j" | "down" | "arrowdown" => {
+                    KeyCode::Char('j') | KeyCode::Down => {
                         ctx.buffer.move_cursor_down();
                         HookOutcome::Consumed
                     }
-                    "w" => {
+                    KeyCode::Char('w') => {
                         let target = ctx.buffer.next_word_offset();
                         ctx.buffer.set_cursor_offset(target);
                         HookOutcome::Consumed
                     }
-                    "b" => {
+                    KeyCode::Char('b') => {
                         let target = ctx.buffer.prev_word_offset();
                         ctx.buffer.set_cursor_offset(target);
                         HookOutcome::Consumed
                     }
-                    "0" => {
+                    KeyCode::Char('0') => {
                         let target = ctx.buffer.line_start_offset();
                         ctx.buffer.set_cursor_offset(target);
                         HookOutcome::Consumed
                     }
-                    "$" => {
+                    KeyCode::Char('$') => {
                         let target = ctx.buffer.line_end_offset();
                         ctx.buffer.set_cursor_offset(target);
                         HookOutcome::Consumed
                     }
-                    "G" => {
+                    KeyCode::Char('G') => {
                         let target = ctx.buffer.len_bytes();
                         ctx.buffer.set_cursor_offset(target);
                         HookOutcome::Consumed
                     }
-                    "/" => {
+                    KeyCode::Char('/') => {
                         self.pending_key = None;
                         self.search_backward = false;
                         self.search_modal = true;
@@ -592,7 +594,7 @@ impl EditorHook for VimHook {
                         self.sync_search_status();
                         HookOutcome::Consumed
                     }
-                    "?" => {
+                    KeyCode::Char('?') => {
                         self.pending_key = None;
                         self.search_backward = true;
                         self.search_modal = true;
@@ -600,7 +602,7 @@ impl EditorHook for VimHook {
                         self.sync_search_status();
                         HookOutcome::Consumed
                     }
-                    "n" => {
+                    KeyCode::Char('n') => {
                         self.pending_key = None;
                         if !self.search.query_text().is_empty() {
                             if self.search_backward {
@@ -612,7 +614,7 @@ impl EditorHook for VimHook {
                         }
                         HookOutcome::Consumed
                     }
-                    "N" => {
+                    KeyCode::Char('N') => {
                         self.pending_key = None;
                         if !self.search.query_text().is_empty() {
                             if self.search_backward {
@@ -624,7 +626,7 @@ impl EditorHook for VimHook {
                         }
                         HookOutcome::Consumed
                     }
-                    "*" => {
+                    KeyCode::Char('*') => {
                         self.pending_key = None;
                         match Self::word_under_cursor(ctx) {
                             Some(word) => {
@@ -644,7 +646,7 @@ impl EditorHook for VimHook {
                         }
                         HookOutcome::Consumed
                     }
-                    "#" => {
+                    KeyCode::Char('#') => {
                         self.pending_key = None;
                         match Self::word_under_cursor(ctx) {
                             Some(word) => {
@@ -664,7 +666,7 @@ impl EditorHook for VimHook {
                         }
                         HookOutcome::Consumed
                     }
-                    ":" => {
+                    KeyCode::Char(':') => {
                         self.pending_key = None;
                         self.status_override = None;
                         ctx.prompt.open(
@@ -673,23 +675,23 @@ impl EditorHook for VimHook {
                         );
                         HookOutcome::Consumed
                     }
-                    "i" => {
+                    KeyCode::Char('i') => {
                         self.enter_insert_mode(ctx);
                         HookOutcome::Consumed
                     }
-                    "a" => {
+                    KeyCode::Char('a') => {
                         ctx.buffer.move_cursor_right();
                         self.enter_insert_mode(ctx);
                         HookOutcome::Consumed
                     }
-                    "o" => {
+                    KeyCode::Char('o') => {
                         let end = ctx.buffer.line_end_offset();
                         ctx.buffer.set_cursor_offset(end);
                         ctx.buffer.insert("\n");
                         self.enter_insert_mode(ctx);
                         HookOutcome::Consumed
                     }
-                    "O" => {
+                    KeyCode::Char('O') => {
                         let start = ctx.buffer.line_start_offset();
                         ctx.buffer.set_cursor_offset(start);
                         ctx.buffer.insert("\n");
@@ -697,27 +699,27 @@ impl EditorHook for VimHook {
                         self.enter_insert_mode(ctx);
                         HookOutcome::Consumed
                     }
-                    "x" => {
+                    KeyCode::Char('x') => {
                         ctx.buffer.delete();
                         HookOutcome::Consumed
                     }
-                    "u" => {
+                    KeyCode::Char('u') => {
                         ctx.buffer.undo();
                         HookOutcome::Consumed
                     }
-                    "v" => {
+                    KeyCode::Char('v') => {
                         self.enter_visual_mode(ctx);
                         HookOutcome::Consumed
                     }
-                    "V" => {
+                    KeyCode::Char('V') => {
                         self.enter_visual_line_mode(ctx);
                         HookOutcome::Consumed
                     }
-                    "d" => {
+                    KeyCode::Char('d') => {
                         self.pending_key = Some('d');
                         HookOutcome::Consumed
                     }
-                    "g" => {
+                    KeyCode::Char('g') => {
                         self.pending_key = Some('g');
                         HookOutcome::Consumed
                     }
@@ -800,8 +802,8 @@ impl Render for AppView {
 mod tests {
     use super::VimHook;
     use twrite::{
-        CursorStyle, EditorBuffer, EditorHook, HookContext, HookEffect, HookOutcome, KeyEvent,
-        Modifiers, PromptState, Selection,
+        CursorStyle, EditorBuffer, EditorHook, HookContext, HookEffect, HookOutcome, KeyCode,
+        KeyEvent, Modifiers, PromptState, Selection,
     };
 
     fn harness(
@@ -831,7 +833,7 @@ mod tests {
         cursor_style: &mut CursorStyle,
         prompt: &mut PromptState,
         effects: &mut Vec<HookEffect>,
-        key: &str,
+        key: KeyCode,
     ) -> HookOutcome {
         press_mod(
             vim,
@@ -855,13 +857,13 @@ mod tests {
         cursor_style: &mut CursorStyle,
         prompt: &mut PromptState,
         effects: &mut Vec<HookEffect>,
-        key: &str,
+        key: KeyCode,
         ctrl: bool,
         alt: bool,
         shift: bool,
     ) -> HookOutcome {
         let event = KeyEvent {
-            key: key.to_string(),
+            code: key,
             modifiers: Modifiers {
                 ctrl,
                 alt,
@@ -885,7 +887,7 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            "V",
+            KeyCode::Char('V'),
         );
         assert_eq!(selection.unwrap().byte_range(), 3..6);
         assert_eq!(vim.status_text(), Some("-- VISUAL LINE --"));
@@ -895,7 +897,13 @@ mod tests {
     fn ggvg_selects_whole_document() {
         let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
             harness("l1\nl2\nl3\n");
-        for key in ["G", "g", "g", "V", "G"] {
+        for key in [
+            KeyCode::Char('G'),
+            KeyCode::Char('g'),
+            KeyCode::Char('g'),
+            KeyCode::Char('V'),
+            KeyCode::Char('G'),
+        ] {
             press(
                 &mut vim,
                 &mut buffer,
@@ -913,7 +921,7 @@ mod tests {
     fn linewise_j_extends_by_whole_line() {
         let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
             harness("l1\nl2\nl3\n");
-        for key in ["V", "j"] {
+        for key in [KeyCode::Char('V'), KeyCode::Char('j')] {
             press(
                 &mut vim,
                 &mut buffer,
@@ -932,7 +940,7 @@ mod tests {
         let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
             harness("l1\nl2\nl3\n");
         buffer.set_cursor_offset(4);
-        for key in ["V", "d"] {
+        for key in [KeyCode::Char('V'), KeyCode::Char('d')] {
             press(
                 &mut vim,
                 &mut buffer,
@@ -954,9 +962,9 @@ mod tests {
         cursor_style: &mut CursorStyle,
         prompt: &mut PromptState,
         effects: &mut Vec<HookEffect>,
-        keys: &[&str],
+        keys: &[KeyCode],
     ) {
-        for key in keys {
+        for &key in keys {
             press(vim, buffer, selection, cursor_style, prompt, effects, key);
         }
     }
@@ -972,7 +980,13 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            &["/", "f", "o", "o", "enter"],
+            &[
+                KeyCode::Char('/'),
+                KeyCode::Char('f'),
+                KeyCode::Char('o'),
+                KeyCode::Char('o'),
+                KeyCode::Enter,
+            ],
         );
         // Submitted and dismissed: `n` / `N` now navigate.
         assert!(!prompt.is_open());
@@ -985,7 +999,7 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            &["n"],
+            &[KeyCode::Char('n')],
         );
         assert_eq!(selection.unwrap().byte_range(), 8..11);
         press_keys(
@@ -995,7 +1009,7 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            &["N"],
+            &[KeyCode::Char('N')],
         );
         assert_eq!(selection.unwrap().byte_range(), 0..3);
     }
@@ -1011,13 +1025,18 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            "f",
+            KeyCode::Char('f'),
             true,
             false,
             false,
         );
         assert!(prompt.is_open());
-        for key in ["f", "o", "o", "enter"] {
+        for key in [
+            KeyCode::Char('f'),
+            KeyCode::Char('o'),
+            KeyCode::Char('o'),
+            KeyCode::Enter,
+        ] {
             press(
                 &mut vim,
                 &mut buffer,
@@ -1044,7 +1063,7 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            "*",
+            KeyCode::Char('*'),
         );
         assert!(!prompt.is_open());
         assert_eq!(selection.unwrap().byte_range(), 8..11);
@@ -1055,7 +1074,7 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            "n",
+            KeyCode::Char('n'),
         );
         assert_eq!(selection.unwrap().byte_range(), 0..3);
     }
@@ -1071,7 +1090,13 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            &["/", "f", "o", "o", "enter"],
+            &[
+                KeyCode::Char('/'),
+                KeyCode::Char('f'),
+                KeyCode::Char('o'),
+                KeyCode::Char('o'),
+                KeyCode::Enter,
+            ],
         );
         assert!(vim.search.is_active());
         assert!(vim.search_snapshot().is_some());
@@ -1082,7 +1107,7 @@ mod tests {
             &mut style,
             &mut prompt,
             &mut effects,
-            &["escape"],
+            &[KeyCode::Escape],
         );
         assert!(!vim.search.is_active());
         assert!(vim.search_snapshot().is_none());
@@ -1093,7 +1118,7 @@ mod tests {
     fn escape_cancels_slash_search() {
         let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
             harness("foo bar foo");
-        for key in ["/", "f", "escape"] {
+        for key in [KeyCode::Char('/'), KeyCode::Char('f'), KeyCode::Escape] {
             press(
                 &mut vim,
                 &mut buffer,
@@ -1112,7 +1137,7 @@ mod tests {
     fn visual_v_toggles_back_to_charwise() {
         let (mut vim, mut buffer, mut selection, mut style, mut prompt, mut effects) =
             harness("l1\nl2\nl3\n");
-        for key in ["V", "v"] {
+        for key in [KeyCode::Char('V'), KeyCode::Char('v')] {
             press(
                 &mut vim,
                 &mut buffer,

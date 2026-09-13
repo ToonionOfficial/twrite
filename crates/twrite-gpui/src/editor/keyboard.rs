@@ -1,5 +1,8 @@
 use gpui::{Context, KeyDownEvent, Window};
-use twrite_core::{HookContext, HookOutcome, KeyEvent, Modifiers, Point as BufferPoint, Selection};
+use twrite_core::{
+    HookContext, HookOutcome, KeyCode, KeyEvent, Modifiers, Point as BufferPoint, SearchAction,
+    Selection,
+};
 
 use super::Editor;
 
@@ -15,20 +18,20 @@ impl Editor {
                 let plain = !key_event.modifiers.ctrl
                     && !key_event.modifiers.alt
                     && !key_event.modifiers.meta;
-                match key_event.key.as_str() {
-                    "escape" => {
+                match &key_event.code {
+                    KeyCode::Escape => {
                         self.dismiss_context_menu(cx);
                         return;
                     }
-                    "arrowup" | "up" if plain => {
+                    KeyCode::Up if plain => {
                         self.move_context_menu_selection(false, cx);
                         return;
                     }
-                    "arrowdown" | "down" if plain => {
+                    KeyCode::Down if plain => {
                         self.move_context_menu_selection(true, cx);
                         return;
                     }
-                    "enter" if plain => {
+                    KeyCode::Enter if plain => {
                         if self.context_menu_selected.is_some() {
                             self.activate_context_menu_selected(window, cx);
                         } else {
@@ -78,18 +81,7 @@ impl Editor {
         }
 
         if consumed {
-            if self.buffer.version() != initial_version {
-                for hook in &mut self.hooks {
-                    hook.after_edit(&mut self.buffer);
-                }
-            }
-            for hook in &mut self.hooks {
-                hook.on_selection_change(&self.buffer, self.selection.as_ref());
-            }
-            self.scroll_to_cursor(window);
-            self.flush_effects();
-            self.sync_search_state();
-            cx.notify();
+            self.finish_consumed_action(window, cx, initial_version);
             return;
         }
 
@@ -107,8 +99,10 @@ impl Editor {
         let select = key_event.modifiers.shift;
 
         if key_event.modifiers.ctrl || key_event.modifiers.meta {
-            match key_event.key.to_lowercase().as_str() {
-                "z" => {
+            // Physical fallbacks from translation are already lowercase, so
+            // `Char` codes match directly (the old string path lowercased).
+            match &key_event.code {
+                KeyCode::Char('z') => {
                     if key_event.modifiers.shift {
                         self.buffer.redo();
                     } else {
@@ -117,24 +111,24 @@ impl Editor {
                     self.selection = None;
                     edited = true;
                 }
-                "y" => {
+                KeyCode::Char('y') => {
                     self.buffer.redo();
                     self.selection = None;
                     edited = true;
                 }
-                "a" => {
+                KeyCode::Char('a') => {
                     self.selection = Some(Selection::range(0, self.buffer.len_bytes()));
                 }
-                "c" => {
+                KeyCode::Char('c') => {
                     self.copy(cx);
                 }
-                "x" => {
+                KeyCode::Char('x') => {
                     edited = self.cut(cx);
                 }
-                "v" => {
+                KeyCode::Char('v') => {
                     edited = self.paste(cx);
                 }
-                "backspace" => {
+                KeyCode::Backspace => {
                     if !self.delete_selection() {
                         edited = self.buffer.delete_prev_word();
                     } else {
@@ -142,7 +136,7 @@ impl Editor {
                     }
                     self.selection = None;
                 }
-                "delete" => {
+                KeyCode::Delete => {
                     if !self.delete_selection() {
                         edited = self.buffer.delete_next_word();
                     } else {
@@ -150,27 +144,27 @@ impl Editor {
                     }
                     self.selection = None;
                 }
-                "left" | "arrowleft" => {
+                KeyCode::Left => {
                     let target = self.buffer.prev_word_offset();
                     self.move_cursor_to(target, select);
                 }
-                "right" | "arrowright" => {
+                KeyCode::Right => {
                     let target = self.buffer.next_word_offset();
                     self.move_cursor_to(target, select);
                 }
-                "home" => {
+                KeyCode::Home => {
                     self.move_cursor_to(0, select);
                 }
-                "end" => {
+                KeyCode::End => {
                     self.move_cursor_to(self.buffer.len_bytes(), select);
                 }
-                "up" | "arrowup" => {
+                KeyCode::Up => {
                     self.scroll_up(1);
                     self.flush_effects();
                     cx.notify();
                     return;
                 }
-                "down" | "arrowdown" => {
+                KeyCode::Down => {
                     self.scroll_down(1);
                     self.flush_effects();
                     cx.notify();
@@ -179,37 +173,37 @@ impl Editor {
                 _ => {}
             }
         } else {
-            match key_event.key.as_str() {
-                "backspace" => {
+            match &key_event.code {
+                KeyCode::Backspace => {
                     if !self.delete_selection() {
                         self.buffer.backspace();
                     }
                     self.selection = None;
                     edited = true;
                 }
-                "delete" => {
+                KeyCode::Delete => {
                     if !self.delete_selection() {
                         self.buffer.delete();
                     }
                     self.selection = None;
                     edited = true;
                 }
-                "enter" => {
+                KeyCode::Enter => {
                     self.replace_selection_or_insert("\n");
                     self.selection = None;
                     edited = true;
                 }
-                "tab" => {
+                KeyCode::Tab => {
                     self.replace_selection_or_insert(&" ".repeat(self.config.tab_size));
                     self.selection = None;
                     edited = true;
                 }
-                "space" | " " => {
+                KeyCode::Char(' ') => {
                     self.replace_selection_or_insert(" ");
                     self.selection = None;
                     edited = true;
                 }
-                "left" | "arrowleft" => {
+                KeyCode::Left => {
                     if !select && self.selection.is_some() {
                         let sel = self.selection.take().unwrap();
                         self.buffer.set_cursor_offset(sel.byte_range().start);
@@ -224,7 +218,7 @@ impl Editor {
                         self.move_cursor_to(target, select);
                     }
                 }
-                "right" | "arrowright" => {
+                KeyCode::Right => {
                     if !select && self.selection.is_some() {
                         let sel = self.selection.take().unwrap();
                         self.buffer.set_cursor_offset(sel.byte_range().end);
@@ -241,7 +235,7 @@ impl Editor {
                         self.move_cursor_to(target, select);
                     }
                 }
-                "up" | "arrowup" => {
+                KeyCode::Up => {
                     let point = self.buffer.cursor_point();
                     if point.row > 0 {
                         let target = self
@@ -252,7 +246,7 @@ impl Editor {
                         self.move_cursor_to(0, select);
                     }
                 }
-                "down" | "arrowdown" => {
+                KeyCode::Down => {
                     let point = self.buffer.cursor_point();
                     let total_lines = self.buffer.len_lines();
                     if point.row + 1 < total_lines {
@@ -264,46 +258,45 @@ impl Editor {
                         self.move_cursor_to(self.buffer.len_bytes(), select);
                     }
                 }
-                "home" => {
+                KeyCode::Home => {
                     let target = self.buffer.line_start_offset();
                     self.move_cursor_to(target, select);
                 }
-                "end" => {
+                KeyCode::End => {
                     let target = self.buffer.line_end_offset();
                     self.move_cursor_to(target, select);
                 }
-                key => {
+                KeyCode::Char(c)
                     if !key_event.modifiers.alt
                         && !key_event.modifiers.ctrl
-                        && !key_event.modifiers.meta
-                        && key.chars().count() == 1
-                    {
-                        let mut insert_consumed = false;
-                        let mut hook_idx = 0;
-                        while hook_idx < self.hooks.len() {
-                            let mut ctx = HookContext::new(
-                                &mut self.buffer,
-                                &mut self.selection,
-                                &mut self.cursor_style,
-                                &mut self.prompt,
-                                &mut self.pending_effects,
-                            );
-                            if self.hooks[hook_idx].before_insert(&mut ctx, key)
-                                == HookOutcome::Consumed
-                            {
-                                insert_consumed = true;
-                                break;
-                            }
-                            hook_idx += 1;
+                        && !key_event.modifiers.meta =>
+                {
+                    let mut insert_consumed = false;
+                    let mut hook_idx = 0;
+                    while hook_idx < self.hooks.len() {
+                        let mut ctx = HookContext::new(
+                            &mut self.buffer,
+                            &mut self.selection,
+                            &mut self.cursor_style,
+                            &mut self.prompt,
+                            &mut self.pending_effects,
+                        );
+                        if self.hooks[hook_idx].before_insert(&mut ctx, *c) == HookOutcome::Consumed
+                        {
+                            insert_consumed = true;
+                            break;
                         }
+                        hook_idx += 1;
+                    }
 
-                        if !insert_consumed {
-                            self.replace_selection_or_insert(key);
-                            self.selection = None;
-                            edited = true;
-                        }
+                    if !insert_consumed {
+                        let mut buf = [0u8; 4];
+                        self.replace_selection_or_insert(c.encode_utf8(&mut buf));
+                        self.selection = None;
+                        edited = true;
                     }
                 }
+                _ => {}
             }
         }
 
@@ -326,11 +319,11 @@ impl Editor {
     /// Feeds a synthetic key through the hook chain with full post-processing.
     ///
     /// Used by prompt-bar chips and arrow buttons so clicks share the exact
-    /// keyboard path (e.g. `Alt+C` toggles Match Case, plain `arrowdown`
+    /// keyboard path (e.g. `Alt+C` toggles Match Case, plain `Down`
     /// walks to the next match).
     pub fn press_search_key(
         &mut self,
-        key: &str,
+        code: KeyCode,
         ctrl: bool,
         alt: bool,
         shift: bool,
@@ -338,7 +331,7 @@ impl Editor {
         cx: &mut Context<Self>,
     ) {
         let key_event = KeyEvent {
-            key: key.to_string(),
+            code,
             modifiers: Modifiers {
                 ctrl,
                 alt,
@@ -347,5 +340,59 @@ impl Editor {
             },
         };
         self.dispatch_key(&key_event, window, cx);
+    }
+
+    /// Feeds a synthetic search-panel action (prompt-bar clicks) through the
+    /// hook chain with the same post-processing as consumed keys.
+    ///
+    /// Pointer chrome cannot produce a [`KeyCode`], so actions travel on
+    /// [`EditorHook::on_search_action`] instead of through [`KeyEvent`].
+    pub fn press_search_action(
+        &mut self,
+        action: SearchAction,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+    ) {
+        self.reset_blink_cursor(cx);
+        let initial_version = self.buffer.version();
+
+        let mut hook_idx = 0;
+        while hook_idx < self.hooks.len() {
+            let mut ctx = HookContext::new(
+                &mut self.buffer,
+                &mut self.selection,
+                &mut self.cursor_style,
+                &mut self.prompt,
+                &mut self.pending_effects,
+            );
+            if self.hooks[hook_idx].on_search_action(&mut ctx, action) == HookOutcome::Consumed {
+                break;
+            }
+            hook_idx += 1;
+        }
+
+        self.finish_consumed_action(window, cx, initial_version);
+    }
+
+    /// Post-processing shared by consumed keys and synthetic actions:
+    /// selection callbacks, scrolling, effect + search sync, notify.
+    fn finish_consumed_action(
+        &mut self,
+        window: Option<&Window>,
+        cx: &mut Context<Self>,
+        initial_version: usize,
+    ) {
+        if self.buffer.version() != initial_version {
+            for hook in &mut self.hooks {
+                hook.after_edit(&mut self.buffer);
+            }
+        }
+        for hook in &mut self.hooks {
+            hook.on_selection_change(&self.buffer, self.selection.as_ref());
+        }
+        self.scroll_to_cursor(window);
+        self.flush_effects();
+        self.sync_search_state();
+        cx.notify();
     }
 }

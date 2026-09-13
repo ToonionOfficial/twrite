@@ -15,15 +15,16 @@ A hook opens a prompt via `ctx.prompt.open(...)`, and routes incoming keystrokes
 
 ```rust
 use twrite::{
-    EditorHook, HookContext, HookOutcome, KeyEvent, PromptAction, PromptPlacement, PromptSpec,
+    EditorHook, HookContext, HookOutcome, KeyCode, KeyEvent, PromptAction, PromptPlacement,
+    PromptSpec,
 };
 
 pub struct GotoLineHook;
 
 impl EditorHook for GotoLineHook {
-    fn on_key(&mut self, event: &KeyEvent, ctx: &mut HookContext) -> HookOutcome {
+    fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
         // Open on Ctrl+G:
-        if event.key == "g" && event.modifiers.ctrl {
+        if event.code == KeyCode::Char('g') && event.modifiers.ctrl {
             ctx.prompt.open(
                 PromptSpec::new("goto-line", ":", "Enter line number", PromptPlacement::BottomBar, false),
                 "",
@@ -66,7 +67,8 @@ To build a floating `F1` command palette with live fuzzy filtering, populate ite
 ```rust
 use twrite::prompt::{PromptItem, fuzzy_filter};
 use twrite::{
-    EditorHook, HookContext, HookOutcome, KeyEvent, PromptAction, PromptPlacement, PromptSpec,
+    EditorHook, HookContext, HookOutcome, KeyCode, KeyEvent, PromptAction, PromptPlacement,
+    PromptSpec,
 };
 
 pub struct CommandPaletteHook {
@@ -97,8 +99,10 @@ impl CommandPaletteHook {
 }
 
 impl EditorHook for CommandPaletteHook {
-    fn on_key(&mut self, event: &KeyEvent, ctx: &mut HookContext) -> HookOutcome {
-        if event.key == "f1" || (event.key == "p" && event.modifiers.ctrl) {
+    fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
+        if event.code == KeyCode::F(1)
+            || (event.code == KeyCode::Char('p') && event.modifiers.ctrl)
+        {
             ctx.prompt.open(
                 PromptSpec::new(
                     "command-palette",

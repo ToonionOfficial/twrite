@@ -8,8 +8,8 @@
 //! Next: `markdown` (batteries) or `vim` (a full system on hooks).
 use gpui::*;
 use twrite::{
-    Editor, EditorHook, HookContext, HookOutcome, KeyEvent, Point, PromptAction, PromptItem,
-    PromptPlacement, PromptSpec, Selection, fps_badge, fuzzy_filter,
+    Editor, EditorHook, HookContext, HookOutcome, KeyCode, KeyEvent, Point, PromptAction,
+    PromptItem, PromptPlacement, PromptSpec, Selection, fps_badge, fuzzy_filter,
 };
 
 /// Jump to a line number: the submit-and-interpret shape.
@@ -21,7 +21,7 @@ struct GotoLineHook;
 impl EditorHook for GotoLineHook {
     fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
         if !ctx.prompt.is_open() {
-            if event.key == "g" && event.modifiers.ctrl && !event.modifiers.alt {
+            if event.code == KeyCode::Char('g') && event.modifiers.ctrl && !event.modifiers.alt {
                 ctx.prompt.open(
                     PromptSpec::new(
                         "goto-line",
@@ -159,7 +159,7 @@ impl PaletteHook {
 impl EditorHook for PaletteHook {
     fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
         if !ctx.prompt.is_open() {
-            if event.key == "p" && event.modifiers.ctrl && !event.modifiers.alt {
+            if event.code == KeyCode::Char('p') && event.modifiers.ctrl && !event.modifiers.alt {
                 ctx.prompt.open(
                     PromptSpec::new(
                         "commands",

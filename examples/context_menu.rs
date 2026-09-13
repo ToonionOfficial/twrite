@@ -7,7 +7,10 @@
 //! (enabled only with a non-empty selection) and "Insert separator".
 //! Run with: `cargo run --example context_menu`
 use gpui::*;
-use twrite::{ContextMenuContext, ContextMenuItem, Editor, EditorHook, HookContext, HookOutcome};
+use twrite::{
+    ContextMenuContext, ContextMenuItem, Editor, EditorHook, HookContext, HookOutcome, KeyCode,
+    KeyHint,
+};
 
 /// Demo hook contributing two context menu rows.
 #[derive(Default)]
@@ -16,8 +19,11 @@ struct MenuDemoHook;
 impl EditorHook for MenuDemoHook {
     fn context_menu_items(&self, ctx: &ContextMenuContext) -> Vec<ContextMenuItem> {
         let has_selection = ctx.selection.is_some_and(|s| !s.byte_range().is_empty());
-        let mut uppercase =
-            ContextMenuItem::with_hint("demo.uppercase", "UPPERCASE selection", "Ctrl+U");
+        let mut uppercase = ContextMenuItem::with_hint(
+            "demo.uppercase",
+            "UPPERCASE selection",
+            KeyHint::ctrl(KeyCode::Char('U')),
+        );
         uppercase.enabled = has_selection;
         vec![
             uppercase,

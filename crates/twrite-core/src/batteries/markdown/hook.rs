@@ -1,4 +1,4 @@
-use crate::{EditorHook, HookContext, HookOutcome, KeyEvent, Point, Selection};
+use crate::{EditorHook, HookContext, HookOutcome, KeyCode, KeyEvent, Point, Selection};
 
 use super::config::MarkdownConfig;
 use super::table::{
@@ -206,8 +206,8 @@ impl MarkdownHook {
 impl EditorHook for MarkdownHook {
     fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
         if event.modifiers.ctrl || event.modifiers.meta {
-            match event.key.to_lowercase().as_str() {
-                "b" => {
+            match &event.code {
+                KeyCode::Char('b') => {
                     if let Some(sel) = ctx.selection.take() {
                         let range = sel.byte_range();
                         let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
@@ -221,7 +221,7 @@ impl EditorHook for MarkdownHook {
                     }
                     return HookOutcome::Consumed;
                 }
-                "i" => {
+                KeyCode::Char('i') => {
                     if let Some(sel) = ctx.selection.take() {
                         let range = sel.byte_range();
                         let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
@@ -234,7 +234,7 @@ impl EditorHook for MarkdownHook {
                     }
                     return HookOutcome::Consumed;
                 }
-                "k" => {
+                KeyCode::Char('k') => {
                     if let Some(sel) = ctx.selection.take() {
                         let range = sel.byte_range();
                         let text = ctx.buffer.text().byte_slice(range.clone()).to_string();
@@ -252,14 +252,14 @@ impl EditorHook for MarkdownHook {
                     }
                     return HookOutcome::Consumed;
                 }
-                "enter" if Self::toggle_checkbox(ctx) => {
+                KeyCode::Enter if Self::toggle_checkbox(ctx) => {
                     return HookOutcome::Consumed;
                 }
                 _ => {}
             }
         }
 
-        if event.key == "enter" && !event.modifiers.shift {
+        if event.code == KeyCode::Enter && !event.modifiers.shift {
             let cursor = ctx.buffer.cursor_offset();
             let row = ctx.buffer.cursor_point().row;
             let line = ctx.buffer.line_to_string(row);
@@ -349,7 +349,7 @@ impl EditorHook for MarkdownHook {
         // `Tab` / `Shift+Tab` cell navigation inside GFM tables. Runs after
         // `Enter` handling so plain indent-Tab still applies outside tables;
         // returning `Consumed` overrides the editor's default tab-size spaces.
-        if event.key == "tab"
+        if event.code == KeyCode::Tab
             && !event.modifiers.ctrl
             && !event.modifiers.meta
             && !event.modifiers.alt
@@ -401,7 +401,7 @@ mod tests {
             &mut effects,
         );
         let event = KeyEvent {
-            key: "b".into(),
+            code: KeyCode::Char('b'),
             modifiers: crate::Modifiers {
                 ctrl: true,
                 ..Default::default()
@@ -431,7 +431,7 @@ mod tests {
             &mut effects,
         );
         let event = KeyEvent {
-            key: "enter".into(),
+            code: KeyCode::Enter,
             modifiers: crate::Modifiers {
                 ctrl: true,
                 ..Default::default()
@@ -464,7 +464,7 @@ mod tests {
             &mut prompt,
             &mut effects,
         );
-        let event = KeyEvent::plain("enter");
+        let event = KeyEvent::plain(KeyCode::Enter);
 
         let outcome = hook.on_key(&mut ctx, &event);
         assert_eq!(outcome, HookOutcome::Consumed);
@@ -577,7 +577,7 @@ mod tests {
             &mut effects,
         );
         assert_eq!(
-            hook.on_key(&mut ctx, &KeyEvent::plain("tab")),
+            hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Tab)),
             HookOutcome::Consumed
         );
         assert_eq!(ctx.buffer.cursor_offset(), 2); // start of `a`
@@ -590,14 +590,14 @@ mod tests {
             &mut effects,
         );
         assert_eq!(
-            hook.on_key(&mut ctx, &KeyEvent::plain("tab")),
+            hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Tab)),
             HookOutcome::Consumed
         );
         assert_eq!(ctx.buffer.cursor_offset(), 6); // start of `b`
 
         // Shift+Tab goes back.
         let back = KeyEvent {
-            key: "tab".into(),
+            code: KeyCode::Tab,
             modifiers: crate::Modifiers {
                 shift: true,
                 ..Default::default()
@@ -632,7 +632,7 @@ mod tests {
             &mut effects,
         );
         assert_eq!(
-            hook.on_key(&mut ctx, &KeyEvent::plain("tab")),
+            hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Tab)),
             HookOutcome::Consumed
         );
         assert_eq!(ctx.buffer.text().to_string(), "| a |\n| --- |\n| b |\n| |");
@@ -656,7 +656,7 @@ mod tests {
             &mut effects,
         );
         assert_eq!(
-            hook.on_key(&mut ctx, &KeyEvent::plain("tab")),
+            hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Tab)),
             HookOutcome::PassThrough
         );
 
@@ -674,7 +674,7 @@ mod tests {
             &mut effects,
         );
         assert_eq!(
-            hook_off.on_key(&mut ctx, &KeyEvent::plain("tab")),
+            hook_off.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Tab)),
             HookOutcome::PassThrough
         );
     }
@@ -697,7 +697,7 @@ mod tests {
             &mut effects,
         );
         assert_eq!(
-            hook.on_key(&mut ctx, &KeyEvent::plain("enter")),
+            hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Enter)),
             HookOutcome::Consumed
         );
         assert_eq!(
@@ -716,7 +716,7 @@ mod tests {
             &mut effects,
         );
         assert_eq!(
-            hook.on_key(&mut ctx, &KeyEvent::plain("enter")),
+            hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Enter)),
             HookOutcome::Consumed
         );
         assert_eq!(ctx.buffer.text().to_string(), "| a |\n| --- |\n");

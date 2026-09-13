@@ -23,14 +23,18 @@ Disabled rows render dimmed and ignore clicks. The clipboard check happens once 
 Return rows from `context_menu_items`. You get a read-only snapshot: the click's buffer coordinates (`clicked_row`, `clicked_col`), the selection, and the caps above, so rows can be position-aware (e.g. only offer "Toggle task" on a task line):
 
 ```rust
-use twrite::{ContextMenuContext, ContextMenuItem, EditorHook};
+use twrite::{ContextMenuContext, ContextMenuItem, EditorHook, KeyCode, KeyHint};
 
 pub struct MyMenuHook;
 
 impl EditorHook for MyMenuHook {
     fn context_menu_items(&self, ctx: &ContextMenuContext) -> Vec<ContextMenuItem> {
         let has_selection = ctx.selection.is_some_and(|s| !s.byte_range().is_empty());
-        let mut shout = ContextMenuItem::with_hint("my.uppercase", "UPPERCASE selection", "Ctrl+U");
+        let mut shout = ContextMenuItem::with_hint(
+            "my.uppercase",
+            "UPPERCASE selection",
+            KeyHint::ctrl(KeyCode::Char('U')),
+        );
         shout.enabled = has_selection;
         vec![shout]
     }

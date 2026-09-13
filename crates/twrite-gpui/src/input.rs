@@ -1,11 +1,12 @@
 use gpui::KeyDownEvent;
-use twrite_core::{KeyEvent, Modifiers};
+use twrite_core::{KeyCode, KeyEvent, Modifiers};
 
 /// Translates a GPUI [`KeyDownEvent`] into a platform-agnostic twrite [`KeyEvent`].
 ///
-/// Arrow keys arrive under different names per platform/backend (`left` vs
-/// `arrowleft`); they are normalized to the canonical `arrow*` form that the
-/// core prompt and hook keymaps match on.
+/// This is the single boundary where GPUI key *strings* are interpreted;
+/// everything downstream matches on [`KeyCode`]. Arrow keys arrive under
+/// different names per platform/backend (`left` vs `arrowleft`) and converge
+/// on one variant here.
 ///
 /// Printable characters come from [`Keystroke::key_char`] — the character
 /// that would actually be typed (`"A"` with Shift held, layout-aware) —
@@ -22,25 +23,8 @@ use twrite_core::{KeyEvent, Modifiers};
 /// past 0.2.2 if that signal returns.
 pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
     let keystroke = &event.keystroke;
-    let mods = &keystroke.modifiers;
-    let key_str = match keystroke.key.as_str() {
-        "space" => " ".to_string(),
-        "left" => "arrowleft".to_string(),
-        "right" => "arrowright".to_string(),
-        "up" => "arrowup".to_string(),
-        "down" => "arrowdown".to_string(),
-        _ => match &keystroke.key_char {
-            Some(text)
-                if text.chars().count() == 1 && !mods.control && !mods.platform && !mods.alt =>
-            {
-                text.clone()
-            }
-            _ => keystroke.key.clone(),
-        },
-    };
-
     Some(KeyEvent {
-        key: key_str,
+        code: code_for(keystroke),
         modifiers: Modifiers {
             ctrl: keystroke.modifiers.control,
             alt: keystroke.modifiers.alt,
@@ -48,6 +32,57 @@ pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
             meta: keystroke.modifiers.platform,
         },
     })
+}
+
+/// Maps one GPUI keystroke to a [`KeyCode`], preserving the historical
+/// precedence: named physical keys first, then produced characters for
+/// genuine text input, then single-char physical names (Ctrl/Cmd combos),
+/// then the named table, else [`KeyCode::Unidentified`].
+fn code_for(keystroke: &gpui::Keystroke) -> KeyCode {
+    let mods = &keystroke.modifiers;
+    match keystroke.key.as_str() {
+        "space" => return KeyCode::Char(' '),
+        "left" | "arrowleft" => return KeyCode::Left,
+        "right" | "arrowright" => return KeyCode::Right,
+        "up" | "arrowup" => return KeyCode::Up,
+        "down" | "arrowdown" => return KeyCode::Down,
+        _ => {}
+    }
+    if let Some(text) = &keystroke.key_char
+        && text.chars().count() == 1
+        && !mods.control
+        && !mods.platform
+        && !mods.alt
+    {
+        return KeyCode::Char(text.chars().next().unwrap());
+    }
+    if keystroke.key.chars().count() == 1 {
+        return KeyCode::Char(keystroke.key.chars().next().unwrap().to_ascii_lowercase());
+    }
+    match keystroke.key.as_str() {
+        "enter" => KeyCode::Enter,
+        "tab" => KeyCode::Tab,
+        "escape" => KeyCode::Escape,
+        "backspace" => KeyCode::Backspace,
+        "delete" => KeyCode::Delete,
+        "home" => KeyCode::Home,
+        "end" => KeyCode::End,
+        "pageup" => KeyCode::PageUp,
+        "pagedown" => KeyCode::PageDown,
+        "insert" => KeyCode::Insert,
+        name => parse_function_key(name).unwrap_or(KeyCode::Unidentified),
+    }
+}
+
+/// Parses `F1`–`F24` in any case (`"f3"` is what GPUI emits on Linux).
+fn parse_function_key(name: &str) -> Option<KeyCode> {
+    let lower = name.to_ascii_lowercase();
+    let digits = lower.strip_prefix('f')?;
+    if !(1..=2).contains(&digits.len()) || !digits.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let n: u8 = digits.parse().ok()?;
+    (1..=24).contains(&n).then_some(KeyCode::F(n))
 }
 
 #[cfg(test)]
@@ -80,14 +115,14 @@ mod tests {
             },
         );
         let translated = translate_key_down(&event).unwrap();
-        assert_eq!(translated.key, "A");
+        assert_eq!(translated.code, KeyCode::Char('A'));
         assert!(translated.modifiers.shift);
     }
 
     #[test]
     fn plain_letter_passes_through() {
         let translated = translate_key_down(&plain("a", Some("a"))).unwrap();
-        assert_eq!(translated.key, "a");
+        assert_eq!(translated.code, KeyCode::Char('a'));
         assert!(!translated.modifiers.shift);
     }
 
@@ -101,7 +136,7 @@ mod tests {
                 ..Default::default()
             },
         );
-        assert_eq!(translate_key_down(&event).unwrap().key, "?");
+        assert_eq!(translate_key_down(&event).unwrap().code, KeyCode::Char('?'));
     }
 
     #[test]
@@ -115,7 +150,7 @@ mod tests {
             },
         );
         let translated = translate_key_down(&event).unwrap();
-        assert_eq!(translated.key, "b");
+        assert_eq!(translated.code, KeyCode::Char('b'));
         assert!(translated.modifiers.ctrl);
     }
 
@@ -128,7 +163,7 @@ mod tests {
             ..Default::default()
         };
         let translated = translate_key_down(&keystroke("c", Some("ç"), alt)).unwrap();
-        assert_eq!(translated.key, "c");
+        assert_eq!(translated.code, KeyCode::Char('c'));
         assert!(translated.modifiers.alt);
     }
 
@@ -136,22 +171,33 @@ mod tests {
     fn multichar_or_missing_key_char_falls_back_to_key() {
         // IME composition sequences are not text input yet.
         let translated = translate_key_down(&plain("a", Some("aeiou"))).unwrap();
-        assert_eq!(translated.key, "a");
+        assert_eq!(translated.code, KeyCode::Char('a'));
         // Modifier-only combos carry no character.
         let translated = translate_key_down(&plain("s", None)).unwrap();
-        assert_eq!(translated.key, "s");
+        assert_eq!(translated.code, KeyCode::Char('s'));
     }
 
     #[test]
-    fn named_keys_and_aliases_are_untouched() {
+    fn named_keys_and_aliases_map_to_variants() {
         assert_eq!(
-            translate_key_down(&plain("enter", None)).unwrap().key,
-            "enter"
+            translate_key_down(&plain("enter", None)).unwrap().code,
+            KeyCode::Enter
         );
         assert_eq!(
-            translate_key_down(&plain("left", None)).unwrap().key,
-            "arrowleft"
+            translate_key_down(&plain("left", None)).unwrap().code,
+            KeyCode::Left
         );
-        assert_eq!(translate_key_down(&plain("space", None)).unwrap().key, " ");
+        assert_eq!(
+            translate_key_down(&plain("space", None)).unwrap().code,
+            KeyCode::Char(' ')
+        );
+        assert_eq!(
+            translate_key_down(&plain("f3", None)).unwrap().code,
+            KeyCode::F(3)
+        );
+        assert_eq!(
+            translate_key_down(&plain("back", None)).unwrap().code,
+            KeyCode::Unidentified
+        );
     }
 }

@@ -7,14 +7,14 @@ Hooks (`EditorHook`) are the primary extension mechanism in TWrite. They are pur
 Implement `EditorHook` to tap into editor lifecycle events:
 
 ```rust
-use twrite::{EditorHook, HookContext, HookOutcome, KeyEvent};
+use twrite::{EditorHook, HookContext, HookOutcome, KeyCode, KeyEvent};
 
 pub struct MyCustomHook;
 
 impl EditorHook for MyCustomHook {
     /// Intercepts keyboard input before the editor buffer processes it.
-    fn on_key(&mut self, event: &KeyEvent, ctx: &mut HookContext) -> HookOutcome {
-        if event.key == "s" && event.modifiers.ctrl {
+    fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
+        if event.code == KeyCode::Char('s') && event.modifiers.ctrl {
             println!("Custom Ctrl+S intercepted! Buffer has {} bytes", ctx.buffer.len_bytes());
             return HookOutcome::Consumed;
         }
@@ -71,8 +71,8 @@ impl WordCountAndSaveHook {
 }
 
 impl EditorHook for WordCountAndSaveHook {
-    fn on_key(&mut self, event: &KeyEvent, ctx: &mut HookContext) -> HookOutcome {
-        if event.key == "s" && event.modifiers.ctrl && !event.modifiers.alt {
+    fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
+        if event.code == KeyCode::Char('s') && event.modifiers.ctrl && !event.modifiers.alt {
             ctx.effects.push(HookEffect::Save);
             ctx.effects.push(HookEffect::Message("Document saved".to_string()));
             return HookOutcome::Consumed;
@@ -96,11 +96,15 @@ impl EditorHook for WordCountAndSaveHook {
 Right-click opens a menu of built-in edit rows (Undo/Redo/Cut/Copy/Paste/Delete/Select All) followed by hook rows. Contribute rows with `context_menu_items` and handle clicks with `on_context_menu_action` (run before built-in dispatch; return `Consumed` to halt, including to suppress a default by reusing its id like `"copy"`):
 
 ```rust
-use twrite::{ContextMenuContext, ContextMenuItem, EditorHook, HookContext, HookOutcome};
+use twrite::{ContextMenuContext, ContextMenuItem, EditorHook, HookContext, HookOutcome, KeyCode, KeyHint};
 
 impl EditorHook for MyCustomHook {
     fn context_menu_items(&self, _ctx: &ContextMenuContext) -> Vec<ContextMenuItem> {
-        vec![ContextMenuItem::with_hint("my-action", "Do thing", "Ctrl+D")]
+        vec![ContextMenuItem::with_hint(
+            "my-action",
+            "Do thing",
+            KeyHint::ctrl(KeyCode::Char('D')),
+        )]
     }
 
     fn on_context_menu_action(&mut self, ctx: &mut HookContext, id: &str) -> HookOutcome {

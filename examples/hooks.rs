@@ -10,7 +10,7 @@
 use gpui::*;
 use twrite::{
     AutoPairsHook, ContextMenuContext, ContextMenuItem, Editor, EditorBuffer, EditorHook,
-    HookContext, HookOutcome, KeyEvent,
+    HookContext, HookOutcome, KeyCode, KeyEvent, KeyHint,
 };
 
 /// A custom hook showing the three most-used hook methods.
@@ -42,9 +42,7 @@ impl ScratchHook {
 
 impl EditorHook for ScratchHook {
     fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
-        if (event.modifiers.ctrl || event.modifiers.meta)
-            && event.key.to_lowercase().as_str() == "d"
-        {
+        if (event.modifiers.ctrl || event.modifiers.meta) && event.code == KeyCode::Char('d') {
             let row = ctx.buffer.cursor_point().row;
             let line_start = ctx.buffer.point_to_offset(twrite::Point::new(row, 0));
             let stripped = ctx.buffer.line_to_string(row);
@@ -54,7 +52,7 @@ impl EditorHook for ScratchHook {
             return HookOutcome::Consumed;
         }
 
-        if event.key == "enter" && !event.modifiers.shift {
+        if event.code == KeyCode::Enter && !event.modifiers.shift {
             let cursor = ctx.buffer.cursor_offset();
             let row = ctx.buffer.cursor_point().row;
             let line = ctx.buffer.line_to_string(row);
@@ -79,7 +77,11 @@ impl EditorHook for ScratchHook {
 
     fn context_menu_items(&self, _ctx: &ContextMenuContext) -> Vec<ContextMenuItem> {
         vec![
-            ContextMenuItem::with_hint("scratch.duplicate-line", "Duplicate line", "Ctrl+D"),
+            ContextMenuItem::with_hint(
+                "scratch.duplicate-line",
+                "Duplicate line",
+                KeyHint::ctrl(KeyCode::Char('D')),
+            ),
             ContextMenuItem::new("scratch.word-count", &self.status_line.to_lowercase()).disabled(),
         ]
     }

@@ -17,6 +17,8 @@ pub mod error;
 pub mod history;
 /// Extensible hook system and input interceptors.
 pub mod hook;
+/// Structured key identity for hooks, hints, and keymaps.
+pub mod keycode;
 /// CommonMark and GitHub Flavored Markdown highlighter and interactive hook.
 ///
 /// Lives at `src/batteries/markdown/`; this shim keeps the public path
@@ -40,7 +42,7 @@ pub mod syntax;
 pub use buffer::EditorBuffer;
 pub use context_menu::{
     COPY_ID, CUT_ID, ContextMenuCaps, ContextMenuContext, ContextMenuItem, ContextMenuState,
-    DELETE_ID, PASTE_ID, REDO_ID, SELECT_ALL_ID, UNDO_ID, collect_context_items,
+    DELETE_ID, KeyHint, PASTE_ID, REDO_ID, SELECT_ALL_ID, UNDO_ID, collect_context_items,
     default_context_items,
 };
 pub use coordinates::Point;
@@ -50,6 +52,7 @@ pub use hook::{
     AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
     SearchSnapshot,
 };
+pub use keycode::KeyCode;
 #[cfg(feature = "markdown")]
 pub use markdown::{
     ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook, TABLE_CELL_TAG,
@@ -66,7 +69,7 @@ pub use prompt::{
 };
 pub use search::{SearchQuery, SearchState, find_matches, find_next, find_prev, replace_all_query};
 pub use search::{collect_replacements, replace_one_query};
-pub use search_hook::{REPLACE_PROMPT_ID, SEARCH_PROMPT_ID, SearchHook};
+pub use search_hook::{REPLACE_PROMPT_ID, SEARCH_PROMPT_ID, SearchAction, SearchHook};
 pub use selection::Selection;
 pub use syntax::{
     ConcealedLine, DisplayPad, HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment,
