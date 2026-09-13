@@ -5,6 +5,16 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.9.2] - 2026-09-13
+
+### Fixed
+- **`Ctrl+Up` / `Ctrl+Down` cursor follow (`twrite-gpui`)**: scrolling the
+  viewport with these keys now keeps the cursor visible. When the scroll
+  pushes the cursor out of view the cursor moves to the first or last visible
+  row while preserving the column (Vim `Ctrl+E` / `Ctrl+Y` style). If the
+  cursor is already visible it is not moved. `Ctrl+Shift+Up` / `Ctrl+Shift+Down`
+  extend the selection while scrolling. Fixes [#40](https://github.com/ToonionOfficial/twrite/issues/40).
+
 ## [0.9.1] - 2026-09-13
 
 ### Fixed

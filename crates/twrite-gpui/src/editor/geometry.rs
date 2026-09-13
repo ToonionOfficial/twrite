@@ -29,6 +29,78 @@ impl Editor {
         self.scroll_row = (self.scroll_row + count).min(total_lines.saturating_sub(1));
     }
 
+    /// Scrolls the viewport by `count` rows and clamps the cursor into the
+    /// visible range (Vim `Ctrl+E` / `Ctrl+Y` style).
+    ///
+    /// Set `scroll_down` to `true` to scroll toward the end of the document,
+    /// `false` to scroll toward the beginning.
+    ///
+    /// If the cursor row is still visible after the scroll it is not moved.
+    /// If it scrolled above the viewport the cursor moves to the first visible
+    /// row. If it scrolled below the viewport the cursor moves to the last
+    /// visible row. The cursor column is preserved and clamped to the target
+    /// line length by the buffer.
+    ///
+    /// Pass `select = true` when Shift is held to extend the selection instead
+    /// of collapsing it.
+    ///
+    /// The caller is responsible for running `on_selection_change` hooks,
+    /// `flush_effects`, `sync_search_state`, and `cx.notify()` afterwards,
+    /// matching the post-processing every other cursor-moving key path runs.
+    pub fn scroll_and_clamp_cursor(&mut self, count: usize, scroll_down: bool, select: bool) {
+        if scroll_down {
+            self.scroll_down(count);
+        } else {
+            self.scroll_up(count);
+        }
+
+        let total_lines = self.buffer.len_lines();
+        if total_lines == 0 {
+            return;
+        }
+
+        let visible_row_range =
+            if !self.visible_lines.is_empty() && self.visible_lines[0].row == self.scroll_row {
+                let first = self.visible_lines[0].row;
+                let last = self.visible_lines.last().unwrap().row;
+                Some(first..=last)
+            } else if let Some(bounds) = self.last_bounds {
+                let line_height = self.config.line_height;
+                let viewport_height = bounds.size.height;
+                let visible_row_count = if line_height > px(0.0) {
+                    (viewport_height / line_height).floor() as usize
+                } else {
+                    1
+                };
+                let first = self.scroll_row;
+                let last = (self.scroll_row + visible_row_count.saturating_sub(1))
+                    .min(total_lines.saturating_sub(1));
+                Some(first..=last)
+            } else {
+                None
+            };
+
+        let Some(visible_rows) = visible_row_range else {
+            return;
+        };
+
+        let cursor_point = self.buffer.cursor_point();
+        let cursor_col = cursor_point.column;
+
+        let target_row = if cursor_point.row < *visible_rows.start() {
+            *visible_rows.start()
+        } else if cursor_point.row > *visible_rows.end() {
+            *visible_rows.end()
+        } else {
+            return;
+        };
+
+        let target_offset = self
+            .buffer
+            .point_to_offset(twrite_core::Point::new(target_row, cursor_col));
+        self.move_cursor_to(target_offset, select);
+    }
+
     /// Moves the cursor to `new_offset`, expanding or creating a selection if `select` is true.
     pub fn move_cursor_to(&mut self, new_offset: usize, select: bool) {
         if select {
