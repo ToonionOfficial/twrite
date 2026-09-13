@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "A fast, modular, customizable text editor engine for GPUI"
+readme = "../../README.md"
 
 [dependencies]
 twrite-core = { workspace = true }
