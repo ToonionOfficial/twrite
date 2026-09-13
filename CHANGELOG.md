@@ -12,6 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   so the registry page renders documentation (previously shipped no readme),
   and expand the `twrite` facade crate docs (layout overview, quick start,
   feature list).
+- **Heading click mapping in Hidden conceal mode (`twrite-gpui`)**:
+  `offset_for_position` now shapes hit-test text with the same
+  `LineMetrics` font size and code-block flag used by paint, so mouse
+  clicks on concealed headings (`#` through `######`) land on the clicked
+  glyph instead of shifting right.
 
 ## [0.9.0] - 2026-09-13
 
