@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "GPUI rendering, canvas text-shaping, and editor component for twrite"
+readme = "../../README.md"
 
 [dependencies]
 gpui = { workspace = true }

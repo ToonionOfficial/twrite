@@ -5,6 +5,7 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Headless buffer, movement, syntax, and hook primitives for twrite"
+readme = "../../README.md"
 
 [dependencies]
 ropey = { workspace = true }
