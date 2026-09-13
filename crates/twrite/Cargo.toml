@@ -10,11 +10,16 @@ description = "A fast, modular, customizable text editor engine for GPUI"
 twrite-core = { workspace = true }
 twrite-gpui = { workspace = true }
 gpui = { workspace = true }
-gpui_platform = { workspace = true }
 
 [features]
 default = []
 markdown = ["twrite-core/markdown", "twrite-gpui/markdown"]
+# Platform-backend passthrough: official `gpui` folds gpui_platform into
+# itself (defaults already include wayland + x11 + font-kit, matching the
+# old git pin's feature set). These are additive opt-ins for explicit use.
+wayland = ["gpui/wayland"]
+x11 = ["gpui/x11"]
+font-kit = ["gpui/font-kit"]
 
 [[example]]
 name = "simple"

@@ -16,7 +16,7 @@ impl Editor {
         // A left-click outside the menu dismisses it, then proceeds
         // normally so the click still moves the cursor.
         self.dismiss_context_menu(cx);
-        self.focus_handle.focus(window, cx);
+        self.focus_handle.focus(window);
         self.reset_blink_cursor(cx);
 
         if event.click_count == 1

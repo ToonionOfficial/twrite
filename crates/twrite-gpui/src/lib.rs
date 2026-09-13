@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn test_build_line_text_runs_code_block_disables_text_bg() {
         let theme = EditorTheme::default();
-        let font = Font::default();
+        let font: Font = gpui::font(".SystemUIFont");
         let spans = vec![StyleSpan::tag(0..4, HighlightTag::Code)];
 
         let runs_block = build_line_text_runs(
@@ -175,7 +175,7 @@ mod tests {
         // don't *paint* differently, the cause is missing OS font faces
         // (silent font-kit fallback), not this pipeline.
         let theme = EditorTheme::default();
-        let font = Font::default();
+        let font: Font = gpui::font(".SystemUIFont");
         let text = "Hi bold and ital!";
         let spans = vec![
             StyleSpan::tag(3..7, HighlightTag::Bold),
@@ -210,10 +210,10 @@ mod tests {
     #[test]
     fn test_build_line_text_runs_code_spans_use_code_font() {
         let theme = EditorTheme::default();
-        let font = Font::default();
+        let font: Font = gpui::font(".SystemUIFont");
         let code_font = Font {
             family: "CodeFam".into(),
-            ..Font::default()
+            ..gpui::font(".SystemUIFont")
         };
         let text = "a `b` c";
         let spans = vec![StyleSpan::tag(2..5, HighlightTag::Code)];

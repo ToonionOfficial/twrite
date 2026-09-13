@@ -23,7 +23,7 @@ impl Editor {
         if !self.config.context_menu {
             return;
         }
-        self.focus_handle.focus(window, cx);
+        self.focus_handle.focus(window);
         self.reset_blink_cursor(cx);
 
         let offset = self.offset_for_position(event.position, window);

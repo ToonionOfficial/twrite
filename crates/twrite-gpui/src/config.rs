@@ -184,7 +184,9 @@ mod tests {
     #[test]
     fn base_font_precedence_is_explicit_selected_host() {
         use gpui::Font;
-        let host = Font::default();
+        // gpui 0.2.2 removed `Font::default()`; the old default was
+        // `font(".SystemUIFont")`, preserved here.
+        let host: Font = gpui::font(".SystemUIFont");
         let selected: SharedString = "Selected".into();
         let config = EditorConfig::default();
 
