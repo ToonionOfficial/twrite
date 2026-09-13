@@ -10,7 +10,6 @@
 //!
 //! Run with: `cargo run --example vim`
 use gpui::*;
-use gpui_platform::application;
 use twrite::{
     CharKind, CursorStyle, Editor, EditorHook, HookContext, HookEffect, HookOutcome, KeyEvent,
     Point, PromptAction, PromptPlacement, PromptSpec, SEARCH_PROMPT_ID, SearchHook, SearchQuery,
@@ -1130,7 +1129,7 @@ mod tests {
 }
 
 fn main() {
-    application().run(|cx: &mut App| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(850.0), px(620.0)), cx);
         cx.open_window(
             WindowOptions {
@@ -1163,7 +1162,7 @@ fn main() {
                 });
 
                 let focus_handle = editor.read(cx).focus_handle.clone();
-                focus_handle.focus(window, cx);
+                focus_handle.focus(window);
 
                 cx.new(|_| AppView { editor })
             },

@@ -5,6 +5,32 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-09-13
+
+### Changed
+- **Migrated from git-pinned GPUI to official `gpui 0.2.2` from crates.io**:
+  - Workspace `gpui`/`gpui_platform` git pins (`zed-industries/zed@d85eade`)
+    replaced by registry `gpui = "0.2.2"`; the `gpui_platform` crate is gone
+    (official `gpui` folds the platform backends in as cargo features).
+  - App entry becomes `Application::new().run(|cx: &mut App| …)` instead of
+    `gpui_platform::application().run(…)` (all 7 examples + docs updated).
+  - `FocusHandle::focus(window, cx)` becomes `focus(window)`;
+    `ShapedLine::paint` drops its explicit `TextAlign`/`bounds` args
+    (0.2.2 bakes in `TextAlign::Left` — same pixels for gutter numbers).
+  - `Font::default()` and `KeyDownEvent::prefer_character_input` do not exist
+    in the 0.2.2 API: font probing goes through `SharedString::new`, and
+    Alt-modified keys always keep physical key names (AltGr/macOS Option
+    accents fall back; revisit when upgrading past 0.2.2).
+  - Downstream migration: delete any `gpui_platform` dependency and `gpui`
+    `rev` pins; `gpui = "0.2"` + `twrite = "0.8"` share a single `gpui`
+    via semver unification.
+
+### Added
+- **Platform-backend passthrough features (`twrite`)**: `wayland`, `x11`,
+  `font-kit` map to `gpui/...`. Wayland-only example:
+  `twrite = { version = "0.8", default-features = false, features = ["wayland"] }`
+  alongside matching `gpui` features.
+
 ## [0.7.0] - 2026-09-11
 
 ### Added

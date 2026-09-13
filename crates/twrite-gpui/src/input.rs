@@ -14,8 +14,12 @@ use twrite_core::{KeyEvent, Modifiers};
 /// Using `key` would make capitals, shifted symbols, and non-US layouts
 /// untypeable. `key_char` is honored only for genuine text input: command
 /// combos (Ctrl/Cmd held) keep physical key names so `Ctrl+B`-style bindings
-/// keep matching, and Option/Alt-modified keys keep theirs too unless the
-/// platform prefers character input (e.g. AltGr, macOS Option accents).
+/// keep matching, and Option/Alt-modified keys keep theirs too.
+///
+/// NOTE (gpui 0.2.2): the git-era `KeyDownEvent::prefer_character_input`
+/// signal (AltGr, macOS Option accents) does not exist in the 0.2.2 API, so
+/// Alt-modified keys always keep physical names here. Revisit when upgrading
+/// past 0.2.2 if that signal returns.
 pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
     let keystroke = &event.keystroke;
     let mods = &keystroke.modifiers;
@@ -30,7 +34,7 @@ pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
                 if text.chars().count() == 1
                     && !mods.control
                     && !mods.platform
-                    && (!mods.alt || event.prefer_character_input) =>
+                    && !mods.alt =>
             {
                 text.clone()
             }
@@ -53,12 +57,7 @@ pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
 mod tests {
     use super::*;
 
-    fn keystroke(
-        key: &str,
-        key_char: Option<&str>,
-        modifiers: gpui::Modifiers,
-        prefer_character_input: bool,
-    ) -> KeyDownEvent {
+    fn keystroke(key: &str, key_char: Option<&str>, modifiers: gpui::Modifiers) -> KeyDownEvent {
         KeyDownEvent {
             keystroke: gpui::Keystroke {
                 key: key.to_string(),
@@ -66,12 +65,11 @@ mod tests {
                 modifiers,
             },
             is_held: false,
-            prefer_character_input,
         }
     }
 
     fn plain(key: &str, key_char: Option<&str>) -> KeyDownEvent {
-        keystroke(key, key_char, gpui::Modifiers::default(), false)
+        keystroke(key, key_char, gpui::Modifiers::default())
     }
 
     #[test]
@@ -83,7 +81,6 @@ mod tests {
                 shift: true,
                 ..Default::default()
             },
-            false,
         );
         let translated = translate_key_down(&event).unwrap();
         assert_eq!(translated.key, "A");
@@ -106,7 +103,6 @@ mod tests {
                 shift: true,
                 ..Default::default()
             },
-            false,
         );
         assert_eq!(translate_key_down(&event).unwrap().key, "?");
     }
@@ -120,7 +116,6 @@ mod tests {
                 control: true,
                 ..Default::default()
             },
-            false,
         );
         let translated = translate_key_down(&event).unwrap();
         assert_eq!(translated.key, "b");
@@ -128,19 +123,16 @@ mod tests {
     }
 
     #[test]
-    fn alt_combos_keep_key_names_unless_character_preferred() {
+    fn alt_combos_keep_key_names() {
+        // gpui 0.2.2 has no prefer_character_input signal, so Alt+C stays
+        // a toggle binding (physical key name).
         let alt = gpui::Modifiers {
             alt: true,
             ..Default::default()
         };
-        // Alt+C stays a toggle binding by default.
-        let translated = translate_key_down(&keystroke("c", Some("ç"), alt, false)).unwrap();
+        let translated = translate_key_down(&keystroke("c", Some("ç"), alt)).unwrap();
         assert_eq!(translated.key, "c");
         assert!(translated.modifiers.alt);
-
-        // ...unless the platform prefers character input (AltGr, accents).
-        let translated = translate_key_down(&keystroke("c", Some("ç"), alt, true)).unwrap();
-        assert_eq!(translated.key, "ç");
     }
 
     #[test]

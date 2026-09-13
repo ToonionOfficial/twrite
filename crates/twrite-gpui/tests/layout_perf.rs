@@ -9,7 +9,7 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use gpui::{Font, px};
+use gpui::px;
 use twrite_core::{EditorBuffer, HighlightTag, StyleSpan};
 use twrite_gpui::{EditorTheme, LayoutCache, LineMetrics, RunFonts, build_line_text_runs};
 
@@ -98,7 +98,9 @@ fn fake_spans(line: &str) -> Vec<StyleSpan> {
 
 fn run_layout_pass(buf: &EditorBuffer, rows: std::ops::Range<usize>) -> Duration {
     let theme = EditorTheme::default();
-    let font = Font::default();
+    // gpui 0.2.2 removed `Font::default()`; the old default was
+    // `font(".SystemUIFont")`, preserved here.
+    let font = gpui::font(".SystemUIFont");
     let start = Instant::now();
     for row in rows {
         let raw = buf.line_to_string(row);

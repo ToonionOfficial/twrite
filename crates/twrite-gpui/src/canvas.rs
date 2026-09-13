@@ -327,7 +327,10 @@ impl RenderOnce for EditorCanvas {
                         let text_system = window.text_system();
                         let mut probe_one = |family: &str| {
                             let mut base = host.clone();
-                            base.family = family.into();
+                            // gpui 0.2.2's SharedString is ArcCow<'static, str>:
+                            // `&str.into()` would demand a 'static borrow, so
+                            // copy through the owning constructor instead.
+                            base.family = SharedString::new(family);
                             let base_id = text_system.resolve_font(&base);
                             let mut bold = base.clone();
                             bold.weight = FontWeight::BOLD;
@@ -832,14 +835,8 @@ impl RenderOnce for EditorCanvas {
                     }
 
                     if let Some((origin, shaped_num)) = line.gutter_num {
-                        let _ = shaped_num.paint(
-                            origin,
-                            line.line_height,
-                            TextAlign::Left,
-                            None,
-                            window,
-                            cx,
-                        );
+                        // gpui 0.2.2 bakes TextAlign::Left into ShapedLine::paint.
+                        let _ = shaped_num.paint(origin, line.line_height, window, cx);
                     }
 
                     if !is_break {

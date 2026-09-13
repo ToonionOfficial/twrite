@@ -7,7 +7,6 @@
 //! (enabled only with a non-empty selection) and "Insert separator".
 //! Run with: `cargo run --example context_menu`
 use gpui::*;
-use gpui_platform::application;
 use twrite::{ContextMenuContext, ContextMenuItem, Editor, EditorHook, HookContext, HookOutcome};
 
 /// Demo hook contributing two context menu rows.
@@ -88,7 +87,7 @@ impl Render for AppView {
 }
 
 fn main() {
-    application().run(|cx: &mut App| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
@@ -113,7 +112,7 @@ fn main() {
                 });
 
                 let focus_handle = editor.read(cx).focus_handle.clone();
-                focus_handle.focus(window, cx);
+                focus_handle.focus(window);
 
                 cx.new(|_| AppView { editor })
             },

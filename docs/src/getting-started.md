@@ -22,12 +22,16 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-gpui = { git = "https://github.com/zed-industries/zed", rev = "d85eade7ab475de6d11a193beccf1951be2ff371" }
-gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "d85eade7ab475de6d11a193beccf1951be2ff371", features = ["wayland", "x11", "font-kit"] }
-twrite = "0.6"
+gpui = "0.2"
+twrite = "0.8"
 
 # Optional: To enable the full Markdown battery, use:
-# twrite = { version = "0.6", features = ["markdown"] }
+# twrite = { version = "0.8", features = ["markdown"] }
+
+# Wayland-only (or otherwise trimmed) backends: official `gpui` folds the old
+# gpui_platform crate into itself, so select features on both lines.
+# gpui = { version = "0.2", default-features = false, features = ["wayland"] }
+# twrite = { version = "0.8", default-features = false, features = ["wayland"] }
 ```
 
 ## 3. Your First Editor Application
@@ -36,7 +40,6 @@ Create `src/main.rs` with the following minimal app:
 
 ```rust
 use gpui::*;
-use gpui_platform::application;
 use twrite::Editor;
 
 struct AppView {
@@ -53,7 +56,7 @@ impl Render for AppView {
 }
 
 fn main() {
-    application().run(|cx: &mut App| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {

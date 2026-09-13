@@ -7,7 +7,6 @@
 //! Run with: `cargo run --example markdown --features markdown`
 //! Next: `vim` (a full modal system built only on hooks).
 use gpui::*;
-use gpui_platform::application;
 use twrite::Editor;
 use twrite::SearchHook;
 use twrite::fps_badge;
@@ -188,7 +187,7 @@ impl Render for MarkdownApp {
 }
 
 fn main() {
-    application().run(|cx: &mut App| {
+    Application::new().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(840.0), px(600.0)), cx);
 
         cx.open_window(
@@ -264,7 +263,7 @@ fn main() {
                 });
 
                 let focus_handle = editor.read(cx).focus_handle.clone();
-                focus_handle.focus(window, cx);
+                focus_handle.focus(window);
 
                 cx.new(|_| MarkdownApp { editor })
             },
