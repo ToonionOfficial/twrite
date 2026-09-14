@@ -5,6 +5,8 @@ use gpui::{Font, Pixels, SharedString, px};
 pub struct EditorConfig {
     /// Whether to render line numbers in the left gutter.
     pub line_numbers: bool,
+    /// Relative line numbers
+    pub relative_line_numbers: bool,
     /// Vertical line height in pixels.
     pub line_height: Pixels,
     /// Text font size in pixels.
@@ -43,6 +45,7 @@ impl Default for EditorConfig {
     fn default() -> Self {
         Self {
             line_numbers: false,
+            relative_line_numbers: false,
             line_height: px(22.0),
             font_size: px(16.0),
             tab_size: 4,

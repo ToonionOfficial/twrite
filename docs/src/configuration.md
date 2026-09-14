@@ -21,6 +21,7 @@ let editor = cx.new(|cx| {
 
     // Appearance
     ed.config.line_numbers = true;
+    ed.config.relative_line_numbers = true;
     ed.config.cursor_blink = true;
 
     // Markdown (when feature enabled)
@@ -35,6 +36,7 @@ let editor = cx.new(|cx| {
 | Field | Type | Default | Description |
 | --- | --- | --- | --- |
 | `line_numbers` | `bool` | `false` | When `true`, displays a left gutter with line numbers matching the document rope row. |
+| `relative_line_numbers` | `bool` | `false` | When `true`, displays line numbers relative to the cursor row. Pairs with `line_numbers` for Vim-style hybrid line numbers. |
 | `cursor_blink` | `bool` | `true` | When `true`, the text cursor blinks periodically. Blinking pauses and remains fully visible while typing or navigating. |
 | `font_size` | `Pixels` | `px(14.0)` | Base font size used for buffer text rendering. |
 | `line_height` | `Pixels` | `px(22.0)` | Vertical height of each line in pixels. |

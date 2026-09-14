@@ -158,7 +158,7 @@ impl Editor {
         if self.config.line_wrap
             && let Some(win) = window
         {
-            let gutter_width = if self.config.line_numbers {
+            let gutter_width = if self.config.line_numbers | self.config.relative_line_numbers {
                 px(48.0)
             } else {
                 px(0.0)

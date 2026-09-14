@@ -1172,6 +1172,7 @@ fn main() {
                         cx,
                     );
                     ed.config.line_numbers = true;
+                    ed.config.relative_line_numbers = true;
 
                     let mut vim = VimHook::new();
                     let mut ctx = HookContext::new(

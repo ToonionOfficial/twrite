@@ -394,11 +394,8 @@ impl RenderOnce for EditorCanvas {
                 let font = editor.resolved_base_font(&host_font);
                 let code_font = editor.resolved_code_font(&host_font);
 
-                let gutter_width = if config.line_numbers {
-                    px(48.0)
-                } else {
-                    px(0.0)
-                };
+                let show_gutter = config.line_numbers | config.relative_line_numbers;
+                let gutter_width = if show_gutter { px(48.0) } else { px(0.0) };
                 let text_origin_x = bounds.left() + gutter_width + px(12.0);
 
                 // Per-line override point: `cached.allow_wrap` (set by the
@@ -446,9 +443,21 @@ impl RenderOnce for EditorCanvas {
                     let line_start_byte = editor.buffer.point_to_offset(BufferPoint::new(row, 0));
                     let line_end_byte = line_start_byte + line_text.len();
 
-                    let gutter_num = if config.line_numbers {
+                    let gutter_num = if config.line_numbers | config.relative_line_numbers {
                         let is_cursor_row = cursor_point.row == row;
-                        let line_num_str = format!("{:>3}", row + 1);
+
+                        let line_num = match (
+                            config.relative_line_numbers,
+                            is_cursor_row,
+                            config.line_numbers,
+                        ) {
+                            (true, true, true) => row + 1,
+                            (true, true, false) => 0,
+                            (true, false, _) => row.abs_diff(cursor_point.row),
+                            (false, _, _) => row + 1,
+                        };
+
+                        let line_num_str = format!("{:>3}", line_num);
                         let num_color = if is_cursor_row {
                             theme.line_number_active
                         } else {
@@ -456,10 +465,10 @@ impl RenderOnce for EditorCanvas {
                         };
 
                         let shaped = window.text_system().shape_line(
-                            line_num_str.into(),
+                            line_num_str.clone().into(),
                             config.font_size,
                             &[TextRun {
-                                len: 3,
+                                len: line_num_str.len(),
                                 font: font.clone(),
                                 color: num_color,
                                 background_color: None,
