@@ -233,7 +233,9 @@ impl Editor {
     ///
     /// The anchor is clamped into `last_bounds` using the same fixed
     /// metrics the rows are drawn with, so the popup never overflows
-    /// the viewport. Renders nothing when closed.
+    /// the viewport. The click anchor is window-space but the overlay
+    /// positions relative to the editor root, so it is converted to
+    /// editor-local coordinates first. Renders nothing when closed.
     pub(crate) fn render_context_menu(&self, cx: &mut Context<Self>) -> Div {
         if !self.context_menu.is_open() {
             return div();
@@ -255,10 +257,7 @@ impl Editor {
         let anchor = self
             .context_menu_anchor
             .unwrap_or(gpui::point(px(0.0), px(0.0)));
-        let pos = match self.last_bounds {
-            Some(bounds) => clamp_menu_anchor(anchor, bounds, MENU_WIDTH, height),
-            None => anchor,
-        };
+        let pos = menu_overlay_position(anchor, self.last_bounds, MENU_WIDTH, height);
 
         let mut list = div().flex().flex_col().py(px(4.0));
         for (idx, item) in items.iter().enumerate() {
@@ -392,9 +391,33 @@ pub(crate) fn clamp_menu_anchor(
     )
 }
 
+/// Converts a window-space click anchor into editor-root-local overlay
+/// coordinates (pure, testable).
+///
+/// The anchor is clamped into the canvas bounds in window space first,
+/// then shifted by the editor origin. The editor root carries no
+/// padding or border and its first child is the canvas wrapper, so the
+/// root origin coincides with the canvas bounds origin. Without this
+/// shift the popup drifts by the editor's window offset in nested
+/// layouts (sidebar, toolbar, padding) and can land off-screen.
+pub(crate) fn menu_overlay_position(
+    anchor: Point<Pixels>,
+    bounds: Option<gpui::Bounds<Pixels>>,
+    menu_width: f32,
+    menu_height: f32,
+) -> Point<Pixels> {
+    match bounds {
+        Some(b) => {
+            let clamped = clamp_menu_anchor(anchor, b, menu_width, menu_height);
+            gpui::point(clamped.x - b.origin.x, clamped.y - b.origin.y)
+        }
+        None => anchor,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::clamp_menu_anchor;
+    use super::{clamp_menu_anchor, menu_overlay_position};
     use gpui::{Bounds, point, px, size};
 
     #[test]
@@ -404,5 +427,29 @@ mod tests {
         assert_eq!(clamped, point(px(562.0), px(392.0)));
         let inside = clamp_menu_anchor(point(px(100.0), px(100.0)), bounds, 230.0, 200.0);
         assert_eq!(inside, point(px(100.0), px(100.0)));
+    }
+
+    #[test]
+    fn overlay_position_shifts_window_anchor_into_editor_space() {
+        // Nested editor: canvas starts at window (300, 70).
+        let bounds = Bounds::new(point(px(300.0), px(70.0)), size(px(500.0), px(400.0)));
+        let pos = menu_overlay_position(point(px(400.0), px(200.0)), Some(bounds), 230.0, 100.0);
+        assert_eq!(pos, point(px(100.0), px(130.0)));
+    }
+
+    #[test]
+    fn overlay_position_clamps_before_shifting() {
+        // Click near the canvas bottom-right: clamp pulls the anchor
+        // inside first, then the editor origin is subtracted.
+        let bounds = Bounds::new(point(px(300.0), px(70.0)), size(px(500.0), px(400.0)));
+        let pos = menu_overlay_position(point(px(790.0), px(460.0)), Some(bounds), 230.0, 100.0);
+        // Clamped to (562, 362) in window space, then shifted to editor space.
+        assert_eq!(pos, point(px(262.0), px(292.0)));
+    }
+
+    #[test]
+    fn overlay_position_without_bounds_passes_anchor_through() {
+        let pos = menu_overlay_position(point(px(400.0), px(200.0)), None, 230.0, 100.0);
+        assert_eq!(pos, point(px(400.0), px(200.0)));
     }
 }
