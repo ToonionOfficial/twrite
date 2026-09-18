@@ -422,7 +422,11 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
         if let Some((prefix_len, tag)) = heading_prefix {
             let indent = line_text.len() - trimmed_start.len();
-            if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+            // The `#` prefix reveals only while the cursor sits on it;
+            // editing the heading text keeps it concealed, Obsidian style.
+            let cursor_in_prefix = cursor_line_offset
+                .is_some_and(|cursor| indent <= cursor && cursor < indent + prefix_len);
+            if !cursor_in_prefix && let Some(delim_tag) = delimiter_tag {
                 spans.push(StyleSpan::tag(indent..indent + prefix_len, delim_tag));
                 if indent + prefix_len < line_text.len() {
                     spans.push(StyleSpan::tag(indent + prefix_len..line_text.len(), tag));
@@ -770,6 +774,37 @@ mod tests {
         assert_eq!(spans_task[1].range, 0..6);
         assert_eq!(spans_task[1].style, StyleValue::Tag(HighlightTag::Hidden));
         assert_eq!(ConcealedLine::build(line, &spans_task).display_text, "Task");
+    }
+
+    #[test]
+    fn test_markdown_heading_prefix_reveal() {
+        // The `# ` prefix (0..2) reveals only while the cursor sits on it;
+        // editing the heading text keeps it concealed.
+        let line = "# Heading";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let concealed_at = |cursor: usize| {
+            let mut buffer = EditorBuffer::new(line);
+            buffer.set_cursor_offset(cursor);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            ConcealedLine::build(line, &spans).display_text
+        };
+
+        assert_eq!(concealed_at(0), "# Heading");
+        assert_eq!(concealed_at(1), "# Heading");
+        assert_eq!(concealed_at(2), "Heading");
+        assert_eq!(concealed_at(5), "Heading");
+
+        // Cursor on another row conceals regardless of column.
+        let mut buffer_away = EditorBuffer::new(&format!("{line}\nother"));
+        buffer_away.set_cursor_offset(line.len() + 1);
+        let spans_away = hidden_highlighter.highlight_line(&buffer_away, 0, line);
+        assert_eq!(
+            ConcealedLine::build(line, &spans_away).display_text,
+            "Heading"
+        );
     }
 
     #[test]

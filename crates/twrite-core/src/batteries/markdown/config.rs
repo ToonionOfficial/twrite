@@ -41,6 +41,6 @@ pub enum ConcealMode {
     #[default]
     Dimmed,
     /// Markdown markers are completely hidden (invisible) until the cursor
-    /// enters their word (inline markup) or their line (block markers).
+    /// enters their word or marker; quote prefixes reveal row-wide.
     Hidden,
 }

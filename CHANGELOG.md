@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline markers (bold, italic, strikethrough, code spans, links) now stay
   hidden until the cursor enters the formatted word, instead of revealing
   the whole line at once. Task checkboxes stay always visible, with the raw
-  marker revealing only while the cursor sits on it. Block markers
-  (headings, quotes, thematic breaks, tables) still reveal row-wide.
+  marker revealing only while the cursor sits on it, and the heading `#`
+  prefix hides the moment the cursor leaves it. Quote prefixes still reveal
+  row-wide.
   Closes [#71](https://github.com/ToonionOfficial/twrite/issues/71).
 
 ### Changed
@@ -21,6 +22,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `LayoutCache::cached_input` now takes the cursor as a `Point`
   (replacing the `cursor_row` argument) so cursor-row entries invalidate
   when the cursor slides along the row.
+
+### Fixed
+- **Caret on concealed task lines (`twrite-gpui`)**: the cursor quad and
+  cursor pixel now use the checkbox-shifted text origin, so stepping past
+  a concealed `- [ ]` marker places the caret after the checkbox instead
+  of before it.
 
 ## [0.10.3] - 2026-09-18
 
