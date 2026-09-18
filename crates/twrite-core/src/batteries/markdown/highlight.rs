@@ -299,7 +299,16 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             ConcealMode::Hidden => Some(HighlightTag::Hidden),
         };
 
-        let is_cursor_row = row == buffer.cursor_point().row;
+        let cursor_position = buffer.cursor_point();
+        let is_cursor_row = row == cursor_position.row;
+        // Byte offset of the cursor within this line when the cursor sits on
+        // it. Inline constructs compare against this to reveal word by word
+        // instead of exposing the whole row at once.
+        let cursor_line_offset = if is_cursor_row {
+            Some(cursor_position.column.min(line_text.len()))
+        } else {
+            None
+        };
 
         if trimmed_start.starts_with("```") || trimmed_start.starts_with("~~~") {
             spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Code));
@@ -413,10 +422,19 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
         if let Some((prefix_len, tag)) = heading_prefix {
             let indent = line_text.len() - trimmed_start.len();
-            if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+            // The `#` prefix reveals only while the cursor sits on it;
+            // editing the heading text keeps it concealed, Obsidian style.
+            let cursor_in_prefix = cursor_line_offset
+                .is_some_and(|cursor| indent <= cursor && cursor < indent + prefix_len);
+            if !cursor_in_prefix && let Some(delim_tag) = delimiter_tag {
                 spans.push(StyleSpan::tag(indent..indent + prefix_len, delim_tag));
                 if indent + prefix_len < line_text.len() {
                     spans.push(StyleSpan::tag(indent + prefix_len..line_text.len(), tag));
+                } else {
+                    // Bare prefix (`# ` with no text yet): tag it so line
+                    // metrics scale immediately instead of waiting for the
+                    // first content character.
+                    spans.push(StyleSpan::tag(indent..indent + prefix_len, tag));
                 }
             } else {
                 spans.push(StyleSpan::tag(0..line_text.len(), tag));
@@ -477,7 +495,12 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                 HighlightTag::TaskUnchecked
             };
             spans.push(StyleSpan::tag(indent..indent + marker_len, task_tag));
-            if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+            // The checkbox widget keys off the structural tag above, so the
+            // marker bytes stay hidden except while the cursor sits on them
+            // for editing.
+            let cursor_in_marker = cursor_line_offset
+                .is_some_and(|cursor| indent <= cursor && cursor < indent + marker_len);
+            if !cursor_in_marker && let Some(delim_tag) = delimiter_tag {
                 if delim_tag == HighlightTag::Hidden {
                     spans.push(StyleSpan::tag(
                         indent..indent + marker_len,
@@ -491,7 +514,7 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
         super::inline::highlight_inline_markdown(
             line_text,
-            is_cursor_row,
+            cursor_line_offset,
             delimiter_tag,
             &mut spans,
         );
@@ -638,12 +661,20 @@ mod tests {
             hidden_highlighter.highlight_line(&buffer_stars, 1, "This is **bold** here.");
         assert_eq!(spans_stars, spans);
 
-        // Cursor row keeps raw delimiters visible.
-        let buffer_active = EditorBuffer::new("This is __bold__ here.\nother");
-        let spans_active =
-            hidden_highlighter.highlight_line(&buffer_active, 0, "This is __bold__ here.");
-        let concealed_active = ConcealedLine::build("This is __bold__ here.", &spans_active);
-        assert_eq!(concealed_active.display_text, "This is __bold__ here.");
+        // Cursor row keeps raw delimiters visible only inside the word
+        // under the cursor (word-level reveal); elsewhere it conceals.
+        let buffer_plain = EditorBuffer::new("This is __bold__ here.\nother");
+        let mut buffer_word = EditorBuffer::new("This is __bold__ here.\nother");
+        buffer_word.set_cursor_offset(10);
+        let spans_word =
+            hidden_highlighter.highlight_line(&buffer_word, 0, "This is __bold__ here.");
+        let concealed_word_active = ConcealedLine::build("This is __bold__ here.", &spans_word);
+        assert_eq!(concealed_word_active.display_text, "This is __bold__ here.");
+
+        let spans_plain =
+            hidden_highlighter.highlight_line(&buffer_plain, 0, "This is __bold__ here.");
+        let concealed_plain = ConcealedLine::build("This is __bold__ here.", &spans_plain);
+        assert_eq!(concealed_plain.display_text, "This is bold here.");
 
         // Intra-word underscores are literal per CommonMark, never bold.
         let buffer_word = EditorBuffer::new("cursor here\nfoo__bar__baz");
@@ -656,6 +687,151 @@ mod tests {
         );
         let concealed_word = ConcealedLine::build("foo__bar__baz", &spans_word);
         assert_eq!(concealed_word.display_text, "foo__bar__baz");
+    }
+
+    #[test]
+    fn test_markdown_word_level_reveal() {
+        // Issue #71: on the cursor row each construct reveals independently.
+        // `**alpha**` covers 0..9, `__beta__` covers 16..25.
+        let line = "**alpha** plain __beta__";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let concealed_at = |cursor: usize| {
+            let mut buffer = EditorBuffer::new(line);
+            buffer.set_cursor_offset(cursor);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            ConcealedLine::build(line, &spans).display_text
+        };
+
+        // Cursor inside the first word reveals only it.
+        assert_eq!(concealed_at(0), "**alpha** plain beta");
+        assert_eq!(concealed_at(8), "**alpha** plain beta");
+        // Cursor just past the closing delimiter has left the word.
+        assert_eq!(concealed_at(9), "alpha plain beta");
+        // Cursor on plain text reveals nothing.
+        assert_eq!(concealed_at(12), "alpha plain beta");
+        // Cursor inside the second word reveals only it (`__beta__` is 16..24).
+        assert_eq!(concealed_at(16), "alpha plain __beta__");
+        assert_eq!(concealed_at(23), "alpha plain __beta__");
+        // Cursor just past the closing delimiter has left the word.
+        assert_eq!(concealed_at(24), "alpha plain beta");
+    }
+
+    #[test]
+    fn test_markdown_word_level_link_reveal() {
+        // `[A](http://a/x)` covers 0..16, `[B](http://b/y)` covers 21..37.
+        let line = "[A](http://a/x) and [B](http://b/y)";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let concealed_at = |cursor: usize| {
+            let mut buffer = EditorBuffer::new(line);
+            buffer.set_cursor_offset(cursor);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            ConcealedLine::build(line, &spans).display_text
+        };
+
+        assert_eq!(concealed_at(1), "[A](http://a/x) and B");
+        assert_eq!(concealed_at(25), "A and [B](http://b/y)");
+        assert_eq!(concealed_at(18), "A and B");
+    }
+
+    #[test]
+    fn test_markdown_task_marker_reveal() {
+        // The checkbox structural tag is always present; the raw `- [ ]`
+        // bytes reveal only while the cursor sits on the marker (0..6).
+        let line = "- [ ] Task";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let highlight_at = |cursor: usize| {
+            let mut buffer = EditorBuffer::new(line);
+            buffer.set_cursor_offset(cursor);
+            hidden_highlighter.highlight_line(&buffer, 0, line)
+        };
+
+        let spans_marker = highlight_at(2);
+        assert!(
+            spans_marker
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskUnchecked))
+        );
+        assert!(
+            spans_marker
+                .iter()
+                .all(|s| s.style != StyleValue::Tag(HighlightTag::Hidden))
+        );
+        assert_eq!(
+            ConcealedLine::build(line, &spans_marker).display_text,
+            "- [ ] Task"
+        );
+
+        let spans_task = highlight_at(8);
+        assert!(
+            spans_task
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::TaskUnchecked))
+        );
+        assert_eq!(spans_task[1].range, 0..6);
+        assert_eq!(spans_task[1].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(ConcealedLine::build(line, &spans_task).display_text, "Task");
+    }
+
+    #[test]
+    fn test_markdown_heading_prefix_reveal() {
+        // The `# ` prefix (0..2) reveals only while the cursor sits on it;
+        // editing the heading text keeps it concealed.
+        let line = "# Heading";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let concealed_at = |cursor: usize| {
+            let mut buffer = EditorBuffer::new(line);
+            buffer.set_cursor_offset(cursor);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            ConcealedLine::build(line, &spans).display_text
+        };
+
+        assert_eq!(concealed_at(0), "# Heading");
+        assert_eq!(concealed_at(1), "# Heading");
+        assert_eq!(concealed_at(2), "Heading");
+        assert_eq!(concealed_at(5), "Heading");
+
+        // Cursor on another row conceals regardless of column.
+        let mut buffer_away = EditorBuffer::new(&format!("{line}\nother"));
+        buffer_away.set_cursor_offset(line.len() + 1);
+        let spans_away = hidden_highlighter.highlight_line(&buffer_away, 0, line);
+        assert_eq!(
+            ConcealedLine::build(line, &spans_away).display_text,
+            "Heading"
+        );
+    }
+
+    #[test]
+    fn test_markdown_bare_heading_prefix_scales() {
+        // Typing `# ` leaves the cursor just past the prefix; the line must
+        // already carry its Heading tag so metrics (and the caret) scale
+        // before the first content character arrives.
+        let line = "# ";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(line);
+        buffer.set_cursor_offset(2);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Heading(1))),
+            "bare `# ` must emit Heading(1): {spans:?}"
+        );
+        assert_eq!(ConcealedLine::build(line, &spans).display_text, "");
     }
 
     #[test]

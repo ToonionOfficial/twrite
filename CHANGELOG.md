@@ -5,6 +5,33 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-18
+
+### Added
+- **Word-level conceal reveal (`twrite-core`)**: in Hidden conceal mode,
+  inline markers (bold, italic, strikethrough, code spans, links) now stay
+  hidden until the cursor enters the formatted word, instead of revealing
+  the whole line at once. Task checkboxes stay always visible, with the raw
+  marker revealing only while the cursor sits on it, and the heading `#`
+  prefix hides the moment the cursor leaves it. Quote prefixes still reveal
+  row-wide.
+  Closes [#71](https://github.com/ToonionOfficial/twrite/issues/71).
+
+### Changed
+- **Layout cache keys on cursor position (`twrite-gpui`, breaking)**:
+  `LayoutCache::cached_input` now takes the cursor as a `Point`
+  (replacing the `cursor_row` argument) so cursor-row entries invalidate
+  when the cursor slides along the row.
+
+### Fixed
+- **Caret on concealed task lines (`twrite-gpui`)**: the cursor quad and
+  cursor pixel now use the checkbox-shifted text origin, so stepping past
+  a concealed `- [ ]` marker places the caret after the checkbox instead
+  of before it.
+- **Heading metrics on a bare prefix (`twrite-core`)**: a fresh `# ` with
+  no text yet already carries its `Heading` tag, so line metrics and the
+  caret scale on the space instead of waiting for the first character.
+
 ## [0.10.3] - 2026-09-18
 
 ### Fixed

@@ -29,7 +29,10 @@ impl Default for MarkdownConfig {
     }
 }
 
-/// Display mode for markdown syntax delimiters (like `# `, `**`, `*`, `~~`, `` ` ``) on inactive lines.
+/// Display mode for markdown syntax delimiters (like `# `, `**`, `*`, `~~`, `` ` ``).
+///
+/// Block markers reveal when the cursor is anywhere on the line; inline
+/// markers reveal only while the cursor sits inside the formatted word.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ConcealMode {
     /// Markdown markers are always visible with normal syntax coloring.
@@ -37,6 +40,7 @@ pub enum ConcealMode {
     /// Markdown markers on inactive lines are rendered with faint opacity.
     #[default]
     Dimmed,
-    /// Markdown markers on inactive lines are completely hidden (invisible).
+    /// Markdown markers are completely hidden (invisible) until the cursor
+    /// enters their word or marker; quote prefixes reveal row-wide.
     Hidden,
 }

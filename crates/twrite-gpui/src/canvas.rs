@@ -522,13 +522,12 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    let cursor_row = cursor_point.row;
                     let highlighter_rev = editor.highlighter_rev;
                     let cached = layout_cache.cached_input(
                         &editor.buffer,
                         editor.highlighter.as_deref(),
                         highlighter_rev,
-                        cursor_row,
+                        cursor_point,
                         row,
                         line_text,
                     );
@@ -744,7 +743,7 @@ impl RenderOnce for EditorCanvas {
                             .unwrap_or(point(px(0.0), px(0.0)));
 
                         computed_cursor_pixel = Some(point(
-                            text_origin_x + pos.x,
+                            line_text_origin_x + pos.x,
                             current_y + pos.y + metrics.line_height,
                         ));
 
@@ -762,7 +761,7 @@ impl RenderOnce for EditorCanvas {
                                 twrite_core::CursorStyle::Hidden => None,
                                 twrite_core::CursorStyle::Block => Some(fill(
                                     Bounds::new(
-                                        point(text_origin_x + pos.x, current_y + pos.y),
+                                        point(line_text_origin_x + pos.x, current_y + pos.y),
                                         size(px(8.5), metrics.line_height),
                                     ),
                                     theme.cursor,
@@ -770,7 +769,7 @@ impl RenderOnce for EditorCanvas {
                                 twrite_core::CursorStyle::Underline => Some(fill(
                                     Bounds::new(
                                         point(
-                                            text_origin_x + pos.x,
+                                            line_text_origin_x + pos.x,
                                             current_y + pos.y + metrics.line_height - px(2.0),
                                         ),
                                         size(px(8.5), px(2.0)),
@@ -779,7 +778,7 @@ impl RenderOnce for EditorCanvas {
                                 )),
                                 twrite_core::CursorStyle::Bar => Some(fill(
                                     Bounds::new(
-                                        point(text_origin_x + pos.x, current_y + pos.y),
+                                        point(line_text_origin_x + pos.x, current_y + pos.y),
                                         size(px(2.0), metrics.line_height),
                                     ),
                                     theme.cursor,

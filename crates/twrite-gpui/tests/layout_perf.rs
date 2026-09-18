@@ -10,7 +10,7 @@ use std::hint::black_box;
 use std::time::{Duration, Instant};
 
 use gpui::px;
-use twrite_core::{EditorBuffer, HighlightTag, StyleSpan};
+use twrite_core::{EditorBuffer, HighlightTag, Point, StyleSpan};
 use twrite_gpui::{EditorTheme, LayoutCache, LineMetrics, RunFonts, build_line_text_runs};
 
 fn xorshift(seed: u64) -> impl FnMut() -> u64 {
@@ -191,7 +191,7 @@ fn run_cached_pass(buf: &EditorBuffer, cache: &mut LayoutCache) -> Duration {
     for row in 0..n {
         let raw = buf.line_to_string(row);
         let line = raw.trim_end_matches(['\r', '\n']);
-        let cached = cache.cached_input(buf, None, 0, usize::MAX, row, line);
+        let cached = cache.cached_input(buf, None, 0, Point::new(usize::MAX, 0), row, line);
         black_box((
             cached.spans.len(),
             cached.concealed.display_text.len(),
@@ -210,13 +210,13 @@ fn layout_cache_second_pass_is_all_hits() {
     for row in 0..n {
         let raw = buf.line_to_string(row);
         let line = raw.trim_end_matches(['\r', '\n']);
-        cache.cached_input(&buf, None, 0, usize::MAX, row, line);
+        cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), row, line);
     }
     assert_eq!(cache.stats().1, n as u64, "first pass must miss every row");
     for row in 0..n {
         let raw = buf.line_to_string(row);
         let line = raw.trim_end_matches(['\r', '\n']);
-        cache.cached_input(&buf, None, 0, usize::MAX, row, line);
+        cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), row, line);
     }
     assert_eq!(
         cache.stats().0,
@@ -245,7 +245,7 @@ fn perf_layout_cached_10k_lines() {
         for row in win.clone() {
             let raw = buf.line_to_string(row);
             let line = raw.trim_end_matches(['\r', '\n']);
-            cache.cached_input(&buf, None, 0, usize::MAX, row, line);
+            cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), row, line);
         }
     }
     let repaint = start.elapsed() / 5;

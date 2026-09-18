@@ -1,8 +1,8 @@
 //! Per-version viewport cache for expensive per-line inputs.
 //!
 //! `highlight_line` (pulldown parse), `ConcealedLine::build`, and `extract_links`
-//! are pure in `(buffer version, highlighter revision, row, active-row flag, line
-//! text)` but were recomputed for every visible row on every prepaint *and* again
+//! are pure in `(buffer version, highlighter revision, row, active-row flag,
+//! cursor byte column, line text)` but were recomputed for every visible row on every prepaint *and* again
 //! on every hit-test (`offset_for_position`). This cache computes each row once
 //! per epoch and shares it across prepaint, hover, and click paths.
 //!
@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 use std::ops::Range;
 
-use twrite_core::{ConcealedLine, EditorBuffer, StyleSpan, SyntaxHighlighter};
+use twrite_core::{ConcealedLine, EditorBuffer, Point, StyleSpan, SyntaxHighlighter};
 
 /// Upper bound on cached rows; exceeded maps are dropped wholesale (one full
 /// re-parse, no incremental eviction bookkeeping).
@@ -41,6 +41,10 @@ struct CachedRow {
     /// Whether the row was the cursor row when computed (active lines expose
     /// markers instead of concealing them, so spans differ).
     active: bool,
+    /// Cursor byte column the active row was computed with. Concealment on
+    /// the cursor row is word-level, so sliding the cursor along the row
+    /// changes spans without flipping `active`.
+    cursor_column: usize,
     input: CachedInput,
 }
 
@@ -86,15 +90,17 @@ impl LayoutCache {
 
     /// Returns the cached input for `row`, computing and storing it on miss.
     ///
-    /// `cursor_row` is hoisted by the caller so `buffer.cursor_point()` (two
+    /// `cursor` is hoisted by the caller so `buffer.cursor_point()` (two
     /// `O(log n)` walks) runs once per frame, not once per row. `line_text`
     /// must be the raw line *without* trailing `\r\n`, matching prepaint.
+    /// Only the cursor row's entry depends on the cursor column: concealment
+    /// there is word-level, so sliding along the row changes spans.
     pub fn cached_input(
         &mut self,
         buffer: &EditorBuffer,
         highlighter: Option<&dyn SyntaxHighlighter>,
         highlighter_rev: u64,
-        cursor_row: usize,
+        cursor: Point,
         row: usize,
         line_text: &str,
     ) -> &CachedInput {
@@ -104,9 +110,10 @@ impl LayoutCache {
             self.version = Some(version);
             self.highlighter_rev = Some(highlighter_rev);
         }
-        let active = row == cursor_row;
+        let active = row == cursor.row;
         if let Some(cached) = self.rows.get(&row)
             && cached.active == active
+            && (!active || cached.cursor_column == cursor.column)
         {
             self.hits += 1;
             // Re-borrow to satisfy the borrow checker across the counter bump.
@@ -136,6 +143,7 @@ impl LayoutCache {
             row,
             CachedRow {
                 active,
+                cursor_column: cursor.column,
                 input: CachedInput {
                     spans,
                     concealed,
@@ -167,13 +175,13 @@ mod tests {
         for row in 0..buf.len_lines() {
             let line = buf.line_to_string(row);
             let text = line.trim_end_matches(['\r', '\n']);
-            cache.cached_input(&buf, None, 0, usize::MAX, row, text);
+            cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), row, text);
         }
         assert_eq!(cache.stats(), (0, 50));
         for row in 0..buf.len_lines() {
             let line = buf.line_to_string(row);
             let text = line.trim_end_matches(['\r', '\n']);
-            cache.cached_input(&buf, None, 0, usize::MAX, row, text);
+            cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), row, text);
         }
         assert_eq!(cache.stats(), (50, 50));
         assert_eq!(cache.len(), 50);
@@ -185,12 +193,12 @@ mod tests {
         let mut cache = LayoutCache::new();
         let line = buf.line_to_string(0);
         let text = line.trim_end_matches(['\r', '\n']).to_string();
-        cache.cached_input(&buf, None, 0, usize::MAX, 0, &text);
+        cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), 0, &text);
         assert_eq!(cache.stats(), (0, 1));
         buf.insert("x");
         let line = buf.line_to_string(0);
         let text = line.trim_end_matches(['\r', '\n']).to_string();
-        cache.cached_input(&buf, None, 0, usize::MAX, 0, &text);
+        cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), 0, &text);
         // Epoch change clears rows: stats keep accumulating, row count restarts.
         assert_eq!(cache.stats(), (0, 2));
         assert_eq!(cache.len(), 1);
@@ -203,21 +211,21 @@ mod tests {
         for row in 0..4 {
             let line = buf.line_to_string(row);
             let text = line.trim_end_matches(['\r', '\n']).to_string();
-            cache.cached_input(&buf, None, 0, 0, row, &text);
+            cache.cached_input(&buf, None, 0, Point::new(0, 0), row, &text);
         }
         assert_eq!(cache.stats(), (0, 4));
         // Same cursor row -> all hits.
         for row in 0..4 {
             let line = buf.line_to_string(row);
             let text = line.trim_end_matches(['\r', '\n']).to_string();
-            cache.cached_input(&buf, None, 0, 0, row, &text);
+            cache.cached_input(&buf, None, 0, Point::new(0, 0), row, &text);
         }
         assert_eq!(cache.stats(), (4, 4));
         // Cursor moves 0 -> 1: rows 0 and 1 miss (active flag flips), 2-3 hit.
         for row in 0..4 {
             let line = buf.line_to_string(row);
             let text = line.trim_end_matches(['\r', '\n']).to_string();
-            cache.cached_input(&buf, None, 0, 1, row, &text);
+            cache.cached_input(&buf, None, 0, Point::new(1, 0), row, &text);
         }
         assert_eq!(cache.stats(), (6, 6));
     }
@@ -229,12 +237,12 @@ mod tests {
         for row in 0..5 {
             let line = buf.line_to_string(row);
             let text = line.trim_end_matches(['\r', '\n']).to_string();
-            cache.cached_input(&buf, None, 0, usize::MAX, row, &text);
+            cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), row, &text);
         }
         assert_eq!(cache.len(), 5);
         let line = buf.line_to_string(0);
         let text = line.trim_end_matches(['\r', '\n']).to_string();
-        cache.cached_input(&buf, None, 1, usize::MAX, 0, &text);
+        cache.cached_input(&buf, None, 1, Point::new(usize::MAX, 0), 0, &text);
         assert_eq!(cache.len(), 1);
     }
 
@@ -244,9 +252,36 @@ mod tests {
         let mut cache = LayoutCache::new();
         let line = buf.line_to_string(0);
         let text = line.trim_end_matches(['\r', '\n']).to_string();
-        cache.cached_input(&buf, None, 0, usize::MAX, 0, &text);
+        cache.cached_input(&buf, None, 0, Point::new(usize::MAX, 0), 0, &text);
         cache.clear();
         assert_eq!(cache.stats(), (0, 0));
         assert!(cache.is_empty());
+    }
+
+    #[test]
+    fn cursor_column_slide_recomputes_only_active_row() {
+        let buf = empty_buffer(4);
+        let mut cache = LayoutCache::new();
+        // Cursor on row 0, column 0.
+        for row in 0..4 {
+            let line = buf.line_to_string(row);
+            let text = line.trim_end_matches(['\r', '\n']).to_string();
+            cache.cached_input(&buf, None, 0, Point::new(0, 0), row, &text);
+        }
+        assert_eq!(cache.stats(), (0, 4));
+        // Same column -> all hits.
+        for row in 0..4 {
+            let line = buf.line_to_string(row);
+            let text = line.trim_end_matches(['\r', '\n']).to_string();
+            cache.cached_input(&buf, None, 0, Point::new(0, 0), row, &text);
+        }
+        assert_eq!(cache.stats(), (4, 4));
+        // Column slides 0 -> 5: only row 0 (active) misses, rows 1-3 hit.
+        for row in 0..4 {
+            let line = buf.line_to_string(row);
+            let text = line.trim_end_matches(['\r', '\n']).to_string();
+            cache.cached_input(&buf, None, 0, Point::new(0, 5), row, &text);
+        }
+        assert_eq!(cache.stats(), (7, 5));
     }
 }
