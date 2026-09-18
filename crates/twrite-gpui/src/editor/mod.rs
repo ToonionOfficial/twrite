@@ -71,6 +71,8 @@ pub struct Editor {
     pub is_hovering_task: bool,
     /// Target URL if the mouse cursor is currently hovering over a hyperlink.
     pub hovered_link: Option<String>,
+    /// Whether the mouse cursor is currently hovering over a fold indicator arrow or badge.
+    pub is_hovering_fold: bool,
     /// Last rendered bounds in window pixel coordinates.
     pub last_bounds: Option<Bounds<Pixels>>,
     /// Last rendered cursor position in window pixel coordinates, computed during canvas prepaint.
@@ -202,6 +204,7 @@ impl Editor {
             drag_initial_range: None,
             is_hovering_task: false,
             hovered_link: None,
+            is_hovering_fold: false,
             last_bounds: None,
             last_cursor_pixel: None,
             visible_lines: Vec::new(),

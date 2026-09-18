@@ -12,11 +12,12 @@ impl Render for Editor {
         _window: &mut gpui::Window,
         cx: &mut Context<Self>,
     ) -> impl gpui::prelude::IntoElement {
-        let cursor_style = if self.is_hovering_task || self.hovered_link.is_some() {
-            gpui::CursorStyle::PointingHand
-        } else {
-            gpui::CursorStyle::IBeam
-        };
+        let cursor_style =
+            if self.is_hovering_task || self.hovered_link.is_some() || self.is_hovering_fold {
+                gpui::CursorStyle::PointingHand
+            } else {
+                gpui::CursorStyle::IBeam
+            };
 
         let root = div()
             .track_focus(&self.focus_handle)
@@ -57,9 +58,12 @@ impl Render for Editor {
                     for hook in &mut this.hooks {
                         hook.on_selection_change(&this.buffer, this.selection.as_ref());
                     }
-                    let changed = this.is_hovering_task || this.hovered_link.is_some();
+                    let changed = this.is_hovering_task
+                        || this.hovered_link.is_some()
+                        || this.is_hovering_fold;
                     this.is_hovering_task = false;
                     this.hovered_link = None;
+                    this.is_hovering_fold = false;
                     if changed {
                         cx.notify();
                     }

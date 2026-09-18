@@ -33,6 +33,7 @@ impl Editor {
             if self.toggle_fold_at_position(event.position) {
                 self.selection = None;
                 self.is_selecting = false;
+                self.is_hovering_fold = self.fold_indicator_at_position(event.position).is_some();
                 self.flush_effects();
                 cx.notify();
                 return;
@@ -190,12 +191,15 @@ impl Editor {
         } else {
             let hovering = self.is_position_over_task_checkbox(event.position, window);
             let hovered_link = self.link_at_position(event.position);
+            let hovering_fold = self.fold_indicator_at_position(event.position).is_some();
             let link_changed = hovered_link != self.hovered_link;
             let task_changed = hovering != self.is_hovering_task;
+            let fold_changed = hovering_fold != self.is_hovering_fold;
 
-            if task_changed || link_changed {
+            if task_changed || link_changed || fold_changed {
                 self.is_hovering_task = hovering;
                 self.hovered_link = hovered_link;
+                self.is_hovering_fold = hovering_fold;
                 cx.notify();
             }
         }
@@ -220,12 +224,15 @@ impl Editor {
         }
         let hovering = self.is_position_over_task_checkbox(event.position, window);
         let hovered_link = self.link_at_position(event.position);
+        let hovering_fold = self.fold_indicator_at_position(event.position).is_some();
         let link_changed = hovered_link != self.hovered_link;
         let task_changed = hovering != self.is_hovering_task;
+        let fold_changed = hovering_fold != self.is_hovering_fold;
 
-        if task_changed || link_changed {
+        if task_changed || link_changed || fold_changed {
             self.is_hovering_task = hovering;
             self.hovered_link = hovered_link;
+            self.is_hovering_fold = hovering_fold;
         }
         self.flush_effects();
         cx.notify();

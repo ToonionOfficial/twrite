@@ -49,6 +49,9 @@ A quote block opening with `[!KIND]` (`> [!NOTE] Title`) renders as a callout: t
 ### Smart List Continuation
 Pressing `Enter` at the end of a list item automatically inserts the next bullet point (`- ` or `* `) or increments ordered list numbers (`1. `, `2. `). Pressing `Enter` on an empty list bullet removes the prefix.
 
+### List Indentation and Sibling Renumbering
+Pressing `Tab` on a list item indents and nests the item (adjusting leading whitespace by `list_indent_size`, default 2 spaces). Pressing `Shift+Tab` outdents and unnests it. Sibling ordered lists are automatically renumbered consecutively at each indentation level.
+
 ### Formatting Shortcuts
 Selecting text and pressing formatting keys wraps the selection automatically:
 - `Ctrl+B`: Toggles bold (`**text**`)

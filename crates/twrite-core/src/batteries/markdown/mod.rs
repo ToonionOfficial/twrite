@@ -23,12 +23,14 @@ mod highlight;
 mod hook;
 mod inline;
 mod links;
+mod list;
 mod table;
 
 pub use config::{ConcealMode, MarkdownConfig};
 pub use highlight::MarkdownHighlighter;
 pub use hook::MarkdownHook;
 pub use links::extract_markdown_links;
+pub use list::{ListMarker, ParsedListItem, parse_list_item};
 pub use table::{
     TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout,
     TableRowKind, fence_rows, find_unescaped_pipes, is_fenced_row, parse_delimiter_row,

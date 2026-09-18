@@ -1,6 +1,7 @@
 use crate::{EditorHook, HookContext, HookOutcome, KeyCode, KeyEvent, Point, Selection};
 
 use super::config::MarkdownConfig;
+use super::list::handle_list_tab;
 use super::table::{
     TableRowKind, clean_table_line, find_unescaped_pipes, split_table_cells, table_block_at,
 };
@@ -10,6 +11,8 @@ use super::table::{
 pub struct MarkdownHook {
     interactive_tasks: bool,
     table_navigation: bool,
+    list_indentation: bool,
+    list_indent_size: usize,
 }
 
 impl Default for MarkdownHook {
@@ -24,6 +27,8 @@ impl MarkdownHook {
         Self {
             interactive_tasks: true,
             table_navigation: true,
+            list_indentation: true,
+            list_indent_size: 2,
         }
     }
 
@@ -32,6 +37,8 @@ impl MarkdownHook {
         Self {
             interactive_tasks: config.interactive_tasks,
             table_navigation: config.table_navigation,
+            list_indentation: config.list_indentation,
+            list_indent_size: config.list_indent_size,
         }
     }
 
@@ -53,6 +60,26 @@ impl MarkdownHook {
     /// Returns whether table cell navigation is enabled.
     pub fn table_navigation(&self) -> bool {
         self.table_navigation
+    }
+
+    /// Updates whether `Tab` / `Shift+Tab` indent and unindent list items.
+    pub fn set_list_indentation(&mut self, enabled: bool) {
+        self.list_indentation = enabled;
+    }
+
+    /// Returns whether list indentation is enabled.
+    pub fn list_indentation(&self) -> bool {
+        self.list_indentation
+    }
+
+    /// Sets the number of spaces per list indent level.
+    pub fn set_list_indent_size(&mut self, size: usize) {
+        self.list_indent_size = size;
+    }
+
+    /// Returns the number of spaces per list indent level.
+    pub fn list_indent_size(&self) -> usize {
+        self.list_indent_size
     }
 
     fn toggle_marker_at_row(ctx: &mut HookContext, row: usize) -> bool {
@@ -346,19 +373,24 @@ impl EditorHook for MarkdownHook {
             }
         }
 
-        // `Tab` / `Shift+Tab` cell navigation inside GFM tables. Runs after
-        // `Enter` handling so plain indent-Tab still applies outside tables;
-        // returning `Consumed` overrides the editor's default tab-size spaces.
         if event.code == KeyCode::Tab
             && !event.modifiers.ctrl
             && !event.modifiers.meta
             && !event.modifiers.alt
-            && self.table_navigation
-            && let Some(target) = Self::table_tab_target(ctx, event.modifiers.shift)
         {
-            ctx.buffer.set_cursor_offset(target);
-            *ctx.selection = None;
-            return HookOutcome::Consumed;
+            if self.table_navigation
+                && let Some(target) = Self::table_tab_target(ctx, event.modifiers.shift)
+            {
+                ctx.buffer.set_cursor_offset(target);
+                *ctx.selection = None;
+                return HookOutcome::Consumed;
+            }
+
+            if self.list_indentation
+                && handle_list_tab(ctx, event.modifiers.shift, self.list_indent_size)
+            {
+                return HookOutcome::Consumed;
+            }
         }
 
         HookOutcome::PassThrough
@@ -720,5 +752,297 @@ mod tests {
             HookOutcome::Consumed
         );
         assert_eq!(ctx.buffer.text().to_string(), "| a |\n| --- |\n");
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_indent_and_outdent_bullet() {
+        let mut buffer = EditorBuffer::new("- Parent\n- Child");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 2));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        let outcome = hook.on_key(&mut ctx, &tab_event);
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- Parent\n  - Child");
+
+        let shift_tab_event = KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: crate::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        };
+        let outcome2 = hook.on_key(&mut ctx, &shift_tab_event);
+        assert_eq!(outcome2, HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- Parent\n- Child");
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_ordered_nesting_and_renumbering() {
+        let mut buffer = EditorBuffer::new("1. One\n2. Two\n3. Three");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 3));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        let outcome = hook.on_key(&mut ctx, &tab_event);
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "1. One\n  1. Two\n2. Three");
+
+        let shift_tab_event = KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: crate::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        };
+        let outcome2 = hook.on_key(&mut ctx, &shift_tab_event);
+        assert_eq!(outcome2, HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "1. One\n2. Two\n3. Three");
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_tasks() {
+        let mut buffer = EditorBuffer::new("- [ ] Task 1\n- [x] Task 2");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 4));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        let outcome = hook.on_key(&mut ctx, &tab_event);
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(
+            ctx.buffer.text().to_string(),
+            "- [ ] Task 1\n  - [x] Task 2"
+        );
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_multiline_selection() {
+        let mut buffer = EditorBuffer::new("- A\n- B\n- C\n- D");
+        let start_offset = buffer.point_to_offset(Point::new(1, 0));
+        let end_offset = buffer.point_to_offset(Point::new(2, 3));
+        let mut selection = Some(Selection::range(start_offset, end_offset));
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        let outcome = hook.on_key(&mut ctx, &tab_event);
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- A\n  - B\n  - C\n- D");
+
+        let shift_tab_event = KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: crate::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        };
+        let outcome2 = hook.on_key(&mut ctx, &shift_tab_event);
+        assert_eq!(outcome2, HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- A\n- B\n- C\n- D");
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_non_list_passes_through() {
+        let mut buffer = EditorBuffer::new("Paragraph text here");
+        buffer.set_cursor_offset(5);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        let outcome = hook.on_key(&mut ctx, &tab_event);
+        assert_eq!(outcome, HookOutcome::PassThrough);
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_undo_redo() {
+        let mut buffer = EditorBuffer::new("1. One\n2. Two\n3. Three");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 3));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        assert_eq!(hook.on_key(&mut ctx, &tab_event), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "1. One\n  1. Two\n2. Three");
+
+        // Single undo reverts all lines and restores the cursor offset
+        ctx.buffer.undo();
+        assert_eq!(ctx.buffer.text().to_string(), "1. One\n2. Two\n3. Three");
+        assert_eq!(ctx.buffer.cursor_offset(), second_line_offset);
+
+        // Redo re-applies the indentation
+        ctx.buffer.redo();
+        assert_eq!(ctx.buffer.text().to_string(), "1. One\n  1. Two\n2. Three");
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_outdent_at_root() {
+        let mut buffer = EditorBuffer::new("- One\n- Two");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 2));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let shift_tab_event = KeyEvent {
+            code: KeyCode::Tab,
+            modifiers: crate::Modifiers {
+                shift: true,
+                ..Default::default()
+            },
+        };
+        assert_eq!(
+            hook.on_key(&mut ctx, &shift_tab_event),
+            HookOutcome::Consumed
+        );
+        assert_eq!(ctx.buffer.text().to_string(), "- One\n- Two");
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_custom_indent_size() {
+        let mut buffer = EditorBuffer::new("- Parent\n- Child");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 2));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        hook.set_list_indent_size(4);
+        assert_eq!(hook.list_indent_size(), 4);
+
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        assert_eq!(hook.on_key(&mut ctx, &tab_event), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- Parent\n    - Child");
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_parenthesis_delimiter() {
+        let mut buffer = EditorBuffer::new("1) One\n2) Two\n3) Three");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 3));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        assert_eq!(hook.on_key(&mut ctx, &tab_event), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "1) One\n  1) Two\n2) Three");
+    }
+
+    #[test]
+    fn test_markdown_hook_list_tab_disabled() {
+        let mut buffer = EditorBuffer::new("- Parent\n- Child");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 2));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        hook.set_list_indentation(false);
+        assert!(!hook.list_indentation());
+
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let tab_event = KeyEvent::plain(KeyCode::Tab);
+        assert_eq!(hook.on_key(&mut ctx, &tab_event), HookOutcome::PassThrough);
     }
 }

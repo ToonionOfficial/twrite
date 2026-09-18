@@ -14,6 +14,10 @@ pub struct MarkdownConfig {
     pub table_alignment: bool,
     /// Whether `Tab` / `Shift+Tab` move between table cells and `Enter` continues table rows.
     pub table_navigation: bool,
+    /// Whether `Tab` / `Shift+Tab` indent and unindent list items and renumber ordered lists.
+    pub list_indentation: bool,
+    /// Number of spaces per list indent level (defaults to 2).
+    pub list_indent_size: usize,
 }
 
 impl Default for MarkdownConfig {
@@ -25,6 +29,8 @@ impl Default for MarkdownConfig {
             visual_tables: true,
             table_alignment: true,
             table_navigation: true,
+            list_indentation: true,
+            list_indent_size: 2,
         }
     }
 }
