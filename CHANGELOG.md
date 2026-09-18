@@ -5,6 +5,25 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Heading line-height proportions at larger font sizes (`twrite-gpui`)**:
+  `LineMetrics::for_line` used independent fixed multipliers tuned for
+  16px/22px (H1: font x2.0 but line height x1.8), so at larger base sizes
+  the scaled line height fell behind the scaled font size and headings
+  overflowed their lines. Heading line heights are now derived from the
+  scaled font size with a consistent ratio, floored at the default
+  proportions so raising `font_size` without raising `line_height` still
+  leaves breathing room. Fixes [#45](https://github.com/ToonionOfficial/twrite/issues/45).
+- **Body row line height when the font outgrows the pitch (`twrite-gpui`)**:
+  body rows now keep at least the default line-height ratio (22/16), so
+  e.g. 24px type on the default 22px pitch renders with a 33px line box
+  instead of a cramped 22px one. Roomier custom settings are untouched.
+- **Gutter line numbers (`twrite-gpui`)**: numbers now render at 80% of the
+  body font size instead of full size, so consecutive rows keep breathing
+  room when the configured font size meets or exceeds the line height.
+
 ## [0.10.1] - 2026-09-16
 
 ### Fixed

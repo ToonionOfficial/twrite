@@ -9,6 +9,31 @@ use std::ops::Range;
 use crate::editor::Editor;
 use crate::theme::EditorTheme;
 
+/// Minimum heading line-height ratio (`line_height / font_size`).
+///
+/// Matches `EditorConfig::default` (22/16 = 1.375). If a host raises
+/// `font_size` without raising `line_height` (e.g. 24px font on a 22px
+/// line), the raw config ratio collapses below 1.0 and heading line boxes
+/// end up shorter than the scaled font. Flooring at the default proportions
+/// keeps headings readable in that case while still respecting roomier
+/// custom ratios via `max` below.
+const MIN_HEADING_LINE_RATIO: f32 = 22.0 / 16.0;
+
+/// Minimum body line-height ratio (`line_height / font_size`).
+///
+/// Same default proportions as headings. Raising `font_size` without raising
+/// `line_height` (e.g. 24px type on a 22px pitch) would otherwise pack body
+/// rows tighter than the default look; roomier custom settings pass through
+/// untouched via `max` below.
+const MIN_BODY_LINE_RATIO: f32 = 22.0 / 16.0;
+
+/// Scale applied to the base font size when shaping gutter line numbers.
+/// Numbers render smaller than body text so consecutive rows keep breathing
+/// room even when the configured font size meets or exceeds the line height
+/// (e.g. 24px type on a 22px pitch, where full-size glyphs would overflow
+/// their rows and crowd each other).
+const GUTTER_NUMBER_FONT_SCALE: f32 = 0.8;
+
 /// Visual layout metrics and block-level decorations for a single rendered line.
 #[derive(Debug, Clone)]
 pub struct LineMetrics {
@@ -41,7 +66,6 @@ impl LineMetrics {
         base_line_height: Pixels,
     ) -> Self {
         let mut font_size = base_font_size;
-        let mut line_height = base_line_height;
 
         // Lowest heading level wins (level 1 outranks level 6); out-of-range
         // levels keep the base size.
@@ -56,30 +80,45 @@ impl LineMetrics {
         match heading_level {
             Some(1) => {
                 font_size = base_font_size * 2.0;
-                line_height = base_line_height * 1.8;
             }
             Some(2) => {
                 font_size = base_font_size * 1.5;
-                line_height = base_line_height * 1.4;
             }
             Some(3) => {
                 font_size = base_font_size * 1.25;
-                line_height = base_line_height * 1.2;
             }
             Some(4) => {
                 font_size = base_font_size * 1.125;
-                line_height = base_line_height * 1.1;
             }
             Some(5) => {
                 font_size = base_font_size * 1.0;
-                line_height = base_line_height * 1.0;
             }
             Some(6) => {
                 font_size = base_font_size * 0.875;
-                line_height = base_line_height * 0.95;
             }
             _ => {}
         }
+
+        // Derive heading line height from the scaled font size so proportions
+        // hold at any base size. Previously each level used an independent
+        // fixed multiplier tuned for 16px/22px (e.g. H1: font x2.0 but line
+        // x1.8), so at larger base sizes the line box fell behind the font
+        // and headings overflowed their lines. The ratio is floored at the
+        // default proportions so raising `font_size` without raising
+        // `line_height` (e.g. 24px on a 22px line) still leaves breathing
+        // room instead of a sub-1.0 ratio; roomier custom ratios pass
+        // through untouched.
+        let is_heading = heading_level.is_some_and(|level| (1..=6).contains(&level));
+        let line_height: Pixels = if is_heading {
+            let base_ratio: f32 = if base_font_size == px(0.0) {
+                MIN_HEADING_LINE_RATIO
+            } else {
+                base_line_height / base_font_size
+            };
+            font_size * base_ratio.max(MIN_HEADING_LINE_RATIO)
+        } else {
+            base_line_height.max(base_font_size * MIN_BODY_LINE_RATIO)
+        };
 
         let is_quote = spans
             .iter()
@@ -466,7 +505,7 @@ impl RenderOnce for EditorCanvas {
 
                         let shaped = window.text_system().shape_line(
                             line_num_str.clone().into(),
-                            config.font_size,
+                            config.font_size * GUTTER_NUMBER_FONT_SCALE,
                             &[TextRun {
                                 len: line_num_str.len(),
                                 font: font.clone(),
