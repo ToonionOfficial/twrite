@@ -43,6 +43,9 @@ Inline links formatted as `[Link text](https://example.com)` are detected. Singl
 ### Text Highlight
 Wrapping text in double equals signs (`==important==`) renders it with a tinted background wash. The markers conceal and reveal following the active conceal mode, word by word like other inline formatting.
 
+### Callouts
+A quote block opening with `[!KIND]` (`> [!NOTE] Title`) renders as a callout: the bar and body wash take the kind accent (NOTE, TIP, WARNING, CAUTION, IMPORTANT, others fall back to NOTE), the marker conceals like other delimiters, and the title renders bold. Collapsing bodies is not supported yet.
+
 ### Smart List Continuation
 Pressing `Enter` at the end of a list item automatically inserts the next bullet point (`- ` or `* `) or increments ordered list numbers (`1. `, `2. `). Pressing `Enter` on an empty list bullet removes the prefix.
 

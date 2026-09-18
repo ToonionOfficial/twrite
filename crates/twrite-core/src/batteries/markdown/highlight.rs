@@ -2,8 +2,8 @@ use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
 use crate::{
-    ConcealedLine, DisplayPad, EditorBuffer, HighlightTag, StyleSpan, SyntaxHighlighter,
-    display_width,
+    CalloutKind, ConcealedLine, DisplayPad, EditorBuffer, HighlightTag, StyleSpan,
+    SyntaxHighlighter, display_width,
 };
 
 use super::config::{ConcealMode, MarkdownConfig};
@@ -239,6 +239,88 @@ fn snap_display_back(display: &str, mut i: usize) -> usize {
         i -= 1;
     }
     i
+}
+
+/// Parsed callout header (`> [!KIND] Title`) with byte ranges in the line.
+struct CalloutHeader {
+    kind: CalloutKind,
+    /// Byte range of the `[!KIND]` marker plus any `-`/`+` fold suffix and
+    /// the spaces leading into the title. Concealing the spaces keeps the
+    /// title flush; the cursor reveals anywhere inside for editing.
+    marker: Range<usize>,
+    /// Byte range of the title text after the marker, if any.
+    title: Option<Range<usize>>,
+}
+
+/// Parses a callout header from a trimmed quote line whose `> ` prefix is
+/// already verified. Unknown and lowercase kinds map leniently; anything
+/// else yields `None`.
+fn parse_callout_header(line_text: &str, trimmed_start: &str) -> Option<CalloutHeader> {
+    let indent = line_text.len() - trimmed_start.len();
+    let rest = trimmed_start.get(2..)?.strip_prefix("[!")?;
+    let close = rest.find(']')?;
+    if close == 0 {
+        return None;
+    }
+    let kind = match rest[..close].to_ascii_uppercase().as_str() {
+        "NOTE" => CalloutKind::Note,
+        "TIP" => CalloutKind::Tip,
+        "WARNING" => CalloutKind::Warning,
+        "CAUTION" => CalloutKind::Caution,
+        "IMPORTANT" => CalloutKind::Important,
+        _ => CalloutKind::Other,
+    };
+    let mut marker_end = indent + 2 + 2 + close + 1;
+    // A directly suffixed `-`/`+` is Obsidian's fold marker. Collapsing is a
+    // follow-up; conceal it so it never leaks out as title text.
+    if line_text
+        .as_bytes()
+        .get(marker_end)
+        .is_some_and(|byte| *byte == b'-' || *byte == b'+')
+    {
+        marker_end += 1;
+    }
+    let mut title_start = marker_end;
+    while line_text
+        .as_bytes()
+        .get(title_start)
+        .is_some_and(|byte| *byte == b' ' || *byte == b'\t')
+    {
+        title_start += 1;
+    }
+    Some(CalloutHeader {
+        kind,
+        marker: indent + 2..title_start,
+        title: (title_start < line_text.len()).then_some(title_start..line_text.len()),
+    })
+}
+
+/// Returns the callout kind for a quote row plus its parsed header when the
+/// row itself opens the block. Body rows inherit the nearest header above;
+/// blank rows and non-quote rows end the block.
+fn callout_at_row(
+    buffer: &EditorBuffer,
+    row: usize,
+    line_text: &str,
+    trimmed_start: &str,
+) -> Option<(CalloutKind, Option<CalloutHeader>)> {
+    if let Some(header) = parse_callout_header(line_text, trimmed_start) {
+        return Some((header.kind, Some(header)));
+    }
+    let mut above = row;
+    while above > 0 {
+        above -= 1;
+        let raw = buffer.line_to_string(above);
+        let text = raw.trim_end_matches(['\r', '\n']);
+        let trimmed = text.trim_start();
+        if trimmed.is_empty() || !(trimmed.starts_with("> ") || trimmed == ">") {
+            return None;
+        }
+        if let Some(header) = parse_callout_header(text, trimmed) {
+            return Some((header.kind, None));
+        }
+    }
+    None
 }
 
 /// Computes display-only padding aligning one table row's cells to the
@@ -530,6 +612,27 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                 spans.push(StyleSpan::tag(indent..indent + delim_len, delim_tag));
             } else {
                 spans.push(StyleSpan::tag(indent..indent + 1, HighlightTag::Comment));
+            }
+
+            // Callout header or inherited body kind. The structural tag covers
+            // the full line so tag-driven layout sees body rows too; the
+            // marker conceals word-level while the title renders bold.
+            if let Some((kind, header)) = callout_at_row(buffer, row, line_text, trimmed_start) {
+                spans.push(StyleSpan::tag(
+                    0..line_text.len(),
+                    HighlightTag::Callout(kind),
+                ));
+                if let Some(header) = header {
+                    let cursor_in_marker = cursor_line_offset.is_some_and(|cursor| {
+                        header.marker.start <= cursor && cursor < header.marker.end
+                    });
+                    if !cursor_in_marker && let Some(delim_tag) = delimiter_tag {
+                        spans.push(StyleSpan::tag(header.marker.clone(), delim_tag));
+                    }
+                    if let Some(title) = header.title {
+                        spans.push(StyleSpan::tag(title, HighlightTag::Bold));
+                    }
+                }
             }
         }
 
@@ -1518,5 +1621,139 @@ mod tests {
                 .all(|sp| sp.style != StyleValue::Tag(HighlightTag::Custom(TABLE_CELL_TAG))),
             "fenced pipe row must not emit table cell tags"
         );
+    }
+
+    #[test]
+    fn test_markdown_callout_header() {
+        // Issue #52: `> [!NOTE] Title` tags the kind, conceals the marker,
+        // and bolds the title.
+        let line = "> [!NOTE] Title here";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        // Cursor past the line so row 0 is inactive.
+        let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+        buffer.set_cursor_offset(line.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Callout(CalloutKind::Note))),
+            "header must tag the kind: {spans:?}"
+        );
+        let marker = spans
+            .iter()
+            .find(|s| s.style == StyleValue::Tag(HighlightTag::Hidden) && s.range.start == 2)
+            .expect("marker must conceal");
+        assert_eq!(marker.range, 2..10, "marker covers `[!NOTE] `");
+        let title = spans
+            .iter()
+            .find(|s| s.style == StyleValue::Tag(HighlightTag::Bold))
+            .expect("title must bold");
+        assert_eq!(title.range, 10..20);
+        assert_eq!(
+            ConcealedLine::build(line, &spans).display_text,
+            "Title here"
+        );
+    }
+
+    #[test]
+    fn test_markdown_callout_kinds_and_fallback() {
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        for (marker, expected) in [
+            ("NOTE", CalloutKind::Note),
+            ("TIP", CalloutKind::Tip),
+            ("WARNING", CalloutKind::Warning),
+            ("CAUTION", CalloutKind::Caution),
+            ("IMPORTANT", CalloutKind::Important),
+            ("note", CalloutKind::Note),
+            ("WHATEVER", CalloutKind::Other),
+        ] {
+            let line = format!("> [!{marker}] T");
+            let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+            buffer.set_cursor_offset(line.len() + 1);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, &line);
+            assert!(
+                spans
+                    .iter()
+                    .any(|s| s.style == StyleValue::Tag(HighlightTag::Callout(expected))),
+                "[{marker}] must tag {expected:?}: {spans:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_markdown_callout_body_inheritance() {
+        // Body `>` rows inherit the header kind; blank and non-quote rows
+        // end the block.
+        let text = "> [!TIP] Head\n> body one\n> body two\n\nplain\n> quote";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(text);
+        buffer.set_cursor_offset(text.len());
+        let kind_at = |row: usize, line: &str| {
+            hidden_highlighter
+                .highlight_line(&buffer, row, line)
+                .iter()
+                .find_map(|s| match s.style {
+                    StyleValue::Tag(HighlightTag::Callout(kind)) => Some(kind),
+                    _ => None,
+                })
+        };
+
+        assert_eq!(kind_at(0, "> [!TIP] Head"), Some(CalloutKind::Tip));
+        assert_eq!(kind_at(1, "> body one"), Some(CalloutKind::Tip));
+        assert_eq!(kind_at(2, "> body two"), Some(CalloutKind::Tip));
+        assert_eq!(kind_at(4, "plain"), None);
+        assert_eq!(kind_at(5, "> quote"), None);
+    }
+
+    #[test]
+    fn test_markdown_callout_marker_reveal() {
+        // The marker reveals only while the cursor sits on it; the title
+        // stays concealed from the cursor row otherwise.
+        let line = "> [!WARNING] Careful";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let concealed_at = |cursor: usize| {
+            let mut buffer = EditorBuffer::new(line);
+            buffer.set_cursor_offset(cursor);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            ConcealedLine::build(line, &spans).display_text
+        };
+
+        // Marker covers 2..13 (`[!WARNING] ` with the trailing space).
+        assert_eq!(concealed_at(4), "> [!WARNING] Careful");
+        assert_eq!(concealed_at(13), "> Careful");
+        assert_eq!(concealed_at(0), "> Careful");
+    }
+
+    #[test]
+    fn test_markdown_callout_titleless_header() {
+        // A header without title conceals to an empty row; the bar remains.
+        let line = "> [!CAUTION]";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+        buffer.set_cursor_offset(line.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Callout(CalloutKind::Caution))),
+            "titleless header must tag the kind: {spans:?}"
+        );
+        assert_eq!(ConcealedLine::build(line, &spans).display_text, "");
     }
 }

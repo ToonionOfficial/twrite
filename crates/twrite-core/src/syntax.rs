@@ -83,6 +83,9 @@ pub enum HighlightTag {
     Link,
     /// Structural tag: line is a blockquote (e.g. `> `). Used for decorations, not text color.
     Blockquote,
+    /// Structural tag: line belongs to a callout/admonition block
+    /// (e.g. `> [!NOTE]`). Used for decorations, not text color.
+    Callout(CalloutKind),
     /// Structural tag: line is a thematic break / horizontal rule. Used for decorations.
     HorizontalRule,
     /// Structural tag: line contains an unchecked task marker.
@@ -98,6 +101,24 @@ pub enum HighlightTag {
     /// theme foreground; register colors via
     /// `SyntaxTheme::set_custom_tag_color`.
     Custom(&'static str),
+}
+
+/// Callout/admonition kind for `> [!KIND]` blocks. Unknown kinds map to
+/// `Other` so hosts render them with the default accent instead of failing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum CalloutKind {
+    /// Informational note.
+    Note,
+    /// Helpful tip or hint.
+    Tip,
+    /// Warning that needs attention.
+    Warning,
+    /// Strong caution against an action.
+    Caution,
+    /// Critical importance marker.
+    Important,
+    /// Any other or unrecognized kind; renders with the default accent.
+    Other,
 }
 
 /// Direct styling attributes for a span of text.

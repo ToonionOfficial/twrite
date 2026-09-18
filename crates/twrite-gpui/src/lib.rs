@@ -339,4 +339,65 @@ mod tests {
         let code = theme.resolve_style(&StyleValue::Tag(HighlightTag::Code));
         assert_eq!(code.background, Some(theme.syntax.code_bg));
     }
+
+    #[test]
+    fn test_callout_accent_colors() {
+        use twrite_core::CalloutKind;
+        let theme = EditorTheme::default();
+        assert_eq!(
+            theme.syntax.callout_accent(CalloutKind::Note),
+            theme.syntax.callout_note
+        );
+        assert_eq!(
+            theme.syntax.callout_accent(CalloutKind::Tip),
+            theme.syntax.callout_tip
+        );
+        assert_eq!(
+            theme.syntax.callout_accent(CalloutKind::Warning),
+            theme.syntax.callout_warning
+        );
+        assert_eq!(
+            theme.syntax.callout_accent(CalloutKind::Caution),
+            theme.syntax.callout_caution
+        );
+        assert_eq!(
+            theme.syntax.callout_accent(CalloutKind::Important),
+            theme.syntax.callout_important
+        );
+        // Unknown kinds fall back to the note accent.
+        assert_eq!(
+            theme.syntax.callout_accent(CalloutKind::Other),
+            theme.syntax.callout_note
+        );
+        // The structural tag itself stays neutral; accents apply to quads.
+        assert_eq!(
+            theme.tag_color(HighlightTag::Callout(CalloutKind::Warning)),
+            theme.foreground
+        );
+    }
+
+    #[test]
+    fn test_line_metrics_callout_detection() {
+        use twrite_core::CalloutKind;
+        let callout = LineMetrics::for_line(
+            "> [!TIP] T",
+            "> [!TIP] T",
+            &[StyleSpan::tag(
+                0..10,
+                HighlightTag::Callout(CalloutKind::Tip),
+            )],
+            px(16.0),
+            px(22.0),
+        );
+        assert_eq!(callout.callout, Some(CalloutKind::Tip));
+
+        let plain = LineMetrics::for_line(
+            "> quote",
+            "> quote",
+            &[StyleSpan::tag(0..2, HighlightTag::Blockquote)],
+            px(16.0),
+            px(22.0),
+        );
+        assert_eq!(plain.callout, None);
+    }
 }

@@ -5,6 +5,18 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.13.0] - 2026-09-18
+
+### Added
+- **Callouts and admonitions (`twrite-core`, `twrite-gpui`)**: quote blocks
+  opening with `> [!KIND]` parse into a new `HighlightTag::Callout` carrying
+  the kind (NOTE, TIP, WARNING, CAUTION, IMPORTANT, others fall back to the
+  note accent). The bar and body wash take the kind accent from new theme
+  fields, the marker conceals word-level, and the title renders bold. Body
+  rows inherit the header kind until a blank or non-quote row; collapsing
+  bodies and icons remain follow-ups.
+  Closes [#52](https://github.com/ToonionOfficial/twrite/issues/52).
+
 ## [0.12.1] - 2026-09-18
 
 ### Fixed
