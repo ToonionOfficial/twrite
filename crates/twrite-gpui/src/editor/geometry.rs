@@ -587,8 +587,8 @@ impl Editor {
     }
 
     /// Reports whether `pos` sits on a fold indicator in the gutter of a
-    /// foldable row. Click handling uses this before cursor placement; hover
-    /// styling deliberately stays out of scope.
+    /// foldable row or on a collapsed row's inline badge. Used for click
+    /// handling and hover cursor styling.
     pub(crate) fn fold_indicator_at_position(&mut self, pos: Point<Pixels>) -> Option<usize> {
         let bounds = self.last_bounds?;
         if !bounds.contains(&pos) {

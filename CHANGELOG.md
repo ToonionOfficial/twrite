@@ -15,6 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   selections, and atomic undo/redo via `replace_many`. Configurable via
   `MarkdownConfig::list_indentation` and `MarkdownConfig::list_indent_size`.
   Closes [#65](https://github.com/ToonionOfficial/twrite/issues/65).
+- **Pointer cursor for folding indicators (`twrite-gpui`)**: hovering over
+  gutter fold chevrons or collapsed inline indicator badges now displays a
+  pointing-hand cursor.
 
 ## [0.14.0] - 2026-09-18
 
