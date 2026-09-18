@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use gpui::{Hsla, hsla, rgb};
-use twrite_core::{HighlightTag, Rgba, StyleValue, UnderlineDecoration};
+use twrite_core::{CalloutKind, HighlightTag, Rgba, StyleValue, UnderlineDecoration};
 
 /// Color configuration for syntax elements.
 #[derive(Clone, Debug)]
@@ -38,6 +38,16 @@ pub struct SyntaxTheme {
     pub code_bg: Hsla,
     /// Background tint color for `==mark==` highlight spans.
     pub highlight_bg: Hsla,
+    /// Accent color for `> [!NOTE]` callout blocks.
+    pub callout_note: Hsla,
+    /// Accent color for `> [!TIP]` callout blocks.
+    pub callout_tip: Hsla,
+    /// Accent color for `> [!WARNING]` callout blocks.
+    pub callout_warning: Hsla,
+    /// Accent color for `> [!CAUTION]` callout blocks.
+    pub callout_caution: Hsla,
+    /// Accent color for `> [!IMPORTANT]` callout blocks.
+    pub callout_important: Hsla,
     /// Color for hyperlink text.
     pub link: Hsla,
     /// Registered colors for `HighlightTag::Custom` names. Unregistered names
@@ -68,6 +78,11 @@ impl Default for SyntaxTheme {
             code: rgb(0xf5c2e7).into(),
             code_bg: hsla(0.65, 0.4, 0.6, 0.15),
             highlight_bg: hsla(0.11, 0.85, 0.6, 0.35),
+            callout_note: rgb(0x89b4fa).into(),
+            callout_tip: rgb(0xa6e3a1).into(),
+            callout_warning: rgb(0xf9e2af).into(),
+            callout_caution: rgb(0xfab387).into(),
+            callout_important: rgb(0xf38ba8).into(),
             link: rgb(0x89b4fa).into(),
             custom: HashMap::new(),
             error: rgb(0xf38ba8).into(),
@@ -80,6 +95,19 @@ impl SyntaxTheme {
     /// Registers a color for a `HighlightTag::Custom` name (e.g. `"speaker"`).
     pub fn set_custom_tag_color(&mut self, name: &'static str, color: Hsla) {
         self.custom.insert(name, color);
+    }
+
+    /// Resolves a callout kind to its accent color. Unrecognized kinds render
+    /// with the default note accent instead of failing.
+    pub fn callout_accent(&self, kind: CalloutKind) -> Hsla {
+        match kind {
+            CalloutKind::Note => self.callout_note,
+            CalloutKind::Tip => self.callout_tip,
+            CalloutKind::Warning => self.callout_warning,
+            CalloutKind::Caution => self.callout_caution,
+            CalloutKind::Important => self.callout_important,
+            CalloutKind::Other => self.callout_note,
+        }
     }
 }
 
@@ -197,6 +225,7 @@ impl EditorTheme {
                 c
             }
             HighlightTag::Blockquote => self.syntax.comment,
+            HighlightTag::Callout(_) => self.foreground,
             HighlightTag::HorizontalRule => self.syntax.punctuation,
             HighlightTag::TaskUnchecked => self.syntax.comment,
             HighlightTag::TaskChecked => self.syntax.string,

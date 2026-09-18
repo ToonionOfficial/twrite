@@ -1,6 +1,6 @@
 use gpui::*;
 use twrite_core::{
-    HighlightTag, Point as BufferPoint, StyleSpan, StyleValue, UnderlineDecoration,
+    CalloutKind, HighlightTag, Point as BufferPoint, StyleSpan, StyleValue, UnderlineDecoration,
     split_line_intervals,
 };
 
@@ -49,13 +49,15 @@ pub struct LineMetrics {
     pub is_thematic_break: bool,
     /// Whether this line is a task list item (Some(false) for unchecked, Some(true) for checked).
     pub task_state: Option<bool>,
+    /// Callout kind when the line belongs to a `> [!KIND]` block.
+    pub callout: Option<CalloutKind>,
 }
 
 impl LineMetrics {
     /// Calculates layout metrics and block-level decorations based on syntax spans and line text.
     ///
     /// `spans` are the original (pre-concealment) highlight spans for the line. Structural
-    /// decorations (`Blockquote`, `HorizontalRule`, `Task*`) are detected solely via
+    /// decorations (`Blockquote`, `Callout`, `HorizontalRule`, `Task*`) are detected solely via
     /// `HighlightTag`s so custom languages work without raw string checks. Code-block
     /// detection relies on a full-line `Code` span rather than fence prefixes.
     pub fn for_line(
@@ -147,6 +149,11 @@ impl LineMetrics {
             None
         };
 
+        let callout = spans.iter().find_map(|s| match s.style {
+            StyleValue::Tag(HighlightTag::Callout(kind)) => Some(kind),
+            _ => None,
+        });
+
         Self {
             font_size,
             line_height,
@@ -154,6 +161,7 @@ impl LineMetrics {
             is_code_block,
             is_thematic_break,
             task_state,
+            callout,
         }
     }
 }
@@ -287,6 +295,7 @@ struct PreparedLine {
     line_height: Pixels,
     quote_bar_quad: Option<PaintQuad>,
     code_block_bg_quad: Option<PaintQuad>,
+    callout_bg_quad: Option<PaintQuad>,
     thematic_break_quad: Option<PaintQuad>,
     empty_selection_quad: Option<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
@@ -698,12 +707,35 @@ impl RenderOnce for EditorCanvas {
                     }
 
                     let quote_bar_quad = if metrics.is_quote {
+                        // Callout blocks tint the bar with the kind accent;
+                        // plain quotes keep the comment gray.
+                        let bar_color = metrics
+                            .callout
+                            .map(|kind| theme.syntax.callout_accent(kind))
+                            .unwrap_or(theme.syntax.comment);
                         Some(fill(
                             Bounds::new(
                                 point(bounds.left() + gutter_width + px(4.0), current_y),
                                 size(px(3.0), line_total_height),
                             ),
-                            theme.syntax.comment,
+                            bar_color,
+                        ))
+                    } else {
+                        None
+                    };
+
+                    // Callout body wash: the kind accent at a whisper alpha
+                    // over the same geometry as code block backgrounds.
+                    let callout_bg_quad = if let Some(kind) = metrics.callout {
+                        let bg_width = (bounds.size.width - gutter_width - px(8.0)).max(px(0.0));
+                        let mut tint = theme.syntax.callout_accent(kind);
+                        tint.a = 0.10;
+                        Some(fill(
+                            Bounds::new(
+                                point(bounds.left() + gutter_width + px(4.0), current_y),
+                                size(bg_width, line_total_height),
+                            ),
+                            tint,
                         ))
                     } else {
                         None
@@ -820,6 +852,7 @@ impl RenderOnce for EditorCanvas {
                         line_height: metrics.line_height,
                         quote_bar_quad,
                         code_block_bg_quad,
+                        callout_bg_quad,
                         thematic_break_quad,
                         empty_selection_quad,
                         cursor_quad,
@@ -870,6 +903,9 @@ impl RenderOnce for EditorCanvas {
 
                     if let Some(code_bg) = line.code_block_bg_quad {
                         window.paint_quad(code_bg);
+                    }
+                    if let Some(callout_bg) = line.callout_bg_quad {
+                        window.paint_quad(callout_bg);
                     }
                     if let Some(quote_bar) = line.quote_bar_quad {
                         window.paint_quad(quote_bar);

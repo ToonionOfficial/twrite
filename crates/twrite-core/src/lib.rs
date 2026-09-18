@@ -72,8 +72,9 @@ pub use search::{collect_replacements, replace_one_query};
 pub use search_hook::{REPLACE_PROMPT_ID, SEARCH_PROMPT_ID, SearchAction, SearchHook};
 pub use selection::Selection;
 pub use syntax::{
-    ConcealedLine, DisplayPad, HighlightTag, Rgba, StyleSpan, StyleValue, StyledSegment,
-    SyntaxHighlighter, TextStyle, UnderlineDecoration, display_width, split_line_intervals,
+    CalloutKind, ConcealedLine, DisplayPad, HighlightTag, Rgba, StyleSpan, StyleValue,
+    StyledSegment, SyntaxHighlighter, TextStyle, UnderlineDecoration, display_width,
+    split_line_intervals,
 };
 
 #[cfg(test)]
