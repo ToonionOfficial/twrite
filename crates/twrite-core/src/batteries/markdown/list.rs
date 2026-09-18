@@ -436,6 +436,209 @@ pub fn handle_list_tab(ctx: &mut HookContext, outdent: bool, indent_size: usize)
     true
 }
 
+/// Handles `Alt+Up` (move up) or `Alt+Down` (move down) inside lists.
+///
+/// Moves the line or selected block of lines, carrying list markers along,
+/// and renumbers sibling ordered list items consecutively at each indentation level.
+/// Returns `true` if consumed, or `false` to pass through.
+pub fn handle_list_move(ctx: &mut HookContext, up: bool) -> bool {
+    let (target_start_row, target_end_row) = match ctx.selection.as_ref() {
+        Some(active_selection) if !active_selection.is_empty() => {
+            let range = active_selection.byte_range();
+            let start_point = ctx.buffer.offset_to_point(range.start);
+            let end_point = ctx.buffer.offset_to_point(range.end);
+            let adjusted_end_row = if end_point.row > start_point.row && end_point.column == 0 {
+                end_point.row - 1
+            } else {
+                end_point.row
+            };
+            (start_point.row, adjusted_end_row)
+        }
+        _ => {
+            let row = ctx.buffer.cursor_point().row;
+            (row, row)
+        }
+    };
+
+    let mut any_list_item = false;
+    for row_index in target_start_row..=target_end_row {
+        let line = ctx.buffer.line_to_string(row_index);
+        if parse_list_item(&line).is_some() {
+            any_list_item = true;
+            break;
+        }
+    }
+    if !any_list_item {
+        return false;
+    }
+
+    if up && target_start_row == 0 {
+        return true;
+    }
+    if !up && target_end_row + 1 >= ctx.buffer.len_lines() {
+        return true;
+    }
+
+    let moved = crate::movement::move_lines_with_selection(ctx.buffer, ctx.selection, up);
+    if !moved {
+        return true;
+    }
+
+    let new_start_row = if up {
+        target_start_row - 1
+    } else {
+        target_start_row + 1
+    };
+    let new_end_row = if up {
+        target_end_row - 1
+    } else {
+        target_end_row + 1
+    };
+
+    let (block_start_row, block_end_row) =
+        find_list_block_range(ctx.buffer, new_start_row, new_end_row);
+
+    let mut has_ordered = false;
+    for row_index in block_start_row..=block_end_row {
+        let line = ctx.buffer.line_to_string(row_index);
+        if let Some(parsed) = parse_list_item(&line)
+            && matches!(parsed.marker, ListMarker::Ordered { .. })
+        {
+            has_ordered = true;
+            break;
+        }
+    }
+
+    if has_ordered {
+        let mut row_plans: Vec<RowPlan> = Vec::new();
+        for row_index in block_start_row..=block_end_row {
+            let line = ctx.buffer.line_to_string(row_index);
+            if let Some(parsed) = parse_list_item(&line) {
+                let target_indent = parsed.indent_bytes;
+                let target_marker = parsed.marker.clone();
+                row_plans.push(RowPlan {
+                    row_index,
+                    parsed,
+                    target_indent,
+                    target_marker,
+                });
+            }
+        }
+
+        let mut active_sequences: HashMap<usize, usize> = HashMap::new();
+        for plan in &mut row_plans {
+            let current_indent = plan.target_indent;
+            active_sequences.retain(|&level, _| level <= current_indent);
+
+            match &plan.parsed.marker {
+                ListMarker::Bullet { .. } => {
+                    active_sequences.remove(&current_indent);
+                }
+                ListMarker::Ordered {
+                    delimiter, task, ..
+                } => {
+                    let next_number = match active_sequences.get(&current_indent) {
+                        Some(&previous_number) => previous_number + 1,
+                        None => 1,
+                    };
+                    active_sequences.insert(current_indent, next_number);
+                    plan.target_marker = ListMarker::Ordered {
+                        number: next_number,
+                        delimiter: *delimiter,
+                        task: *task,
+                    };
+                }
+            }
+        }
+
+        let mut replacements: Vec<(Range<usize>, String)> = Vec::new();
+        let mut prefix_deltas: HashMap<usize, (usize, usize)> = HashMap::new();
+
+        for plan in &row_plans {
+            let new_prefix = format_list_prefix(plan.target_indent, &plan.target_marker);
+            let line = ctx.buffer.line_to_string(plan.row_index);
+            let old_prefix = line.get(..plan.parsed.content_start_byte).unwrap_or("");
+
+            prefix_deltas.insert(
+                plan.row_index,
+                (plan.parsed.content_start_byte, new_prefix.len()),
+            );
+
+            if new_prefix != old_prefix {
+                let line_start = ctx.buffer.point_to_offset(Point::new(plan.row_index, 0));
+                let range = line_start..line_start + plan.parsed.content_start_byte;
+                replacements.push((range, new_prefix));
+            }
+        }
+
+        if !replacements.is_empty() {
+            let initial_cursor = ctx.buffer.cursor_point();
+            let initial_selection = *ctx.selection;
+
+            ctx.buffer.replace_many(replacements);
+
+            if let Some(selection) = initial_selection {
+                let start_point = ctx.buffer.offset_to_point(selection.byte_range().start);
+                let end_point = ctx.buffer.offset_to_point(selection.byte_range().end);
+
+                let adjusted_start_col =
+                    if let Some(&(old_len, new_len)) = prefix_deltas.get(&start_point.row) {
+                        if start_point.column <= old_len {
+                            new_len
+                        } else {
+                            new_len + (start_point.column - old_len)
+                        }
+                    } else {
+                        start_point.column
+                    };
+
+                let adjusted_end_col =
+                    if let Some(&(old_len, new_len)) = prefix_deltas.get(&end_point.row) {
+                        if end_point.column <= old_len {
+                            new_len
+                        } else {
+                            new_len + (end_point.column - old_len)
+                        }
+                    } else {
+                        end_point.column
+                    };
+
+                let new_start_offset = ctx
+                    .buffer
+                    .point_to_offset(Point::new(start_point.row, adjusted_start_col));
+                let new_end_offset = ctx
+                    .buffer
+                    .point_to_offset(Point::new(end_point.row, adjusted_end_col));
+
+                if selection.anchor <= selection.head {
+                    *ctx.selection = Some(Selection::range(new_start_offset, new_end_offset));
+                    ctx.buffer.set_cursor_offset(new_end_offset);
+                } else {
+                    *ctx.selection = Some(Selection::range(new_end_offset, new_start_offset));
+                    ctx.buffer.set_cursor_offset(new_start_offset);
+                }
+            } else {
+                let adjusted_col =
+                    if let Some(&(old_len, new_len)) = prefix_deltas.get(&initial_cursor.row) {
+                        if initial_cursor.column <= old_len {
+                            new_len
+                        } else {
+                            new_len + (initial_cursor.column - old_len)
+                        }
+                    } else {
+                        initial_cursor.column
+                    };
+                let new_cursor_offset = ctx
+                    .buffer
+                    .point_to_offset(Point::new(initial_cursor.row, adjusted_col));
+                ctx.buffer.set_cursor_offset(new_cursor_offset);
+            }
+        }
+    }
+
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

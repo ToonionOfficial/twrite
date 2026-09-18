@@ -1,7 +1,7 @@
 use gpui::{Context, KeyDownEvent, Window};
 use twrite_core::{
     HookContext, HookOutcome, KeyCode, KeyEvent, Modifiers, Point as BufferPoint, SearchAction,
-    Selection,
+    Selection, move_lines_with_selection,
 };
 
 use super::Editor;
@@ -344,38 +344,49 @@ impl Editor {
                     }
                 }
                 KeyCode::Up => {
-                    let point = self.buffer.cursor_point();
-                    if point.row > 0 {
-                        let visible = self.step_visible_row(point.row, false);
-                        let target = self
-                            .buffer
-                            .point_to_offset(BufferPoint::new(visible, point.column));
-                        self.move_cursor_to(target, select);
+                    if key_event.modifiers.alt {
+                        edited =
+                            move_lines_with_selection(&mut self.buffer, &mut self.selection, true);
                     } else {
-                        self.move_cursor_to(0, select);
+                        let point = self.buffer.cursor_point();
+                        if point.row > 0 {
+                            let visible = self.step_visible_row(point.row, false);
+                            let target = self
+                                .buffer
+                                .point_to_offset(BufferPoint::new(visible, point.column));
+                            self.move_cursor_to(target, select);
+                        } else {
+                            self.move_cursor_to(0, select);
+                        }
                     }
                 }
                 KeyCode::Down => {
-                    let cursor_point = self.buffer.cursor_point();
-                    let total_lines = self.buffer.len_lines();
-                    if cursor_point.row + 1 < total_lines {
-                        let visible_row = self.step_visible_row(cursor_point.row, true);
-                        if visible_row > cursor_point.row {
-                            let target_offset = self.buffer.point_to_offset(BufferPoint::new(
-                                visible_row,
-                                cursor_point.column,
-                            ));
-                            self.move_cursor_to(target_offset, select);
-                        } else {
-                            let line_text = self.buffer.line_to_string(cursor_point.row);
-                            let line_length = line_text.trim_end_matches(['\r', '\n']).len();
-                            let target_offset = self
-                                .buffer
-                                .point_to_offset(BufferPoint::new(cursor_point.row, line_length));
-                            self.move_cursor_to(target_offset, select);
-                        }
+                    if key_event.modifiers.alt {
+                        edited =
+                            move_lines_with_selection(&mut self.buffer, &mut self.selection, false);
                     } else {
-                        self.move_cursor_to(self.buffer.len_bytes(), select);
+                        let cursor_point = self.buffer.cursor_point();
+                        let total_lines = self.buffer.len_lines();
+                        if cursor_point.row + 1 < total_lines {
+                            let visible_row = self.step_visible_row(cursor_point.row, true);
+                            if visible_row > cursor_point.row {
+                                let target_offset = self.buffer.point_to_offset(BufferPoint::new(
+                                    visible_row,
+                                    cursor_point.column,
+                                ));
+                                self.move_cursor_to(target_offset, select);
+                            } else {
+                                let line_text = self.buffer.line_to_string(cursor_point.row);
+                                let line_length = line_text.trim_end_matches(['\r', '\n']).len();
+                                let target_offset = self.buffer.point_to_offset(BufferPoint::new(
+                                    cursor_point.row,
+                                    line_length,
+                                ));
+                                self.move_cursor_to(target_offset, select);
+                            }
+                        } else {
+                            self.move_cursor_to(self.buffer.len_bytes(), select);
+                        }
                     }
                 }
                 KeyCode::Home => {

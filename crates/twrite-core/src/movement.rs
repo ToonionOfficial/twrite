@@ -2,6 +2,8 @@ use std::ops::Range;
 
 use ropey::Rope;
 
+use crate::{buffer::EditorBuffer, coordinates::Point, selection::Selection};
+
 /// Character classification used for word-boundary detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CharKind {
@@ -267,6 +269,64 @@ pub fn find_line_range_at(text: &Rope, cursor_byte: usize) -> Range<usize> {
     };
 
     start..end
+}
+
+/// Moves the line or block of lines spanning the current selection (or cursor) up or down,
+/// adjusting selection anchor/head positions and cursor offset accordingly.
+///
+/// Returns `true` if the lines were moved, or `false` if the move was blocked by document boundaries.
+pub fn move_lines_with_selection(
+    buffer: &mut EditorBuffer,
+    selection: &mut Option<Selection>,
+    up: bool,
+) -> bool {
+    let (start_row, end_row, has_selection) = match selection.as_ref() {
+        Some(active_selection) if !active_selection.is_empty() => {
+            let range = active_selection.byte_range();
+            let start_point = buffer.offset_to_point(range.start);
+            let end_point = buffer.offset_to_point(range.end);
+            let adjusted_end_row = if end_point.row > start_point.row && end_point.column == 0 {
+                end_point.row - 1
+            } else {
+                end_point.row
+            };
+            (start_point.row, adjusted_end_row, true)
+        }
+        _ => {
+            let row = buffer.cursor_point().row;
+            (row, row, false)
+        }
+    };
+
+    let anchor_point = selection.as_ref().map(|s| buffer.offset_to_point(s.anchor));
+    let head_point = selection.as_ref().map(|s| buffer.offset_to_point(s.head));
+
+    let moved = if up {
+        buffer.move_lines_up(start_row, end_row)
+    } else {
+        buffer.move_lines_down(start_row, end_row)
+    };
+
+    if !moved {
+        return false;
+    }
+
+    if has_selection && let (Some(anchor), Some(head)) = (anchor_point, head_point) {
+        let row_delta: i64 = if up { -1 } else { 1 };
+        let new_anchor_row = (anchor.row as i64 + row_delta).max(0) as usize;
+        let new_head_row = (head.row as i64 + row_delta).max(0) as usize;
+
+        let new_anchor_offset = buffer.point_to_offset(Point::new(new_anchor_row, anchor.column));
+        let new_head_offset = buffer.point_to_offset(Point::new(new_head_row, head.column));
+
+        *selection = Some(Selection {
+            anchor: new_anchor_offset,
+            head: new_head_offset,
+        });
+        buffer.set_cursor_offset(new_head_offset);
+    }
+
+    true
 }
 
 #[cfg(test)]

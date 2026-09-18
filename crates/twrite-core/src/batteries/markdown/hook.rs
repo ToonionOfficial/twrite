@@ -1,7 +1,7 @@
 use crate::{EditorHook, HookContext, HookOutcome, KeyCode, KeyEvent, Point, Selection};
 
 use super::config::MarkdownConfig;
-use super::list::handle_list_tab;
+use super::list::{handle_list_move, handle_list_tab};
 use super::table::{
     TableRowKind, clean_table_line, find_unescaped_pipes, split_table_cells, table_block_at,
 };
@@ -12,6 +12,7 @@ pub struct MarkdownHook {
     interactive_tasks: bool,
     table_navigation: bool,
     list_indentation: bool,
+    list_reordering: bool,
     list_indent_size: usize,
 }
 
@@ -28,6 +29,7 @@ impl MarkdownHook {
             interactive_tasks: true,
             table_navigation: true,
             list_indentation: true,
+            list_reordering: true,
             list_indent_size: 2,
         }
     }
@@ -38,6 +40,7 @@ impl MarkdownHook {
             interactive_tasks: config.interactive_tasks,
             table_navigation: config.table_navigation,
             list_indentation: config.list_indentation,
+            list_reordering: config.list_reordering,
             list_indent_size: config.list_indent_size,
         }
     }
@@ -70,6 +73,16 @@ impl MarkdownHook {
     /// Returns whether list indentation is enabled.
     pub fn list_indentation(&self) -> bool {
         self.list_indentation
+    }
+
+    /// Updates whether `Alt+Up` / `Alt+Down` move list items.
+    pub fn set_list_reordering(&mut self, enabled: bool) {
+        self.list_reordering = enabled;
+    }
+
+    /// Returns whether list reordering is enabled.
+    pub fn list_reordering(&self) -> bool {
+        self.list_reordering
     }
 
     /// Sets the number of spaces per list indent level.
@@ -391,6 +404,16 @@ impl EditorHook for MarkdownHook {
             {
                 return HookOutcome::Consumed;
             }
+        }
+
+        if matches!(event.code, KeyCode::Up | KeyCode::Down)
+            && event.modifiers.alt
+            && !event.modifiers.ctrl
+            && !event.modifiers.meta
+            && self.list_reordering
+            && handle_list_move(ctx, event.code == KeyCode::Up)
+        {
+            return HookOutcome::Consumed;
         }
 
         HookOutcome::PassThrough
@@ -1044,5 +1067,131 @@ mod tests {
 
         let tab_event = KeyEvent::plain(KeyCode::Tab);
         assert_eq!(hook.on_key(&mut ctx, &tab_event), HookOutcome::PassThrough);
+    }
+
+    #[test]
+    fn test_markdown_hook_alt_up_ordered_list_renumbers() {
+        let mut buffer = EditorBuffer::new("1. One\n2. Two\n3. Three");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 3));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let event = KeyEvent {
+            code: KeyCode::Up,
+            modifiers: crate::Modifiers {
+                alt: true,
+                ctrl: false,
+                shift: false,
+                meta: false,
+            },
+        };
+        assert_eq!(hook.on_key(&mut ctx, &event), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "1. Two\n2. One\n3. Three");
+        assert_eq!(ctx.buffer.cursor_point().row, 0);
+    }
+
+    #[test]
+    fn test_markdown_hook_alt_down_ordered_list_renumbers() {
+        let mut buffer = EditorBuffer::new("1. One\n2. Two\n3. Three");
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let event = KeyEvent {
+            code: KeyCode::Down,
+            modifiers: crate::Modifiers {
+                alt: true,
+                ctrl: false,
+                shift: false,
+                meta: false,
+            },
+        };
+        assert_eq!(hook.on_key(&mut ctx, &event), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "1. Two\n2. One\n3. Three");
+        assert_eq!(ctx.buffer.cursor_point().row, 1);
+    }
+
+    #[test]
+    fn test_markdown_hook_alt_up_bullets_and_tasks() {
+        let mut buffer = EditorBuffer::new("- [ ] Task 1\n- [x] Task 2");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 6));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let event = KeyEvent {
+            code: KeyCode::Up,
+            modifiers: crate::Modifiers {
+                alt: true,
+                ctrl: false,
+                shift: false,
+                meta: false,
+            },
+        };
+        assert_eq!(hook.on_key(&mut ctx, &event), HookOutcome::Consumed);
+        assert_eq!(ctx.buffer.text().to_string(), "- [x] Task 2\n- [ ] Task 1");
+    }
+
+    #[test]
+    fn test_markdown_hook_alt_up_reordering_disabled() {
+        let mut buffer = EditorBuffer::new("- Item 1\n- Item 2");
+        let second_line_offset = buffer.point_to_offset(Point::new(1, 2));
+        buffer.set_cursor_offset(second_line_offset);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        hook.set_list_reordering(false);
+        assert!(!hook.list_reordering());
+
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+
+        let event = KeyEvent {
+            code: KeyCode::Up,
+            modifiers: crate::Modifiers {
+                alt: true,
+                ctrl: false,
+                shift: false,
+                meta: false,
+            },
+        };
+        assert_eq!(hook.on_key(&mut ctx, &event), HookOutcome::PassThrough);
     }
 }

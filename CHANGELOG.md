@@ -5,6 +5,18 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.16.0] - 2026-09-18
+
+### Added
+- **Move lines and list items with Alt+Up/Down (`twrite-core`, `twrite-gpui`)**:
+  `Alt+Up` and `Alt+Down` move the current line or selected block of lines up
+  and down, preserving column positions and updating selection bounds.
+  Carries list markers (bullets, checkboxes, and numbers) along with line
+  contents. Sibling ordered list items are renumbered consecutively across
+  the affected list block. Atomically undoable via single transactions.
+  Configurable via `MarkdownConfig::list_reordering`.
+  Closes [#66](https://github.com/ToonionOfficial/twrite/issues/66).
+
 ## [0.15.0] - 2026-09-18
 
 ### Added

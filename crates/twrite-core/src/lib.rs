@@ -65,7 +65,7 @@ pub use markdown::{
 };
 pub use movement::{
     CharKind, classify_char, find_line_end, find_line_range_at, find_line_start,
-    find_next_word_end, find_prev_word_start, find_word_range_at,
+    find_next_word_end, find_prev_word_start, find_word_range_at, move_lines_with_selection,
 };
 pub use prompt::{
     PromptAction, PromptItem, PromptPlacement, PromptSpec, PromptState, fuzzy_filter, fuzzy_score,
@@ -345,6 +345,71 @@ mod tests {
         assert_eq!(buffer.word_range_at(6), 6..11);
         assert_eq!(buffer.line_range_at(3), 0..12);
         assert_eq!(buffer.line_range_at(15), 12..23);
+    }
+
+    #[test]
+    fn test_buffer_move_lines_up_and_down() {
+        let mut buffer = EditorBuffer::new("line 1\nline 2\nline 3\n");
+        assert!(buffer.move_lines_up(1, 1));
+        assert_eq!(buffer.text().to_string(), "line 2\nline 1\nline 3\n");
+
+        assert!(buffer.move_lines_down(0, 0));
+        assert_eq!(buffer.text().to_string(), "line 1\nline 2\nline 3\n");
+    }
+
+    #[test]
+    fn test_buffer_move_lines_boundaries() {
+        let mut buffer = EditorBuffer::new("line 1\nline 2\n");
+        assert!(!buffer.move_lines_up(0, 0));
+        let last_row = buffer.len_lines() - 1;
+        assert!(!buffer.move_lines_down(last_row, last_row));
+    }
+
+    #[test]
+    fn test_buffer_move_lines_eof_without_trailing_newline() {
+        let mut buffer = EditorBuffer::new("first\nsecond");
+        assert!(buffer.move_lines_up(1, 1));
+        assert_eq!(buffer.text().to_string(), "second\nfirst");
+
+        assert!(buffer.move_lines_down(0, 0));
+        assert_eq!(buffer.text().to_string(), "first\nsecond");
+    }
+
+    #[test]
+    fn test_buffer_move_lines_undo_redo() {
+        let mut buffer = EditorBuffer::new("first\nsecond\nthird\n");
+        assert!(buffer.move_lines_up(1, 1));
+        assert_eq!(buffer.text().to_string(), "second\nfirst\nthird\n");
+
+        buffer.undo();
+        assert_eq!(buffer.text().to_string(), "first\nsecond\nthird\n");
+
+        buffer.redo();
+        assert_eq!(buffer.text().to_string(), "second\nfirst\nthird\n");
+    }
+
+    #[test]
+    fn test_buffer_move_lines_with_selection() {
+        let mut buffer = EditorBuffer::new("line 1\nline 2\nline 3\nline 4\n");
+        let start = buffer.point_to_offset(Point::new(1, 0));
+        let end = buffer.point_to_offset(Point::new(2, 0));
+        let mut selection = Some(Selection::range(start, end));
+
+        assert!(move_lines_with_selection(
+            &mut buffer,
+            &mut selection,
+            false
+        ));
+        assert_eq!(
+            buffer.text().to_string(),
+            "line 1\nline 3\nline 2\nline 4\n"
+        );
+
+        let sel = selection.unwrap();
+        let sel_start_pt = buffer.offset_to_point(sel.anchor);
+        let sel_end_pt = buffer.offset_to_point(sel.head);
+        assert_eq!(sel_start_pt.row, 2);
+        assert_eq!(sel_end_pt.row, 3);
     }
 
     fn buffer_version_rand() -> u64 {
