@@ -304,6 +304,10 @@ struct PreparedLine {
     /// (ASCII only, present in every monospace font) instead of a quad so the
     /// indicator reads as an arrow, not a dash.
     fold_chevron: Option<(Point<Pixels>, ShapedLine)>,
+    /// Inline fold indicator badge quad ("...") near the title when collapsed.
+    fold_indicator_badge: Option<PaintQuad>,
+    /// Inline fold indicator text ("...") near the title when collapsed.
+    fold_indicator_text: Option<(Point<Pixels>, ShapedLine)>,
     /// Highlight-all search washes for this line (painted under the text).
     search_match_quads: Vec<PaintQuad>,
 }
@@ -881,6 +885,66 @@ impl RenderOnce for EditorCanvas {
                         (point(text_origin_x - px(18.0), current_y), shaped)
                     });
 
+                    let is_collapsed =
+                        fold_start.is_some_and(|range| fold_state.is_collapsed(range.start_row));
+                    let (fold_indicator_badge, fold_indicator_text, fold_indicator_bounds) =
+                        if is_collapsed {
+                            let text_end_pos = text_line
+                                .position_for_index(
+                                    concealed.display_text.len(),
+                                    metrics.line_height,
+                                )
+                                .unwrap_or(point(px(0.0), px(0.0)));
+                            let indicator_str: SharedString = "...".into();
+                            let indicator_font_size = config.font_size * GUTTER_NUMBER_FONT_SCALE;
+                            let shaped = window.text_system().shape_line(
+                                indicator_str.clone(),
+                                indicator_font_size,
+                                &[TextRun {
+                                    len: indicator_str.len(),
+                                    font: font.clone(),
+                                    color: theme.syntax.comment,
+                                    background_color: None,
+                                    underline: None,
+                                    strikethrough: None,
+                                }],
+                                None,
+                            );
+                            let text_width = shaped.width;
+                            let pad_x = px(5.0);
+                            let badge_x = line_text_origin_x + text_end_pos.x + px(8.0);
+                            let badge_width = text_width + pad_x * 2.0;
+                            let badge_height = (indicator_font_size * 1.35).max(px(14.0));
+                            let badge_y = current_y
+                                + text_end_pos.y
+                                + (metrics.line_height - badge_height) / 2.0;
+
+                            let mut badge_bg = theme.syntax.comment;
+                            badge_bg.a = 0.12;
+                            let mut badge_border = theme.syntax.comment;
+                            badge_border.a = 0.35;
+                            let badge = fill(
+                                Bounds::new(
+                                    point(badge_x, badge_y),
+                                    size(badge_width, badge_height),
+                                ),
+                                badge_bg,
+                            )
+                            .corner_radii(px(3.0))
+                            .border_widths(px(1.0))
+                            .border_color(badge_border);
+
+                            let text_origin = point(badge_x + pad_x, current_y + text_end_pos.y);
+                            let click_bounds = Bounds::new(
+                                point(badge_x - px(2.0), badge_y - px(2.0)),
+                                size(badge_width + px(4.0), badge_height + px(4.0)),
+                            );
+
+                            (Some(badge), Some((text_origin, shaped)), Some(click_bounds))
+                        } else {
+                            (None, None, None)
+                        };
+
                     lines.push(PreparedLine {
                         gutter_num,
                         text_origin: point(line_text_origin_x, current_y),
@@ -894,6 +958,8 @@ impl RenderOnce for EditorCanvas {
                         cursor_quad,
                         task_checkbox_quad,
                         fold_chevron,
+                        fold_indicator_badge,
+                        fold_indicator_text,
                         search_match_quads,
                     });
 
@@ -916,6 +982,7 @@ impl RenderOnce for EditorCanvas {
                         checkbox_box_x,
                         task_state: metrics.task_state,
                         links: visible_links,
+                        fold_indicator_bounds,
                     });
 
                     current_y += line_total_height;
@@ -957,6 +1024,12 @@ impl RenderOnce for EditorCanvas {
                     if let Some((origin, shaped_chevron)) = line.fold_chevron {
                         // Same row pitch as gutter numbers.
                         let _ = shaped_chevron.paint(origin, line.line_height, window, cx);
+                    }
+                    if let Some(badge) = line.fold_indicator_badge {
+                        window.paint_quad(badge);
+                    }
+                    if let Some((origin, shaped_indicator)) = line.fold_indicator_text {
+                        let _ = shaped_indicator.paint(origin, line.line_height, window, cx);
                     }
 
                     if let Some((origin, shaped_num)) = line.gutter_num {

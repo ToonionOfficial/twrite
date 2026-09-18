@@ -16,6 +16,8 @@ use twrite_core::{
 
 use crate::{config::EditorConfig, fps::FrameStats, layout_cache::LayoutCache, theme::EditorTheme};
 
+pub(crate) type FoldEpoch = (usize, u64, Vec<FoldRange>);
+
 /// The main GPUI text editor view and controller.
 pub struct Editor {
     /// The underlying text buffer managing document contents and undo/redo history.
@@ -38,7 +40,7 @@ pub struct Editor {
     /// document version via [`Self::fold_ranges`].
     pub fold_state: FoldState,
     /// Version-keyed fold ranges: `(buffer version, highlighter rev, ranges)`.
-    fold_epoch: Option<(usize, u64, Vec<FoldRange>)>,
+    fold_epoch: Option<FoldEpoch>,
     /// Bold/italic face availability from the last prepaint probe (`None` before first paint).
     pub face_availability: Option<FaceAvailability>,
     /// Base family picked by candidate auto-select (`None` before first paint,
@@ -163,6 +165,8 @@ pub struct VisibleLineLayout {
     pub task_state: Option<bool>,
     /// Hyperlinks located on this line.
     pub links: Vec<VisibleLink>,
+    /// Clickable bounds of the inline fold indicator ("..."), if present and collapsed.
+    pub fold_indicator_bounds: Option<Bounds<Pixels>>,
 }
 
 impl Editor {

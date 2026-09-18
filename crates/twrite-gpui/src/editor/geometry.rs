@@ -3,7 +3,7 @@ use twrite_core::{FoldRange, Selection};
 
 use crate::canvas::{LineMetrics, RunFonts, build_line_text_runs};
 
-use super::{Editor, VisibleLineLayout};
+use super::{Editor, FoldEpoch, VisibleLineLayout};
 
 /// Finds the visible line containing vertical position `y` via binary search.
 ///
@@ -109,13 +109,35 @@ impl Editor {
         // its fold header while preserving the column.
         let point = self.buffer.offset_to_point(new_offset);
         let ranges = self.fold_ranges();
-        let new_offset = match ranges
-            .iter()
-            .find(|range| range.start_row < point.row && point.row <= range.end_row)
-        {
-            Some(range) => self
-                .buffer
-                .point_to_offset(twrite_core::Point::new(range.start_row, point.column)),
+        let new_offset = match self.fold_state.hidden_range_at(&ranges, point.row) {
+            Some(range) => {
+                let current_point = self.buffer.cursor_point();
+                let total_lines = self.buffer.len_lines();
+                if current_point.row <= range.start_row {
+                    let next_visible_row = self.fold_state.step_visible_row(
+                        &ranges,
+                        range.start_row,
+                        total_lines,
+                        true,
+                    );
+                    if next_visible_row > range.start_row {
+                        self.buffer
+                            .point_to_offset(twrite_core::Point::new(next_visible_row, 0))
+                    } else {
+                        let header_text = self.buffer.line_to_string(range.start_row);
+                        let header_length = header_text.trim_end_matches(['\r', '\n']).len();
+                        self.buffer.point_to_offset(twrite_core::Point::new(
+                            range.start_row,
+                            header_length,
+                        ))
+                    }
+                } else {
+                    let header_text = self.buffer.line_to_string(range.start_row);
+                    let header_length = header_text.trim_end_matches(['\r', '\n']).len();
+                    self.buffer
+                        .point_to_offset(twrite_core::Point::new(range.start_row, header_length))
+                }
+            }
             None => new_offset,
         };
         if select {
@@ -163,16 +185,14 @@ impl Editor {
 
     /// Takes the fold epoch out for paint, which holds no editor borrow
     /// across the frame. Restored via [`Self::restore_fold_epoch`].
-    pub(crate) fn take_fold_epoch(
-        &mut self,
-    ) -> (Vec<FoldRange>, Option<(usize, u64, Vec<FoldRange>)>) {
+    pub(crate) fn take_fold_epoch(&mut self) -> (Vec<FoldRange>, Option<FoldEpoch>) {
         let ranges = self.fold_ranges();
         (ranges, self.fold_epoch.take())
     }
 
     /// Restores the epoch taken by [`Self::take_fold_epoch`], keeping the
     /// entry only when no edit or highlighter swap landed mid-frame.
-    pub(crate) fn restore_fold_epoch(&mut self, epoch: Option<(usize, u64, Vec<FoldRange>)>) {
+    pub(crate) fn restore_fold_epoch(&mut self, epoch: Option<FoldEpoch>) {
         match epoch {
             Some((version, rev, _))
                 if version == self.buffer.version() && rev == self.highlighter_rev =>
@@ -205,11 +225,17 @@ impl Editor {
         }
     }
 
-    /// Expands the fold starting at the cursor row, if collapsed.
+    /// Expands any fold starting at or hiding the cursor row, if collapsed.
     pub fn expand_fold_at_cursor(&mut self) {
         let row = self.buffer.cursor_point().row;
         if self.fold_state.is_collapsed(row) {
             self.toggle_fold_at_row(row);
+            return;
+        }
+        let ranges = self.fold_ranges();
+        if let Some(range) = self.fold_state.hidden_range_at(&ranges, row) {
+            let start = range.start_row;
+            self.toggle_fold_at_row(start);
         }
     }
 
@@ -227,16 +253,13 @@ impl Editor {
             return false;
         };
         let now_collapsed = self.fold_state.toggle(header_row);
-        // Collapsing from a header keeps the cursor there; expanding or
-        // toggling elsewhere may swallow it, so relocate then.
         let cursor_row = self.buffer.cursor_point().row;
-        if (!now_collapsed || range.start_row != cursor_row)
-            && range.start_row < cursor_row
-            && cursor_row <= range.end_row
-        {
+        if now_collapsed && range.start_row < cursor_row && cursor_row <= range.end_row {
+            let header_text = self.buffer.line_to_string(range.start_row);
+            let header_length = header_text.trim_end_matches(['\r', '\n']).len();
             let offset = self
                 .buffer
-                .point_to_offset(twrite_core::Point::new(range.start_row, 0));
+                .point_to_offset(twrite_core::Point::new(range.start_row, header_length));
             self.buffer.set_cursor_offset(offset);
         }
         if let Some(selection) = self.selection {
@@ -390,14 +413,36 @@ impl Editor {
                 return self.visible_lines[0].line_start_byte;
             }
 
-            let last = self.visible_lines.last().unwrap();
-            if pos.y >= last.bottom {
-                return (last.line_start_byte + last.line_len_bytes).min(self.buffer.len_bytes());
+            let (last_row, last_bottom, last_start_byte, last_len_bytes) = {
+                let last = self.visible_lines.last().unwrap();
+                (
+                    last.row,
+                    last.bottom,
+                    last.line_start_byte,
+                    last.line_len_bytes,
+                )
+            };
+            if pos.y >= last_bottom {
+                let ranges = self.fold_ranges();
+                if let Some(range) = ranges.iter().find(|range| {
+                    range.start_row == last_row && self.fold_state.is_collapsed(range.start_row)
+                }) {
+                    let next_row = range.end_row + 1;
+                    if next_row < total_lines {
+                        return self
+                            .buffer
+                            .point_to_offset(twrite_core::Point::new(next_row, 0));
+                    }
+                    let raw_line = self.buffer.line_to_string(last_row);
+                    let line_text = raw_line.trim_end_matches(['\r', '\n']);
+                    return last_start_byte + line_text.len();
+                }
+                return (last_start_byte + last_len_bytes).min(self.buffer.len_bytes());
             }
 
             let target_line = match find_visible_line(&self.visible_lines, pos.y) {
-                Some(l) => l,
-                None => last,
+                Some(line) => line,
+                None => self.visible_lines.last().unwrap(),
             };
 
             let row = target_line.row;
@@ -549,18 +594,24 @@ impl Editor {
         if !bounds.contains(&pos) {
             return None;
         }
-        let line = find_visible_line(&self.visible_lines, pos.y)?;
-        let row = line.row;
-        // The indicator lives left of the text origin, in the same gutter
-        // column across line-number and plain modes.
-        if pos.x > line.text_origin_x - px(4.0) {
-            return None;
+        let (row, text_origin_x, indicator_bounds) = {
+            let line = find_visible_line(&self.visible_lines, pos.y)?;
+            (line.row, line.text_origin_x, line.fold_indicator_bounds)
+        };
+        // The indicator lives left of the text origin in the gutter column,
+        // or as an inline indicator ("...") near the title when collapsed.
+        if pos.x <= text_origin_x - px(4.0) {
+            let ranges = self.fold_ranges();
+            if ranges.iter().any(|range| range.start_row == row) {
+                return Some(row);
+            }
         }
-        let ranges = self.fold_ranges();
-        ranges
-            .iter()
-            .any(|range| range.start_row == row)
-            .then_some(row)
+        if let Some(indicator_bounds) = indicator_bounds
+            && indicator_bounds.contains(&pos)
+        {
+            return Some(row);
+        }
+        None
     }
 
     /// Toggles the fold whose indicator sits under `pos`, returning true when

@@ -101,12 +101,10 @@ impl FoldState {
                 return 0;
             }
             let next = row - 1;
-            loop {
-                match self.hidden_range_at(ranges, next) {
-                    // Headers stay visible, so their start row is the target.
-                    Some(range) => return range.start_row,
-                    None => return next,
-                }
+            match self.hidden_range_at(ranges, next) {
+                // Headers stay visible, so their start row is the target.
+                Some(range) => range.start_row,
+                None => next,
             }
         }
     }

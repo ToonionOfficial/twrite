@@ -63,6 +63,38 @@ impl Editor {
         let initial_version = self.buffer.version();
         let mut consumed = false;
 
+        if !self.prompt.is_open() {
+            let is_enter_at_fold_end = if key_event.code == KeyCode::Enter {
+                let cursor_point = self.buffer.cursor_point();
+                if self.fold_state.is_collapsed(cursor_point.row) {
+                    let line_text = self.buffer.line_to_string(cursor_point.row);
+                    let trimmed_length = line_text.trim_end_matches(['\r', '\n']).len();
+                    cursor_point.column >= trimmed_length
+                } else {
+                    false
+                }
+            } else {
+                false
+            };
+
+            let is_typing_key = match &key_event.code {
+                KeyCode::Char(_) => {
+                    (!key_event.modifiers.ctrl
+                        && !key_event.modifiers.meta
+                        && !key_event.modifiers.alt)
+                        || ((key_event.modifiers.ctrl || key_event.modifiers.meta)
+                            && matches!(key_event.code, KeyCode::Char('v') | KeyCode::Char('x')))
+                }
+                KeyCode::Enter | KeyCode::Tab | KeyCode::Backspace | KeyCode::Delete => {
+                    !key_event.modifiers.alt
+                }
+                _ => false,
+            };
+            if is_typing_key && !is_enter_at_fold_end {
+                self.expand_fold_at_cursor();
+            }
+        }
+
         let mut hook_idx = 0;
         while hook_idx < self.hooks.len() {
             let mut ctx = HookContext::new(
@@ -205,7 +237,41 @@ impl Editor {
                     edited = true;
                 }
                 KeyCode::Enter => {
-                    self.replace_selection_or_insert("\n");
+                    let cursor_point = self.buffer.cursor_point();
+                    let ranges = self.fold_ranges();
+                    let collapsed_range = ranges
+                        .iter()
+                        .find(|range| {
+                            range.start_row == cursor_point.row
+                                && self.fold_state.is_collapsed(range.start_row)
+                        })
+                        .copied();
+                    let line_text = self.buffer.line_to_string(cursor_point.row);
+                    let trimmed_length = line_text.trim_end_matches(['\r', '\n']).len();
+
+                    if let Some(range) = collapsed_range
+                        && cursor_point.column >= trimmed_length
+                    {
+                        let total_lines = self.buffer.len_lines();
+                        if range.end_row + 1 < total_lines {
+                            let target_offset = self
+                                .buffer
+                                .point_to_offset(BufferPoint::new(range.end_row + 1, 0));
+                            self.buffer.set_cursor_offset(target_offset);
+                            self.buffer.insert("\n");
+                            self.buffer.set_cursor_offset(target_offset);
+                        } else {
+                            self.buffer.set_cursor_offset(self.buffer.len_bytes());
+                            let buffer_text = self.buffer.text().to_string();
+                            if !buffer_text.ends_with('\n') {
+                                self.buffer.insert("\n");
+                            }
+                            self.buffer.insert("\n");
+                            self.buffer.set_cursor_offset(self.buffer.len_bytes());
+                        }
+                    } else {
+                        self.replace_selection_or_insert("\n");
+                    }
                     self.selection = None;
                     edited = true;
                 }
@@ -221,8 +287,9 @@ impl Editor {
                 }
                 KeyCode::Left => {
                     if !select && self.selection.is_some() {
-                        let sel = self.selection.take().unwrap();
-                        self.buffer.set_cursor_offset(sel.byte_range().start);
+                        let active_selection = self.selection.take().unwrap();
+                        self.buffer
+                            .set_cursor_offset(active_selection.byte_range().start);
                     } else {
                         let target = if self.buffer.cursor_offset() > 0 {
                             let char_idx =
@@ -236,19 +303,44 @@ impl Editor {
                 }
                 KeyCode::Right => {
                     if !select && self.selection.is_some() {
-                        let sel = self.selection.take().unwrap();
-                        self.buffer.set_cursor_offset(sel.byte_range().end);
+                        let active_selection = self.selection.take().unwrap();
+                        self.buffer
+                            .set_cursor_offset(active_selection.byte_range().end);
                     } else {
-                        let target = if self.buffer.cursor_offset() < self.buffer.len_bytes() {
-                            let char_idx =
-                                self.buffer.text().byte_to_char(self.buffer.cursor_offset());
-                            self.buffer
-                                .text()
-                                .char_to_byte((char_idx + 1).min(self.buffer.text().len_chars()))
+                        let cursor_point = self.buffer.cursor_point();
+                        let ranges = self.fold_ranges();
+                        let line_text = self.buffer.line_to_string(cursor_point.row);
+                        let trimmed_length = line_text.trim_end_matches(['\r', '\n']).len();
+                        if self.fold_state.is_collapsed(cursor_point.row)
+                            && cursor_point.column >= trimmed_length
+                        {
+                            let total_lines = self.buffer.len_lines();
+                            let next_visible_row = self.fold_state.step_visible_row(
+                                &ranges,
+                                cursor_point.row,
+                                total_lines,
+                                true,
+                            );
+                            if next_visible_row > cursor_point.row {
+                                let target_offset = self
+                                    .buffer
+                                    .point_to_offset(BufferPoint::new(next_visible_row, 0));
+                                self.move_cursor_to(target_offset, select);
+                            }
                         } else {
-                            self.buffer.len_bytes()
-                        };
-                        self.move_cursor_to(target, select);
+                            let target_offset = if self.buffer.cursor_offset()
+                                < self.buffer.len_bytes()
+                            {
+                                let char_index =
+                                    self.buffer.text().byte_to_char(self.buffer.cursor_offset());
+                                self.buffer.text().char_to_byte(
+                                    (char_index + 1).min(self.buffer.text().len_chars()),
+                                )
+                            } else {
+                                self.buffer.len_bytes()
+                            };
+                            self.move_cursor_to(target_offset, select);
+                        }
                     }
                 }
                 KeyCode::Up => {
@@ -264,14 +356,24 @@ impl Editor {
                     }
                 }
                 KeyCode::Down => {
-                    let point = self.buffer.cursor_point();
+                    let cursor_point = self.buffer.cursor_point();
                     let total_lines = self.buffer.len_lines();
-                    if point.row + 1 < total_lines {
-                        let visible = self.step_visible_row(point.row, true);
-                        let target = self
-                            .buffer
-                            .point_to_offset(BufferPoint::new(visible, point.column));
-                        self.move_cursor_to(target, select);
+                    if cursor_point.row + 1 < total_lines {
+                        let visible_row = self.step_visible_row(cursor_point.row, true);
+                        if visible_row > cursor_point.row {
+                            let target_offset = self.buffer.point_to_offset(BufferPoint::new(
+                                visible_row,
+                                cursor_point.column,
+                            ));
+                            self.move_cursor_to(target_offset, select);
+                        } else {
+                            let line_text = self.buffer.line_to_string(cursor_point.row);
+                            let line_length = line_text.trim_end_matches(['\r', '\n']).len();
+                            let target_offset = self
+                                .buffer
+                                .point_to_offset(BufferPoint::new(cursor_point.row, line_length));
+                            self.move_cursor_to(target_offset, select);
+                        }
                     } else {
                         self.move_cursor_to(self.buffer.len_bytes(), select);
                     }

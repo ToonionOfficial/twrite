@@ -400,4 +400,28 @@ mod tests {
         );
         assert_eq!(plain.callout, None);
     }
+
+    #[test]
+    fn test_visible_line_layout_fold_indicator() {
+        let layout = VisibleLineLayout {
+            row: 0,
+            top: px(0.0),
+            bottom: px(24.0),
+            line_start_byte: 0,
+            line_len_bytes: 7,
+            text_origin_x: px(50.0),
+            line_height: px(24.0),
+            is_task_checkbox: false,
+            checkbox_box_x: px(0.0),
+            task_state: None,
+            links: Vec::new(),
+            fold_indicator_bounds: Some(gpui::Bounds::new(
+                gpui::point(px(120.0), px(4.0)),
+                gpui::size(px(30.0), px(16.0)),
+            )),
+        };
+        let bounds = layout.fold_indicator_bounds.unwrap();
+        assert!(bounds.contains(&gpui::point(px(130.0), px(10.0))));
+        assert!(!bounds.contains(&gpui::point(px(60.0), px(10.0))));
+    }
 }
