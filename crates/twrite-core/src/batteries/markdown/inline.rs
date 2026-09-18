@@ -1,9 +1,10 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
-use crate::syntax::{HighlightTag, StyleSpan, TextStyle};
+use crate::syntax::{HighlightTag, StyleSpan, StyleValue, TextStyle};
 
-/// Parses inline CommonMark and GFM elements (bold, italic, strikethrough, code, links)
-/// within a single line and appends corresponding style spans.
+/// Parses inline CommonMark and GFM elements (bold, italic, highlight,
+/// strikethrough, code, links) within a single line and appends corresponding
+/// style spans.
 ///
 /// `cursor_offset` is the cursor byte offset within the line when the cursor
 /// sits on this row (`None` otherwise). A construct whose source range
@@ -168,6 +169,10 @@ pub(crate) fn highlight_inline_markdown(
             _ => {}
         }
     }
+
+    // pulldown-cmark has no mark support, so `==` pairs are scanned
+    // separately against spans the pulldown pass already emitted.
+    highlight_mark_spans(line_text, cursor_offset, delimiter_tag, spans);
 }
 
 /// Reports whether the cursor sits inside a concealable construct so its
@@ -175,4 +180,88 @@ pub(crate) fn highlight_inline_markdown(
 /// resting just past the closing delimiter has left the construct.
 fn cursor_inside_construct(cursor_offset: Option<usize>, start: usize, end: usize) -> bool {
     cursor_offset.is_some_and(|cursor| start <= cursor && cursor < end)
+}
+
+/// Scans `==mark==` pairs pulldown-cmark does not parse and appends
+/// highlight spans with the same conceal/reveal behavior as emphasis.
+///
+/// A pair whose range intersects an emitted code, link-delimiter, or
+/// concealed span stays literal, so `==` inside code spans and URLs never
+/// corrupts them. Overlap with emphasis spans is allowed for nesting.
+fn highlight_mark_spans(
+    line_text: &str,
+    cursor_offset: Option<usize>,
+    delimiter_tag: Option<HighlightTag>,
+    spans: &mut Vec<StyleSpan>,
+) {
+    let bytes = line_text.as_bytes();
+    let mut search_from = 0;
+    while search_from + 1 < bytes.len() {
+        let Some(open) = find_mark_delimiter(bytes, search_from, true) else {
+            break;
+        };
+        let content_start = open + 2;
+        let Some(close) = find_mark_delimiter(bytes, content_start, false) else {
+            break;
+        };
+        // The opener search resumes after a failed pair so one broken run
+        // cannot swallow a later valid one (`==a ==b==` highlights `b`).
+        if close == content_start || overlaps_reserved(spans, open, close + 2) {
+            search_from = open + 1;
+            continue;
+        }
+        let end = close + 2;
+        if !cursor_inside_construct(cursor_offset, open, end)
+            && let Some(delim_tag) = delimiter_tag
+        {
+            spans.push(StyleSpan::tag(open..open + 2, delim_tag));
+            spans.push(StyleSpan::tag(
+                content_start..close,
+                HighlightTag::Highlight,
+            ));
+            spans.push(StyleSpan::tag(close..end, delim_tag));
+        } else {
+            spans.push(StyleSpan::tag(open..end, HighlightTag::Highlight));
+        }
+        search_from = end;
+    }
+}
+
+/// Locates the next `==` delimiter at or after `from`. Openers must not run
+/// into a third `=` and must lead with content (`== x` stays literal);
+/// closers must follow content (`x ==` stays literal). Closer search always
+/// starts past an opener, so the byte before a candidate always exists.
+fn find_mark_delimiter(bytes: &[u8], from: usize, opening: bool) -> Option<usize> {
+    let mut index = from;
+    while index + 1 < bytes.len() {
+        if bytes[index] == b'=' && bytes[index + 1] == b'=' {
+            let adjacent = if opening {
+                index + 2
+            } else {
+                index.saturating_sub(1)
+            };
+            let adjacent_ok = bytes
+                .get(adjacent)
+                .is_none_or(|byte| !byte.is_ascii_whitespace() && *byte != b'=');
+            if adjacent_ok {
+                return Some(index);
+            }
+            index += 1;
+        } else {
+            index += 1;
+        }
+    }
+    None
+}
+
+/// Reports whether `start..end` intersects an emitted span that mark pairs
+/// must not cross: code spans, link brackets/URLs, and concealed ranges.
+fn overlaps_reserved(spans: &[StyleSpan], start: usize, end: usize) -> bool {
+    spans.iter().any(|span| {
+        matches!(
+            span.style,
+            StyleValue::Tag(HighlightTag::Code | HighlightTag::Hidden | HighlightTag::Dimmed)
+        ) && span.range.start < end
+            && start < span.range.end
+    })
 }

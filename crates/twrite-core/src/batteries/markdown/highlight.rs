@@ -835,6 +835,129 @@ mod tests {
     }
 
     #[test]
+    fn test_markdown_mark_concealment() {
+        // Issue #53: `==mark==` conceals like emphasis with a Highlight tag.
+        let line = "This is ==mark== here.";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+        buffer.set_cursor_offset(line.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].range, 8..10);
+        assert_eq!(spans[0].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(spans[1].range, 10..14);
+        assert_eq!(spans[1].style, StyleValue::Tag(HighlightTag::Highlight));
+        assert_eq!(spans[2].range, 14..16);
+        assert_eq!(spans[2].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(
+            ConcealedLine::build(line, &spans).display_text,
+            "This is mark here."
+        );
+    }
+
+    #[test]
+    fn test_markdown_mark_word_level_reveal() {
+        // `==a==` covers 0..5, `==b==` covers 12..17.
+        let line = "==a== plain ==b==";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let concealed_at = |cursor: usize| {
+            let mut buffer = EditorBuffer::new(line);
+            buffer.set_cursor_offset(cursor);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            ConcealedLine::build(line, &spans).display_text
+        };
+
+        assert_eq!(concealed_at(2), "==a== plain b");
+        assert_eq!(concealed_at(5), "a plain b");
+        assert_eq!(concealed_at(8), "a plain b");
+        assert_eq!(concealed_at(14), "a plain ==b==");
+    }
+
+    #[test]
+    fn test_markdown_mark_literal_cases() {
+        // Unclosed, empty, spaced, and code-embedded `==` stay literal with
+        // no Highlight tag.
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        for line in ["==open", "====", "== =="] {
+            let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+            buffer.set_cursor_offset(line.len() + 1);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            assert!(
+                spans
+                    .iter()
+                    .all(|s| s.style != StyleValue::Tag(HighlightTag::Highlight)),
+                "{line:?} must not highlight: {spans:?}"
+            );
+            assert_eq!(ConcealedLine::build(line, &spans).display_text, line);
+        }
+
+        // Backticks still conceal while the `==` inside stays literal.
+        let code = "`==code==` here";
+        let mut buffer = EditorBuffer::new(&format!("{code}\nother"));
+        buffer.set_cursor_offset(code.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, code);
+        assert!(
+            spans
+                .iter()
+                .all(|s| s.style != StyleValue::Tag(HighlightTag::Highlight)),
+            "code mark must not highlight: {spans:?}"
+        );
+        assert_eq!(
+            ConcealedLine::build(code, &spans).display_text,
+            "==code== here"
+        );
+
+        // `==` inside a link URL overlaps the concealed URL span and stays
+        // literal while the link itself still conceals to its label.
+        let link = "[text](http://example.com/==path==)";
+        let mut buffer = EditorBuffer::new(&format!("{link}\nother"));
+        buffer.set_cursor_offset(link.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, link);
+        assert!(
+            spans
+                .iter()
+                .all(|s| s.style != StyleValue::Tag(HighlightTag::Highlight)),
+            "URL mark must not highlight: {spans:?}"
+        );
+        assert_eq!(ConcealedLine::build(link, &spans).display_text, "text");
+    }
+
+    #[test]
+    fn test_markdown_mark_nests_in_bold() {
+        // `==` inside emphasis overlaps only Bold spans, so it highlights.
+        let line = "**a ==b== c**";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+        buffer.set_cursor_offset(line.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Highlight)),
+            "nested mark must highlight: {spans:?}"
+        );
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Bold)),
+            "outer bold must survive: {spans:?}"
+        );
+        assert_eq!(ConcealedLine::build(line, &spans).display_text, "a b c");
+    }
+
+    #[test]
     fn test_markdown_conceal_modes() {
         let buffer = EditorBuffer::new("# Heading 1\n## Heading 2");
 

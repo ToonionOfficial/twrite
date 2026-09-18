@@ -5,6 +5,17 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.0] - 2026-09-18
+
+### Added
+- **Text highlight with `== ==` (`twrite-core`, `twrite-gpui`)**: marked
+  text parses into a new `HighlightTag::Highlight` and renders with a
+  `syntax.highlight_bg` background tint, following the inline-code pill
+  pattern. Markers conceal and reveal word by word under the active conceal
+  mode; `==` inside code spans and link URLs stays literal, and nesting
+  inside emphasis keeps working.
+  Closes [#53](https://github.com/ToonionOfficial/twrite/issues/53).
+
 ## [0.11.0] - 2026-09-18
 
 ### Added
