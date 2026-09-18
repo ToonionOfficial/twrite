@@ -12,7 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   opening with `> [!KIND]` parse into a new `HighlightTag::Callout` carrying
   the kind (NOTE, TIP, WARNING, CAUTION, IMPORTANT, others fall back to the
   note accent). The bar and body wash take the kind accent from new theme
-  fields, the marker conceals word-level, and the title renders bold. Body
+  fields, the marker conceals word-level, the title renders bold, and body
+  text dims to quote gray under inline formatting; the `>` prefix conceals
+  word-level like other markers. Body
   rows inherit the header kind until a blank or non-quote row; collapsing
   bodies and icons remain follow-ups.
   Closes [#52](https://github.com/ToonionOfficial/twrite/issues/52).

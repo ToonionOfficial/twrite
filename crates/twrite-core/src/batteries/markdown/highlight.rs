@@ -603,7 +603,11 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                 indent..indent + quote_len,
                 HighlightTag::Blockquote,
             ));
-            if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+            // The `>` prefix reveals only while the cursor sits on it, like
+            // `#` and task markers.
+            let cursor_in_quote_prefix = cursor_line_offset
+                .is_some_and(|cursor| indent <= cursor && cursor < indent + quote_len);
+            if !cursor_in_quote_prefix && let Some(delim_tag) = delimiter_tag {
                 let delim_len = if trimmed_start.starts_with("> ") {
                     2
                 } else {
@@ -616,12 +620,22 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
             // Callout header or inherited body kind. The structural tag covers
             // the full line so tag-driven layout sees body rows too; the
-            // marker conceals word-level while the title renders bold.
+            // marker conceals word-level while the title renders bold. Body
+            // text dims to quote gray under inline spans pushed later.
             if let Some((kind, header)) = callout_at_row(buffer, row, line_text, trimmed_start) {
                 spans.push(StyleSpan::tag(
                     0..line_text.len(),
                     HighlightTag::Callout(kind),
                 ));
+                if header.is_none() {
+                    let content_start = indent + quote_len;
+                    if content_start < line_text.len() {
+                        spans.push(StyleSpan::tag(
+                            content_start..line_text.len(),
+                            HighlightTag::Comment,
+                        ));
+                    }
+                }
                 if let Some(header) = header {
                     let cursor_in_marker = cursor_line_offset.is_some_and(|cursor| {
                         header.marker.start <= cursor && cursor < header.marker.end
@@ -1732,8 +1746,10 @@ mod tests {
         };
 
         // Marker covers 2..13 (`[!WARNING] ` with the trailing space).
-        assert_eq!(concealed_at(4), "> [!WARNING] Careful");
-        assert_eq!(concealed_at(13), "> Careful");
+        // Cursor on the `>` prefix reveals it; cursor in the marker reveals
+        // the marker; anywhere else conceals both.
+        assert_eq!(concealed_at(4), "[!WARNING] Careful");
+        assert_eq!(concealed_at(13), "Careful");
         assert_eq!(concealed_at(0), "> Careful");
     }
 
@@ -1755,5 +1771,56 @@ mod tests {
             "titleless header must tag the kind: {spans:?}"
         );
         assert_eq!(ConcealedLine::build(line, &spans).display_text, "");
+    }
+
+    #[test]
+    fn test_markdown_quote_prefix_word_level() {
+        // The `>` prefix reveals only while the cursor sits on it, even on
+        // the cursor row.
+        let line = "> quote";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let concealed_at = |cursor: usize| {
+            let mut buffer = EditorBuffer::new(line);
+            buffer.set_cursor_offset(cursor);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            ConcealedLine::build(line, &spans).display_text
+        };
+
+        assert_eq!(concealed_at(0), "> quote");
+        assert_eq!(concealed_at(1), "> quote");
+        assert_eq!(concealed_at(2), "quote");
+        assert_eq!(concealed_at(5), "quote");
+    }
+
+    #[test]
+    fn test_markdown_callout_body_dims() {
+        // Body text dims to quote gray under inline spans; the title keeps
+        // its bold styling.
+        let text = "> [!TIP] Head\n> body **bold**";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(text);
+        buffer.set_cursor_offset(text.len());
+
+        let body = hidden_highlighter.highlight_line(&buffer, 1, "> body **bold**");
+        let dim = body
+            .iter()
+            .find(|s| s.style == StyleValue::Tag(HighlightTag::Comment))
+            .expect("body text must dim");
+        assert_eq!(dim.range, 2..15);
+        assert!(
+            body.iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Bold)),
+            "inline bold must survive over the dim base: {body:?}"
+        );
+        assert_eq!(
+            ConcealedLine::build("> body **bold**", &body).display_text,
+            "body bold"
+        );
     }
 }
