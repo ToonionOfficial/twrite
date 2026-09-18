@@ -1,12 +1,14 @@
 use std::ops::Range;
 use std::sync::{Arc, RwLock};
 
+use crate::folding::FoldRange;
 use crate::{
     CalloutKind, ConcealedLine, DisplayPad, EditorBuffer, HighlightTag, StyleSpan,
     SyntaxHighlighter, display_width,
 };
 
 use super::config::{ConcealMode, MarkdownConfig};
+use super::folding::{heading_level, markdown_fold_ranges};
 use super::links::extract_markdown_links;
 use super::table::{
     TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout,
@@ -553,21 +555,8 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             }
         }
 
-        let heading_prefix = if trimmed_start.starts_with("# ") {
-            Some((2, HighlightTag::Heading(1)))
-        } else if trimmed_start.starts_with("## ") {
-            Some((3, HighlightTag::Heading(2)))
-        } else if trimmed_start.starts_with("### ") {
-            Some((4, HighlightTag::Heading(3)))
-        } else if trimmed_start.starts_with("#### ") {
-            Some((5, HighlightTag::Heading(4)))
-        } else if trimmed_start.starts_with("##### ") {
-            Some((6, HighlightTag::Heading(5)))
-        } else if trimmed_start.starts_with("###### ") {
-            Some((7, HighlightTag::Heading(6)))
-        } else {
-            None
-        };
+        let heading_prefix = heading_level(trimmed_start)
+            .map(|level| (level as usize + 1, HighlightTag::Heading(level)));
 
         if let Some((prefix_len, tag)) = heading_prefix {
             let indent = line_text.len() - trimmed_start.len();
@@ -753,6 +742,12 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         !self
             .cached_table_block(buffer, row)
             .is_some_and(|b| b.contains(row))
+    }
+
+    fn foldable_ranges(&self, buffer: &EditorBuffer) -> Vec<FoldRange> {
+        let fences = self.cached_fence_rows(buffer);
+        let frontmatter = self.cached_frontmatter(buffer);
+        markdown_fold_ranges(buffer, &fences, frontmatter.as_ref())
     }
 }
 

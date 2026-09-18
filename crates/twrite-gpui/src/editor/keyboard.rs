@@ -145,12 +145,20 @@ impl Editor {
                     self.selection = None;
                 }
                 KeyCode::Left => {
-                    let target = self.buffer.prev_word_offset();
-                    self.move_cursor_to(target, select);
+                    if key_event.modifiers.alt {
+                        self.collapse_fold_at_cursor();
+                    } else {
+                        let target = self.buffer.prev_word_offset();
+                        self.move_cursor_to(target, select);
+                    }
                 }
                 KeyCode::Right => {
-                    let target = self.buffer.next_word_offset();
-                    self.move_cursor_to(target, select);
+                    if key_event.modifiers.alt {
+                        self.expand_fold_at_cursor();
+                    } else {
+                        let target = self.buffer.next_word_offset();
+                        self.move_cursor_to(target, select);
+                    }
                 }
                 KeyCode::Home => {
                     self.move_cursor_to(0, select);
@@ -246,9 +254,10 @@ impl Editor {
                 KeyCode::Up => {
                     let point = self.buffer.cursor_point();
                     if point.row > 0 {
+                        let visible = self.step_visible_row(point.row, false);
                         let target = self
                             .buffer
-                            .point_to_offset(BufferPoint::new(point.row - 1, point.column));
+                            .point_to_offset(BufferPoint::new(visible, point.column));
                         self.move_cursor_to(target, select);
                     } else {
                         self.move_cursor_to(0, select);
@@ -258,9 +267,10 @@ impl Editor {
                     let point = self.buffer.cursor_point();
                     let total_lines = self.buffer.len_lines();
                     if point.row + 1 < total_lines {
+                        let visible = self.step_visible_row(point.row, true);
                         let target = self
                             .buffer
-                            .point_to_offset(BufferPoint::new(point.row + 1, point.column));
+                            .point_to_offset(BufferPoint::new(visible, point.column));
                         self.move_cursor_to(target, select);
                     } else {
                         self.move_cursor_to(self.buffer.len_bytes(), select);

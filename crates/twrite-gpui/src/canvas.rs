@@ -300,6 +300,8 @@ struct PreparedLine {
     empty_selection_quad: Option<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
     task_checkbox_quad: Option<PaintQuad>,
+    /// Fold disclosure chevron: right-pointing when collapsed, down when open.
+    fold_chevron_quad: Option<PaintQuad>,
     /// Highlight-all search washes for this line (painted under the text).
     search_match_quads: Vec<PaintQuad>,
 }
@@ -432,9 +434,13 @@ impl RenderOnce for EditorCanvas {
                     }
                 });
                 // Take the cache out for the frame: the read guard below borrows
-                // the editor immutably, so the cache travels as a local.
+                // the editor immutably, so the cache travels as a local. Fold
+                // ranges travel the same way: hidden rows skip paint and
+                // hit-testing alike, so clicks on them are impossible.
                 let mut layout_cache =
                     editor_handle.update(cx, |editor, _| std::mem::take(&mut editor.layout_cache));
+                let (fold_ranges, fold_epoch) =
+                    editor_handle.update(cx, |editor, _| editor.take_fold_epoch());
                 let editor = editor_handle.read(cx);
                 let theme = editor.theme.clone();
                 let config = editor.config.clone();
@@ -462,6 +468,7 @@ impl RenderOnce for EditorCanvas {
                 let cursor_offset = editor.buffer.cursor_offset();
                 let cursor_point = editor.buffer.cursor_point();
                 let selection = editor.selection;
+                let fold_state = editor.fold_state.clone();
 
                 let is_all_selected = selection.is_some_and(|s| {
                     let range = s.byte_range();
@@ -484,6 +491,9 @@ impl RenderOnce for EditorCanvas {
                 for row in scroll_row..total_lines {
                     if current_y >= bounds.bottom() {
                         break;
+                    }
+                    if fold_state.is_row_hidden(&fold_ranges, row) {
+                        continue;
                     }
 
                     let raw_line = editor.buffer.line_to_string(row);
@@ -845,6 +855,36 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
+                    // Fold disclosure chevron in the gutter column: open folds
+                    // point down, collapsed folds point right. Geometric
+                    // triangle like the task checkbox, font-safe by design.
+                    let fold_start = fold_ranges.iter().find(|range| range.start_row == row);
+                    let fold_chevron_quad = fold_start.map(|range| {
+                        let collapsed = fold_state.is_collapsed(range.start_row);
+                        let chevron = px(8.0);
+                        let box_y = current_y + (metrics.line_height - chevron) / 2.0;
+                        let box_x = text_origin_x - px(18.0);
+                        let color = theme.syntax.comment;
+                        if collapsed {
+                            // Collapsed folds point right: a horizontal spine
+                            // with the fold count implied by hidden rows.
+                            fill(
+                                Bounds::new(
+                                    point(box_x, box_y + chevron / 2.0 - px(0.75)),
+                                    gpui::size(chevron, px(1.5)),
+                                ),
+                                color,
+                            )
+                        } else {
+                            // Open folds point down: a horizontal spine at the
+                            // top of the gutter cell.
+                            fill(
+                                Bounds::new(point(box_x, box_y), gpui::size(chevron, px(1.5))),
+                                color,
+                            )
+                        }
+                    });
+
                     lines.push(PreparedLine {
                         gutter_num,
                         text_origin: point(line_text_origin_x, current_y),
@@ -857,6 +897,7 @@ impl RenderOnce for EditorCanvas {
                         empty_selection_quad,
                         cursor_quad,
                         task_checkbox_quad,
+                        fold_chevron_quad,
                         search_match_quads,
                     });
 
@@ -886,6 +927,7 @@ impl RenderOnce for EditorCanvas {
 
                 editor_handle.update(cx, |editor, _| {
                     editor.layout_cache = layout_cache;
+                    editor.restore_fold_epoch(fold_epoch);
                     editor.last_cursor_pixel = computed_cursor_pixel;
                     editor.visible_lines = visible_line_layouts;
                 });
@@ -915,6 +957,9 @@ impl RenderOnce for EditorCanvas {
                     }
                     if let Some(cb_quad) = line.task_checkbox_quad {
                         window.paint_quad(cb_quad);
+                    }
+                    if let Some(chevron) = line.fold_chevron_quad {
+                        window.paint_quad(chevron);
                     }
 
                     if let Some((origin, shaped_num)) = line.gutter_num {

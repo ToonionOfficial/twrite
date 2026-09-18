@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use gpui::{Bounds, Context, FocusHandle, Font, Pixels, Point, SharedString, Task};
 use twrite_core::{
-    ContextMenuState, CursorStyle, EditorBuffer, EditorHook, HookEffect, PromptState,
-    SearchSnapshot, Selection, SyntaxHighlighter,
+    ContextMenuState, CursorStyle, EditorBuffer, EditorHook, FoldRange, FoldState, HookEffect,
+    PromptState, SearchSnapshot, Selection, SyntaxHighlighter,
 };
 
 use crate::{config::EditorConfig, fps::FrameStats, layout_cache::LayoutCache, theme::EditorTheme};
@@ -34,6 +34,11 @@ pub struct Editor {
     /// Per-version cache of highlight/conceal/link inputs, shared by prepaint
     /// and hit-testing so each row is parsed once per epoch, not per frame.
     pub layout_cache: LayoutCache,
+    /// Which fold starts are collapsed. Ranges come from the highlighter per
+    /// document version via [`Self::fold_ranges`].
+    pub fold_state: FoldState,
+    /// Version-keyed fold ranges: `(buffer version, highlighter rev, ranges)`.
+    fold_epoch: Option<(usize, u64, Vec<FoldRange>)>,
     /// Bold/italic face availability from the last prepaint probe (`None` before first paint).
     pub face_availability: Option<FaceAvailability>,
     /// Base family picked by candidate auto-select (`None` before first paint,
@@ -177,6 +182,8 @@ impl Editor {
             highlighter: None,
             highlighter_rev: 0,
             layout_cache: LayoutCache::new(),
+            fold_state: FoldState::new(),
+            fold_epoch: None,
             face_availability: None,
             selected_font_family: None,
             face_probe_key: None,

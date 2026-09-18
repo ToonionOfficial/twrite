@@ -28,6 +28,16 @@ impl Editor {
         }
 
         if event.click_count == 1 && !event.modifiers.shift {
+            // Fold disclosure toggles before cursor placement so gutter
+            // clicks never move the cursor into a hidden row.
+            if self.toggle_fold_at_position(event.position) {
+                self.selection = None;
+                self.is_selecting = false;
+                self.flush_effects();
+                cx.notify();
+                return;
+            }
+
             let clicked = find_visible_line(&self.visible_lines, event.position.y)
                 .map(|l| (l.row, l.line_start_byte, l.line_len_bytes));
 

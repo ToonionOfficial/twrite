@@ -1,6 +1,7 @@
 use std::ops::Range;
 
 use crate::EditorBuffer;
+use crate::folding::FoldRange;
 
 /// An 8-bit per channel RGBA color representation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -284,6 +285,14 @@ pub trait SyntaxHighlighter: Send + Sync + 'static {
     /// across visual lines (e.g. Markdown table rows). The default is `true`.
     fn should_wrap_line(&self, _buffer: &EditorBuffer, _row: usize) -> bool {
         true
+    }
+
+    /// Collapsible row ranges for this document (e.g. Markdown headings and
+    /// lists). Ranges must be sorted by start row with the header first.
+    /// The default is empty (nothing foldable); view state lives in
+    /// [`crate::folding::FoldState`], not here.
+    fn foldable_ranges(&self, _buffer: &EditorBuffer) -> Vec<FoldRange> {
+        Vec::new()
     }
 }
 

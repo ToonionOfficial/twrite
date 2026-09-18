@@ -7,6 +7,7 @@
 //! - [`config`]: `MarkdownConfig` / `ConcealMode` shared settings.
 //! - [`table`]: GFM pipe-table detection (blocks, pipes, delimiter rows).
 //! - [`highlight`]: `MarkdownHighlighter` (`SyntaxHighlighter` impl).
+//! - [`folding`]: heading and list fold range computation.
 //! - [`hook`]: `MarkdownHook` (`EditorHook` impl: shortcuts, lists, tables).
 //! - [`links`]: single-line hyperlink extraction shared by highlighting and
 //!   click handling.
@@ -17,6 +18,7 @@
 //! `twrite-gpui`-side code is required.
 
 mod config;
+mod folding;
 mod highlight;
 mod hook;
 mod inline;
