@@ -20,12 +20,16 @@ type TableCache = Arc<RwLock<Option<(usize, Vec<TableLayout>)>>>;
 /// Cached fence line row indices and associated document version.
 type FenceCache = Arc<RwLock<Option<(usize, Vec<usize>)>>>;
 
+/// Cached frontmatter row range and associated document version.
+type FrontmatterCache = Arc<RwLock<Option<(usize, Option<Range<usize>>)>>>;
+
 /// A syntax highlighter for CommonMark and GFM Markdown documents using `pulldown-cmark`.
 #[derive(Debug, Clone)]
 pub struct MarkdownHighlighter {
     config: MarkdownConfig,
     cached_fences: FenceCache,
     cached_tables: TableCache,
+    cached_frontmatter: FrontmatterCache,
 }
 
 impl Default for MarkdownHighlighter {
@@ -46,6 +50,7 @@ impl MarkdownHighlighter {
             config,
             cached_fences: Arc::new(RwLock::new(None)),
             cached_tables: Arc::new(RwLock::new(None)),
+            cached_frontmatter: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -91,6 +96,35 @@ impl MarkdownHighlighter {
             fences
         } else {
             scan_fence_rows(buffer)
+        }
+    }
+
+    /// Returns the frontmatter row range for this document version, scanning
+    /// once and sharing the result across all per-row queries in the epoch,
+    /// like the fence and table caches above.
+    fn cached_frontmatter(&self, buffer: &EditorBuffer) -> Option<Range<usize>> {
+        let version = buffer.version();
+        if let Ok(guard) = self.cached_frontmatter.read()
+            && let Some((v, ref range)) = *guard
+            && v == version
+        {
+            return range.clone();
+        }
+
+        if let Ok(mut guard) = self.cached_frontmatter.write() {
+            if let Some((v, ref range)) = *guard
+                && v == version
+            {
+                return range.clone();
+            }
+
+            let fences = self.cached_fence_rows(buffer);
+            let range = scan_frontmatter(buffer, &fences);
+            *guard = Some((version, range.clone()));
+            range
+        } else {
+            let fences = self.cached_fence_rows(buffer);
+            scan_frontmatter(buffer, &fences)
         }
     }
 
@@ -170,6 +204,25 @@ fn scan_fence_rows(buffer: &EditorBuffer) -> Vec<usize> {
     fences
 }
 
+/// Locates a document-leading YAML frontmatter block: row 0 must be `---`
+/// and the returned range runs through the first later `---`/`...` row.
+/// Candidates inside fenced code blocks never close the block. An unclosed
+/// opener yields `None` so row 0 keeps its horizontal-rule rendering.
+fn scan_frontmatter(buffer: &EditorBuffer, fences: &[usize]) -> Option<Range<usize>> {
+    if buffer.line_to_string(0).trim() != "---" {
+        return None;
+    }
+    for row in 1..buffer.len_lines() {
+        if is_fenced_row(fences, row) {
+            continue;
+        }
+        let trimmed = buffer.line_to_string(row);
+        if trimmed.trim() == "---" || trimmed.trim() == "..." {
+            return Some(0..row + 1);
+        }
+    }
+    None
+}
 /// Snaps a display byte offset forward to a char boundary.
 fn snap_display_fwd(display: &str, mut i: usize) -> usize {
     i = i.min(display.len());
@@ -317,6 +370,20 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
         if self.is_in_fenced_code_block(buffer, row) {
             spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Code));
+            return spans;
+        }
+
+        // YAML frontmatter renders as dimmed metadata, never as a rule plus
+        // plain text. Fences stay dim in every conceal mode so the rows never
+        // collapse; the inline pass is skipped so YAML punctuation cannot
+        // produce garbage spans. Same output on and off the cursor row.
+        if self
+            .cached_frontmatter(buffer)
+            .is_some_and(|block| block.contains(&row))
+        {
+            if self.config.conceal_mode != ConcealMode::Off {
+                spans.push(StyleSpan::tag(0..line_text.len(), HighlightTag::Dimmed));
+            }
             return spans;
         }
 
@@ -524,11 +591,18 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 
     fn extract_links(
         &self,
-        _buffer: &EditorBuffer,
-        _row: usize,
+        buffer: &EditorBuffer,
+        row: usize,
         line_text: &str,
     ) -> Vec<(Range<usize>, String)> {
         if !(line_text.contains('[') || line_text.contains('<')) {
+            return Vec::new();
+        }
+        // YAML values shaped like links stay plain metadata, never clickable.
+        if self
+            .cached_frontmatter(buffer)
+            .is_some_and(|block| block.contains(&row))
+        {
             return Vec::new();
         }
         extract_markdown_links(line_text)
@@ -955,6 +1029,83 @@ mod tests {
             "outer bold must survive: {spans:?}"
         );
         assert_eq!(ConcealedLine::build(line, &spans).display_text, "a b c");
+    }
+
+    #[test]
+    fn test_markdown_frontmatter_dims_as_metadata() {
+        // Issue #55: a leading `---` block is metadata, not a rule.
+        let lines = ["---", "title: [a](http://x)", "tags: `a`", "---", "body"];
+        let text = lines.join("\n");
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        // Cursor on the body row; rows 0..=3 are all inactive.
+        let mut buffer = EditorBuffer::new(&text);
+        buffer.set_cursor_offset(text.len());
+
+        for (row, line) in lines.iter().enumerate().take(4) {
+            let spans = hidden_highlighter.highlight_line(&buffer, row, line);
+            assert_eq!(spans.len(), 1, "row {row} must dim wholly: {spans:?}");
+            assert_eq!(spans[0].range, 0..line.len());
+            assert_eq!(spans[0].style, StyleValue::Tag(HighlightTag::Dimmed));
+            assert_eq!(ConcealedLine::build(line, &spans).display_text, *line);
+        }
+
+        // YAML shaped like a link or code never becomes either.
+        let links = hidden_highlighter.extract_links(&buffer, 1, lines[1]);
+        assert!(links.is_empty(), "yaml links must not extract: {links:?}");
+
+        // The body row is untouched plain text.
+        let body = hidden_highlighter.highlight_line(&buffer, 4, lines[4]);
+        assert!(body.is_empty());
+    }
+
+    #[test]
+    fn test_markdown_frontmatter_fallbacks() {
+        // One highlighter per buffer: the version-keyed caches assume a
+        // single document per highlighter instance.
+        let hidden_highlighter = || {
+            MarkdownHighlighter::with_config(MarkdownConfig {
+                conceal_mode: ConcealMode::Hidden,
+                ..Default::default()
+            })
+        };
+
+        // Unclosed opener keeps today's horizontal-rule rendering.
+        let mut unclosed = EditorBuffer::new("---\ntitle: x");
+        unclosed.set_cursor_offset(0);
+        let spans = hidden_highlighter().highlight_line(&unclosed, 0, "---");
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::HorizontalRule)),
+            "unclosed fence stays a rule: {spans:?}"
+        );
+
+        // `...` closes the block too.
+        let mut dotted = EditorBuffer::new("---\ntitle: x\n...\nbody");
+        dotted.set_cursor_offset(11);
+        let closer = hidden_highlighter().highlight_line(&dotted, 2, "...");
+        assert_eq!(closer.len(), 1);
+        assert_eq!(closer[0].style, StyleValue::Tag(HighlightTag::Dimmed));
+
+        // `---` past row 0 is still a rule.
+        let mut mid = EditorBuffer::new("body\n---\nmore");
+        mid.set_cursor_offset(0);
+        let rule = hidden_highlighter().highlight_line(&mid, 1, "---");
+        assert!(
+            rule.iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::HorizontalRule)),
+            "mid-document fence stays a rule: {rule:?}"
+        );
+
+        // The cursor row inside the block dims exactly like inactive rows.
+        let mut active = EditorBuffer::new("---\ntitle: x\n---\nbody");
+        active.set_cursor_offset(5);
+        let row = hidden_highlighter().highlight_line(&active, 1, "title: x");
+        assert_eq!(row.len(), 1);
+        assert_eq!(row[0].style, StyleValue::Tag(HighlightTag::Dimmed));
     }
 
     #[test]
