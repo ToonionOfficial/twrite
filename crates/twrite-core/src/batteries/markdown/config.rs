@@ -16,6 +16,8 @@ pub struct MarkdownConfig {
     pub table_navigation: bool,
     /// Whether `Tab` / `Shift+Tab` indent and unindent list items and renumber ordered lists.
     pub list_indentation: bool,
+    /// Whether `Alt+Up` / `Alt+Down` move list items and renumber ordered lists.
+    pub list_reordering: bool,
     /// Number of spaces per list indent level (defaults to 2).
     pub list_indent_size: usize,
 }
@@ -30,6 +32,7 @@ impl Default for MarkdownConfig {
             table_alignment: true,
             table_navigation: true,
             list_indentation: true,
+            list_reordering: true,
             list_indent_size: 2,
         }
     }

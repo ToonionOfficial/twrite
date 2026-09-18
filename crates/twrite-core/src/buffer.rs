@@ -516,6 +516,160 @@ impl EditorBuffer {
         applied
     }
 
+    /// Moves a 0-based range of lines `start_row..=end_row` up by one line, swapping
+    /// with the line above (`start_row - 1`).
+    ///
+    /// Preserves the cursor's column position within the moved lines, clamped to line length.
+    /// Preserves document line terminator style and avoids creating extra trailing newlines at EOF.
+    /// Returns `false` if `start_row == 0` or if the bounds are invalid.
+    pub fn move_lines_up(&mut self, start_row: usize, end_row: usize) -> bool {
+        let total_lines = self.text.len_lines();
+        if start_row == 0 || start_row > end_row || end_row >= total_lines {
+            return false;
+        }
+
+        let target_row = start_row - 1;
+        let target_line_start = self.text.line_to_byte(target_row);
+        let block_line_start = self.text.line_to_byte(start_row);
+        let span_end = if end_row + 1 < total_lines {
+            self.text.line_to_byte(end_row + 1)
+        } else {
+            self.text.len_bytes()
+        };
+
+        let target_line = self
+            .text
+            .byte_slice(target_line_start..block_line_start)
+            .to_string();
+        let block = self.text.byte_slice(block_line_start..span_end).to_string();
+
+        let target_newline = if target_line.ends_with("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+
+        let swapped_text = if !block.ends_with('\n') {
+            let target_trimmed = &target_line[..target_line.len() - target_newline.len()];
+            format!("{block}{target_newline}{target_trimmed}")
+        } else {
+            format!("{block}{target_line}")
+        };
+
+        let cursor_point = self.cursor_point();
+        let new_point = if cursor_point.row >= start_row && cursor_point.row <= end_row {
+            Point::new(cursor_point.row - 1, cursor_point.column)
+        } else if cursor_point.row == target_row {
+            Point::new(end_row, cursor_point.column)
+        } else {
+            cursor_point
+        };
+
+        let start_char = self.text.byte_to_char(target_line_start);
+        let end_char = self.text.byte_to_char(span_end);
+        let deleted_text = self
+            .text
+            .byte_slice(target_line_start..span_end)
+            .to_string();
+        let previous_cursor = self.cursor;
+
+        self.text.remove(start_char..end_char);
+        self.text.insert(start_char, &swapped_text);
+        self.cursor = self.point_to_offset(new_point);
+
+        let tx = Transaction {
+            edits: vec![Edit {
+                bytes_range: target_line_start..span_end,
+                inserted_text: swapped_text,
+                deleted_text,
+            }],
+            previous_cursor,
+            resulting_cursor: self.cursor,
+        };
+
+        self.history.undo_stack.push(tx);
+        self.history.redo_stack.clear();
+        self.version += 1;
+        true
+    }
+
+    /// Moves a 0-based range of lines `start_row..=end_row` down by one line, swapping
+    /// with the line below (`end_row + 1`).
+    ///
+    /// Preserves the cursor's column position within the moved lines, clamped to line length.
+    /// Preserves document line terminator style and avoids creating extra trailing newlines at EOF.
+    /// Returns `false` if `end_row + 1 >= self.len_lines()` or if the bounds are invalid.
+    pub fn move_lines_down(&mut self, start_row: usize, end_row: usize) -> bool {
+        let total_lines = self.text.len_lines();
+        if start_row > end_row || end_row + 1 >= total_lines {
+            return false;
+        }
+
+        let target_row = end_row + 1;
+        let block_line_start = self.text.line_to_byte(start_row);
+        let target_line_start = self.text.line_to_byte(target_row);
+        let span_end = if target_row + 1 < total_lines {
+            self.text.line_to_byte(target_row + 1)
+        } else {
+            self.text.len_bytes()
+        };
+
+        let block = self
+            .text
+            .byte_slice(block_line_start..target_line_start)
+            .to_string();
+        let target_line = self
+            .text
+            .byte_slice(target_line_start..span_end)
+            .to_string();
+
+        let block_newline = if block.ends_with("\r\n") {
+            "\r\n"
+        } else {
+            "\n"
+        };
+
+        let swapped_text = if !target_line.ends_with('\n') {
+            let block_trimmed = &block[..block.len() - block_newline.len()];
+            format!("{target_line}{block_newline}{block_trimmed}")
+        } else {
+            format!("{target_line}{block}")
+        };
+
+        let cursor_point = self.cursor_point();
+        let new_point = if cursor_point.row >= start_row && cursor_point.row <= end_row {
+            Point::new(cursor_point.row + 1, cursor_point.column)
+        } else if cursor_point.row == target_row {
+            Point::new(start_row, cursor_point.column)
+        } else {
+            cursor_point
+        };
+
+        let start_char = self.text.byte_to_char(block_line_start);
+        let end_char = self.text.byte_to_char(span_end);
+        let deleted_text = self.text.byte_slice(block_line_start..span_end).to_string();
+        let previous_cursor = self.cursor;
+
+        self.text.remove(start_char..end_char);
+        self.text.insert(start_char, &swapped_text);
+        self.cursor = self.point_to_offset(new_point);
+
+        let tx = Transaction {
+            edits: vec![Edit {
+                bytes_range: block_line_start..span_end,
+                inserted_text: swapped_text,
+                deleted_text,
+            }],
+            previous_cursor,
+            resulting_cursor: self.cursor,
+        };
+
+        self.history.undo_stack.push(tx);
+        self.history.redo_stack.clear();
+        self.version += 1;
+        true
+    }
+
     /// Undoes the most recent transaction.
     ///
     /// If there is no transaction to undo, this method does nothing.
