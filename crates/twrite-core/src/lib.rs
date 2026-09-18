@@ -13,6 +13,8 @@ pub mod coordinates;
 pub mod effect;
 /// Strongly-typed error types and results for editor operations.
 pub mod error;
+/// Collapsible fold ranges and their collapsed state.
+pub mod folding;
 /// Granular undo/redo transaction history.
 pub mod history;
 /// Extensible hook system and input interceptors.
@@ -48,6 +50,7 @@ pub use context_menu::{
 pub use coordinates::Point;
 pub use effect::HookEffect;
 pub use error::{EditorError, Result as EditorResult};
+pub use folding::{FoldRange, FoldState};
 pub use hook::{
     AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
     SearchSnapshot,

@@ -17,6 +17,7 @@ impl Editor {
 
     /// Replaces the active selection with `text`, or inserts `text` at the cursor position.
     pub fn replace_selection_or_insert(&mut self, text: &str) {
+        self.expand_fold_at_cursor();
         if let Some(selection) = self.selection.take() {
             let range = selection.byte_range();
             if !range.is_empty() {

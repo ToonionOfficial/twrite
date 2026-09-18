@@ -5,6 +5,16 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.14.0] - 2026-09-18
+
+### Added
+- **Heading and list folding (`twrite-core`, `twrite-gpui`)**: foldable
+  ranges computed line-based from heading levels and list indent (no
+  tree-sitter), with `FoldState` tracking collapsed starts. Collapsed rows
+  skip paint, Up/Down step over them, the cursor clamps to headers, gutter
+  chevrons toggle on click, and `Alt+Left`/`Alt+Right` collapse/expand at
+  the cursor. Closes [#58](https://github.com/ToonionOfficial/twrite/issues/58).
+
 ## [0.13.0] - 2026-09-18
 
 ### Added
