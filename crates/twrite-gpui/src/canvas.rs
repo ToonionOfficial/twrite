@@ -300,8 +300,10 @@ struct PreparedLine {
     empty_selection_quad: Option<PaintQuad>,
     cursor_quad: Option<PaintQuad>,
     task_checkbox_quad: Option<PaintQuad>,
-    /// Fold disclosure chevron: right-pointing when collapsed, down when open.
-    fold_chevron_quad: Option<PaintQuad>,
+    /// Fold disclosure arrow: ">" when collapsed, "v" when open. Shaped text
+    /// (ASCII only, present in every monospace font) instead of a quad so the
+    /// indicator reads as an arrow, not a dash.
+    fold_chevron: Option<(Point<Pixels>, ShapedLine)>,
     /// Highlight-all search washes for this line (painted under the text).
     search_match_quads: Vec<PaintQuad>,
 }
@@ -855,34 +857,28 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    // Fold disclosure chevron in the gutter column: open folds
-                    // point down, collapsed folds point right. Geometric
-                    // triangle like the task checkbox, font-safe by design.
+                    // Fold disclosure arrow in the gutter column: ">" when
+                    // collapsed, "v" when open. Shaped text (ASCII glyphs
+                    // every monospace font ships) rather than a quad, so the
+                    // indicator reads as an arrow instead of a dash.
                     let fold_start = fold_ranges.iter().find(|range| range.start_row == row);
-                    let fold_chevron_quad = fold_start.map(|range| {
+                    let fold_chevron = fold_start.map(|range| {
                         let collapsed = fold_state.is_collapsed(range.start_row);
-                        let chevron = px(8.0);
-                        let box_y = current_y + (metrics.line_height - chevron) / 2.0;
-                        let box_x = text_origin_x - px(18.0);
-                        let color = theme.syntax.comment;
-                        if collapsed {
-                            // Collapsed folds point right: a horizontal spine
-                            // with the fold count implied by hidden rows.
-                            fill(
-                                Bounds::new(
-                                    point(box_x, box_y + chevron / 2.0 - px(0.75)),
-                                    gpui::size(chevron, px(1.5)),
-                                ),
-                                color,
-                            )
-                        } else {
-                            // Open folds point down: a horizontal spine at the
-                            // top of the gutter cell.
-                            fill(
-                                Bounds::new(point(box_x, box_y), gpui::size(chevron, px(1.5))),
-                                color,
-                            )
-                        }
+                        let glyph: SharedString = if collapsed { ">" } else { "v" }.into();
+                        let shaped = window.text_system().shape_line(
+                            glyph,
+                            config.font_size * GUTTER_NUMBER_FONT_SCALE,
+                            &[TextRun {
+                                len: 1,
+                                font: font.clone(),
+                                color: theme.syntax.comment,
+                                background_color: None,
+                                underline: None,
+                                strikethrough: None,
+                            }],
+                            None,
+                        );
+                        (point(text_origin_x - px(18.0), current_y), shaped)
                     });
 
                     lines.push(PreparedLine {
@@ -897,7 +893,7 @@ impl RenderOnce for EditorCanvas {
                         empty_selection_quad,
                         cursor_quad,
                         task_checkbox_quad,
-                        fold_chevron_quad,
+                        fold_chevron,
                         search_match_quads,
                     });
 
@@ -958,8 +954,9 @@ impl RenderOnce for EditorCanvas {
                     if let Some(cb_quad) = line.task_checkbox_quad {
                         window.paint_quad(cb_quad);
                     }
-                    if let Some(chevron) = line.fold_chevron_quad {
-                        window.paint_quad(chevron);
+                    if let Some((origin, shaped_chevron)) = line.fold_chevron {
+                        // Same row pitch as gutter numbers.
+                        let _ = shaped_chevron.paint(origin, line.line_height, window, cx);
                     }
 
                     if let Some((origin, shaped_num)) = line.gutter_num {
