@@ -272,7 +272,7 @@ impl Editor {
 
             let base_font_size = self.config.font_size;
             let base_line_height = self.config.line_height;
-            let cursor_row = self.buffer.cursor_point().row;
+            let cursor_position = self.buffer.cursor_point();
             let highlighter_rev = self.highlighter_rev;
             let host_font = window.text_style().font();
             let font = self.resolved_base_font(&host_font);
@@ -281,7 +281,7 @@ impl Editor {
                 &self.buffer,
                 self.highlighter.as_deref(),
                 highlighter_rev,
-                cursor_row,
+                cursor_position,
                 row,
                 line_text,
             );

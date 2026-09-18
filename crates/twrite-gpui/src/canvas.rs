@@ -522,13 +522,12 @@ impl RenderOnce for EditorCanvas {
                         None
                     };
 
-                    let cursor_row = cursor_point.row;
                     let highlighter_rev = editor.highlighter_rev;
                     let cached = layout_cache.cached_input(
                         &editor.buffer,
                         editor.highlighter.as_deref(),
                         highlighter_rev,
-                        cursor_row,
+                        cursor_point,
                         row,
                         line_text,
                     );

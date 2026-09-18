@@ -5,6 +5,23 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-09-18
+
+### Added
+- **Word-level conceal reveal (`twrite-core`)**: in Hidden conceal mode,
+  inline markers (bold, italic, strikethrough, code spans, links) now stay
+  hidden until the cursor enters the formatted word, instead of revealing
+  the whole line at once. Task checkboxes stay always visible, with the raw
+  marker revealing only while the cursor sits on it. Block markers
+  (headings, quotes, thematic breaks, tables) still reveal row-wide.
+  Closes [#71](https://github.com/ToonionOfficial/twrite/issues/71).
+
+### Changed
+- **Layout cache keys on cursor position (`twrite-gpui`, breaking)**:
+  `LayoutCache::cached_input` now takes the cursor as a `Point`
+  (replacing the `cursor_row` argument) so cursor-row entries invalidate
+  when the cursor slides along the row.
+
 ## [0.10.3] - 2026-09-18
 
 ### Fixed

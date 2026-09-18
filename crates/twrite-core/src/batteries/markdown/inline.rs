@@ -4,9 +4,14 @@ use crate::syntax::{HighlightTag, StyleSpan, TextStyle};
 
 /// Parses inline CommonMark and GFM elements (bold, italic, strikethrough, code, links)
 /// within a single line and appends corresponding style spans.
+///
+/// `cursor_offset` is the cursor byte offset within the line when the cursor
+/// sits on this row (`None` otherwise). A construct whose source range
+/// contains the cursor keeps its delimiters visible so it can be edited;
+/// every other construct conceals, Obsidian style.
 pub(crate) fn highlight_inline_markdown(
     line_text: &str,
-    is_cursor_row: bool,
+    cursor_offset: Option<usize>,
     delimiter_tag: Option<HighlightTag>,
     spans: &mut Vec<StyleSpan>,
 ) {
@@ -31,7 +36,7 @@ pub(crate) fn highlight_inline_markdown(
                 if let Some(start) = active_strong.take() {
                     let end = range.end.min(line_text.len());
                     if start < end {
-                        if !is_cursor_row
+                        if !cursor_inside_construct(cursor_offset, start, end)
                             && end >= start + 4
                             && let Some(delim_tag) = delimiter_tag
                         {
@@ -51,7 +56,7 @@ pub(crate) fn highlight_inline_markdown(
                 if let Some(start) = active_emphasis.take() {
                     let end = range.end.min(line_text.len());
                     if start < end {
-                        if !is_cursor_row
+                        if !cursor_inside_construct(cursor_offset, start, end)
                             && end >= start + 2
                             && let Some(delim_tag) = delimiter_tag
                         {
@@ -71,7 +76,7 @@ pub(crate) fn highlight_inline_markdown(
                 if let Some(start) = active_strike.take() {
                     let end = range.end.min(line_text.len());
                     if start < end {
-                        if !is_cursor_row
+                        if !cursor_inside_construct(cursor_offset, start, end)
                             && end >= start + 4
                             && let Some(delim_tag) = delimiter_tag
                         {
@@ -98,7 +103,7 @@ pub(crate) fn highlight_inline_markdown(
             }
             Event::Code(cow) => {
                 let end = (range.start + cow.len() + 2).min(line_text.len());
-                if !is_cursor_row
+                if !cursor_inside_construct(cursor_offset, range.start, end)
                     && end >= range.start + 2
                     && let Some(delim_tag) = delimiter_tag
                 {
@@ -116,7 +121,9 @@ pub(crate) fn highlight_inline_markdown(
                 if let Some(start) = active_link.take() {
                     let end = range.end.min(line_text.len());
                     if start < end {
-                        if !is_cursor_row && let Some(delim_tag) = delimiter_tag {
+                        if !cursor_inside_construct(cursor_offset, start, end)
+                            && let Some(delim_tag) = delimiter_tag
+                        {
                             if let Some(bracket_idx) = line_text[start..end].find("](") {
                                 let label_start = start + 1;
                                 let label_end = start + bracket_idx;
@@ -161,4 +168,11 @@ pub(crate) fn highlight_inline_markdown(
             _ => {}
         }
     }
+}
+
+/// Reports whether the cursor sits inside a concealable construct so its
+/// delimiters stay visible for editing. The end edge is exclusive: a cursor
+/// resting just past the closing delimiter has left the construct.
+fn cursor_inside_construct(cursor_offset: Option<usize>, start: usize, end: usize) -> bool {
+    cursor_offset.is_some_and(|cursor| start <= cursor && cursor < end)
 }

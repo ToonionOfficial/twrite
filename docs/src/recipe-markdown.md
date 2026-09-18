@@ -57,7 +57,7 @@ TWrite supports three conceal levels for Markdown syntax markers (such as `**`, 
 | Mode | Behavior |
 | --- | --- |
 | `ConcealMode::Dimmed` (default) | Syntax markers are drawn in a subtle, dimmed color to keep content legible while keeping raw characters visible. |
-| `ConcealMode::Hidden` | Syntax markers are hidden completely. When the cursor enters a line, markers un-conceal so you can edit them directly. |
+| `ConcealMode::Hidden` | Syntax markers are hidden completely. Inline markers un-conceal while the cursor sits inside the formatted word; block markers (headings, quotes) un-conceal while the cursor is anywhere on the line. |
 | `ConcealMode::Off` | All characters are rendered at full normal opacity. |
 
 To change or toggle conceal mode dynamically:
