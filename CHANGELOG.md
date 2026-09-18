@@ -5,6 +5,17 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.12.1] - 2026-09-18
+
+### Fixed
+- **Frontmatter renders as metadata (`twrite-core`)**: a document-leading
+  `---` block no longer misrenders as a horizontal rule plus plain text.
+  Fences and body rows dim as metadata in every conceal mode, YAML
+  punctuation skips inline parsing, and link-shaped values stay
+  unclickable. Unclosed openers and mid-document fences keep rule styling.
+  Partially addresses [#55](https://github.com/ToonionOfficial/twrite/issues/55);
+  the key-value properties view remains a follow-up.
+
 ## [0.12.0] - 2026-09-18
 
 ### Added
