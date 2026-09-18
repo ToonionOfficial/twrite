@@ -5,6 +5,17 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.15.0] - 2026-09-18
+
+### Added
+- **List indentation and sibling renumbering (`twrite-core`)**: `Tab` indents
+  and nests list items, while `Shift+Tab` unnests them. Sibling ordered list
+  items are automatically renumbered consecutively at each indentation level.
+  Supports unordered bullets, task checkboxes, and ordered lists, multi-line
+  selections, and atomic undo/redo via `replace_many`. Configurable via
+  `MarkdownConfig::list_indentation` and `MarkdownConfig::list_indent_size`.
+  Closes [#65](https://github.com/ToonionOfficial/twrite/issues/65).
+
 ## [0.14.0] - 2026-09-18
 
 ### Added
