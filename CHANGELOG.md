@@ -13,7 +13,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hidden until the cursor enters the formatted word, instead of revealing
   the whole line at once. Task checkboxes stay always visible, with the raw
   marker revealing only while the cursor sits on it, and the heading `#`
-  prefix hides the moment the cursor leaves it. Quote prefixes still reveal
+  prefix hides the moment the cursor leaves it (a bare `# ` already scales
+  heading metrics before the first character is typed). Quote prefixes still reveal
   row-wide.
   Closes [#71](https://github.com/ToonionOfficial/twrite/issues/71).
 

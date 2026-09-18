@@ -430,6 +430,11 @@ impl SyntaxHighlighter for MarkdownHighlighter {
                 spans.push(StyleSpan::tag(indent..indent + prefix_len, delim_tag));
                 if indent + prefix_len < line_text.len() {
                     spans.push(StyleSpan::tag(indent + prefix_len..line_text.len(), tag));
+                } else {
+                    // Bare prefix (`# ` with no text yet): tag it so line
+                    // metrics scale immediately instead of waiting for the
+                    // first content character.
+                    spans.push(StyleSpan::tag(indent..indent + prefix_len, tag));
                 }
             } else {
                 spans.push(StyleSpan::tag(0..line_text.len(), tag));
@@ -805,6 +810,28 @@ mod tests {
             ConcealedLine::build(line, &spans_away).display_text,
             "Heading"
         );
+    }
+
+    #[test]
+    fn test_markdown_bare_heading_prefix_scales() {
+        // Typing `# ` leaves the cursor just past the prefix; the line must
+        // already carry its Heading tag so metrics (and the caret) scale
+        // before the first content character arrives.
+        let line = "# ";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(line);
+        buffer.set_cursor_offset(2);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Heading(1))),
+            "bare `# ` must emit Heading(1): {spans:?}"
+        );
+        assert_eq!(ConcealedLine::build(line, &spans).display_text, "");
     }
 
     #[test]
