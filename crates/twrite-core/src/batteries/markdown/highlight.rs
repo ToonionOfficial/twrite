@@ -612,6 +612,53 @@ mod tests {
     }
 
     #[test]
+    fn test_markdown_underscore_bold_concealment() {
+        // Issue #51: `__bold__` must conceal exactly like `**bold**`.
+        // Cursor stays on row 0 so row 1 is inactive and Hidden applies.
+        let buffer = EditorBuffer::new("cursor here\nThis is __bold__ here.");
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+
+        let spans = hidden_highlighter.highlight_line(&buffer, 1, "This is __bold__ here.");
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].range, 8..10);
+        assert_eq!(spans[0].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(spans[1].range, 10..14);
+        assert_eq!(spans[1].style, StyleValue::Tag(HighlightTag::Bold));
+        assert_eq!(spans[2].range, 14..16);
+        assert_eq!(spans[2].style, StyleValue::Tag(HighlightTag::Hidden));
+        let concealed = ConcealedLine::build("This is __bold__ here.", &spans);
+        assert_eq!(concealed.display_text, "This is bold here.");
+
+        // Asterisk form is the control: identical spans, shifted by nothing.
+        let buffer_stars = EditorBuffer::new("cursor here\nThis is **bold** here.");
+        let spans_stars =
+            hidden_highlighter.highlight_line(&buffer_stars, 1, "This is **bold** here.");
+        assert_eq!(spans_stars, spans);
+
+        // Cursor row keeps raw delimiters visible.
+        let buffer_active = EditorBuffer::new("This is __bold__ here.\nother");
+        let spans_active =
+            hidden_highlighter.highlight_line(&buffer_active, 0, "This is __bold__ here.");
+        let concealed_active = ConcealedLine::build("This is __bold__ here.", &spans_active);
+        assert_eq!(concealed_active.display_text, "This is __bold__ here.");
+
+        // Intra-word underscores are literal per CommonMark, never bold.
+        let buffer_word = EditorBuffer::new("cursor here\nfoo__bar__baz");
+        let spans_word = hidden_highlighter.highlight_line(&buffer_word, 1, "foo__bar__baz");
+        assert!(
+            spans_word
+                .iter()
+                .all(|s| s.style != StyleValue::Tag(HighlightTag::Bold)),
+            "intra-word __ must not parse as bold: {spans_word:?}"
+        );
+        let concealed_word = ConcealedLine::build("foo__bar__baz", &spans_word);
+        assert_eq!(concealed_word.display_text, "foo__bar__baz");
+    }
+
+    #[test]
     fn test_markdown_conceal_modes() {
         let buffer = EditorBuffer::new("# Heading 1\n## Heading 2");
 
