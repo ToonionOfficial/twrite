@@ -113,6 +113,7 @@ impl Render for EditorApp {
 The basic editor comes equipped with standard desktop shortcuts out of the box:
 
 - **Arrow Keys**: Move cursor by character / line.
+- **Alt+Up / Alt+Down**: Move current line or selected block up or down.
 - **Ctrl+Left / Ctrl+Right** (or Alt+Left / Alt+Right): Jump word-by-word.
 - **Home / End**: Jump to line start or line end.
 - **Ctrl+Z**: Undo edit.

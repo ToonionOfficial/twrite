@@ -52,6 +52,9 @@ Pressing `Enter` at the end of a list item automatically inserts the next bullet
 ### List Indentation and Sibling Renumbering
 Pressing `Tab` on a list item indents and nests the item (adjusting leading whitespace by `list_indent_size`, default 2 spaces). Pressing `Shift+Tab` outdents and unnests it. Sibling ordered lists are automatically renumbered consecutively at each indentation level.
 
+### Move Lines and List Items
+Pressing `Alt+Up` or `Alt+Down` moves the current line or selected block of lines up or down, carrying list markers along and keeping the cursor column aligned where possible. Sibling ordered lists are automatically renumbered consecutively across the affected list block. Configurable via `MarkdownConfig::list_reordering`.
+
 ### Formatting Shortcuts
 Selecting text and pressing formatting keys wraps the selection automatically:
 - `Ctrl+B`: Toggles bold (`**text**`)
