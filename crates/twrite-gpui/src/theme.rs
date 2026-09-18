@@ -36,6 +36,8 @@ pub struct SyntaxTheme {
     pub code: Hsla,
     /// Background pill fill color for inline code spans.
     pub code_bg: Hsla,
+    /// Background tint color for `==mark==` highlight spans.
+    pub highlight_bg: Hsla,
     /// Color for hyperlink text.
     pub link: Hsla,
     /// Registered colors for `HighlightTag::Custom` names. Unregistered names
@@ -65,6 +67,7 @@ impl Default for SyntaxTheme {
             italic: rgb(0xb4befe).into(),
             code: rgb(0xf5c2e7).into(),
             code_bg: hsla(0.65, 0.4, 0.6, 0.15),
+            highlight_bg: hsla(0.11, 0.85, 0.6, 0.35),
             link: rgb(0x89b4fa).into(),
             custom: HashMap::new(),
             error: rgb(0xf38ba8).into(),
@@ -175,6 +178,7 @@ impl EditorTheme {
             HighlightTag::Bold => self.syntax.bold,
             HighlightTag::Italic => self.syntax.italic,
             HighlightTag::Code => self.syntax.code,
+            HighlightTag::Highlight => self.foreground,
             HighlightTag::Link => self.syntax.link,
             HighlightTag::Custom(name) => self
                 .syntax
@@ -208,6 +212,8 @@ impl EditorTheme {
                 let italic = matches!(tag, HighlightTag::Italic | HighlightTag::Comment);
                 let background = if matches!(tag, HighlightTag::Code) {
                     Some(self.syntax.code_bg)
+                } else if matches!(tag, HighlightTag::Highlight) {
+                    Some(self.syntax.highlight_bg)
                 } else {
                     None
                 };

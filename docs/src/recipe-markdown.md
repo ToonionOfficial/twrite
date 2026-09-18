@@ -40,6 +40,9 @@ Lines starting with `- [ ]` or `- [x]` (or numbered `1. [ ]`) render as clickabl
 ### Clickable Hyperlinks
 Inline links formatted as `[Link text](https://example.com)` are detected. Single-clicking a link opens the URL in the system default browser. Double-clicking still selects the text for editing.
 
+### Text Highlight
+Wrapping text in double equals signs (`==important==`) renders it with a tinted background wash. The markers conceal and reveal following the active conceal mode, word by word like other inline formatting.
+
 ### Smart List Continuation
 Pressing `Enter` at the end of a list item automatically inserts the next bullet point (`- ` or `* `) or increments ordered list numbers (`1. `, `2. `). Pressing `Enter` on an empty list bullet removes the prefix.
 

@@ -325,4 +325,18 @@ mod tests {
             theme.syntax.heading3
         );
     }
+
+    #[test]
+    fn test_highlight_tag_styling() {
+        use twrite_core::StyleValue;
+        let theme = EditorTheme::default();
+        // Marked text keeps the foreground; the tint comes from the background.
+        assert_eq!(theme.tag_color(HighlightTag::Highlight), theme.foreground);
+        let resolved = theme.resolve_style(&StyleValue::Tag(HighlightTag::Highlight));
+        assert_eq!(resolved.background, Some(theme.syntax.highlight_bg));
+        assert!(!resolved.bold);
+        // Inline code keeps its own pill fill.
+        let code = theme.resolve_style(&StyleValue::Tag(HighlightTag::Code));
+        assert_eq!(code.background, Some(theme.syntax.code_bg));
+    }
 }

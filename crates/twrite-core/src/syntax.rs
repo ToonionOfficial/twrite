@@ -75,6 +75,8 @@ pub enum HighlightTag {
     Bold,
     /// Italic text.
     Italic,
+    /// Marked/highlighted text (`==mark==`).
+    Highlight,
     /// Monospace code spans or blocks.
     Code,
     /// Hyperlinks.
