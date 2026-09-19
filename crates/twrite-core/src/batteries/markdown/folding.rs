@@ -69,36 +69,6 @@ fn is_list_item(trimmed_start: &str) -> bool {
         && bytes.get(digits + 1).is_none_or(|byte| *byte == b' ')
 }
 
-/// Reports whether a trimmed line is a thematic break (horizontal rule):
-/// 3 or more matching `-`, `_`, or `*` characters with optional whitespace.
-fn is_thematic_break(trimmed: &str) -> bool {
-    let mut characters = trimmed.chars();
-    let Some(first) = characters.next() else {
-        return false;
-    };
-    if first != '-' && first != '*' && first != '_' {
-        return false;
-    }
-    let mut count = 1;
-    for character in characters {
-        if character == first {
-            count += 1;
-        } else if character != ' ' && character != '\t' {
-            return false;
-        }
-    }
-    count >= 3
-}
-
-/// Reports whether a trimmed line starts a block construct that cannot be a
-/// lazy continuation line (thematic break, blockquote, or fence).
-fn is_block_boundary(trimmed: &str) -> bool {
-    is_thematic_break(trimmed)
-        || trimmed.starts_with('>')
-        || trimmed.starts_with("```")
-        || trimmed.starts_with("~~~")
-}
-
 /// Per-row structure used by the fold scan.
 struct StructureRow {
     blank: bool,
@@ -106,8 +76,6 @@ struct StructureRow {
     heading: Option<u8>,
     /// Indent width when the row opens a list subtree.
     list_indent: Option<usize>,
-    /// Whether the row starts an independent block that cannot be a lazy continuation.
-    block_boundary: bool,
     /// Indent width for absorb-or-terminate decisions.
     indent: usize,
 }
@@ -137,7 +105,6 @@ pub(crate) fn markdown_fold_ranges(
             list_indent: (!opaque && is_list_item(trimmed))
                 .then(|| text.len() - trimmed.len())
                 .map(|bytes| indent_width(&text[..bytes])),
-            block_boundary: !opaque && is_block_boundary(trimmed),
             indent: indent_width(text),
         });
     }
@@ -147,40 +114,28 @@ pub(crate) fn markdown_fold_ranges(
     // track separately so a list never swallows a heading section.
     let mut open_headings: Vec<(usize, u8)> = Vec::new();
     let mut open_lists: Vec<(usize, usize)> = Vec::new();
-    let mut saw_blank = false;
 
     for (row, info) in rows.iter().enumerate() {
         if info.blank {
-            saw_blank = true;
             continue;
         }
         if let Some(level) = info.heading {
             // Headings terminate every open list, then nest by level.
-            close_lists(&mut open_lists, &rows, row, 0, false, &mut ranges);
+            close_lists(&mut open_lists, &rows, row, 0, &mut ranges);
             close_headings(&mut open_headings, &rows, row, level, &mut ranges);
             open_headings.push((row, level));
         } else if let Some(indent) = info.list_indent {
-            close_lists(&mut open_lists, &rows, row, indent, false, &mut ranges);
+            close_lists(&mut open_lists, &rows, row, indent, &mut ranges);
             open_lists.push((row, indent));
         } else {
-            // Continuation content dedents strictly: same-indent lazy lines
-            // absorb instead of ending the item, unless separated by a blank
-            // line or starting an independent block.
-            let strict = !saw_blank && !info.block_boundary;
-            close_lists(
-                &mut open_lists,
-                &rows,
-                row,
-                info.indent,
-                strict,
-                &mut ranges,
-            );
+            // Content rows at or above list indent terminate open lists;
+            // only deeper-indented rows absorb into the list subtree.
+            close_lists(&mut open_lists, &rows, row, info.indent, &mut ranges);
         }
-        saw_blank = false;
     }
     // End of document closes everything still open.
     let end = total;
-    close_lists(&mut open_lists, &rows, end, 0, false, &mut ranges);
+    close_lists(&mut open_lists, &rows, end, 0, &mut ranges);
     close_headings(&mut open_headings, &rows, end, 1, &mut ranges);
 
     ranges.sort_by_key(|range| range.start_row);
@@ -188,23 +143,15 @@ pub(crate) fn markdown_fold_ranges(
 }
 
 /// Closes stacked list folds at or above `floor` indent, trimming trailing
-/// blanks. Strict floors keep same-indent folds (lazy continuation lines
-/// absorb); non-strict floors close siblings too.
+/// blanks.
 fn close_lists(
     stack: &mut Vec<(usize, usize)>,
     rows: &[StructureRow],
     row: usize,
     floor: usize,
-    strict: bool,
     ranges: &mut Vec<FoldRange>,
 ) {
-    while stack.last().is_some_and(|&(_, indent)| {
-        if strict {
-            indent > floor
-        } else {
-            indent >= floor
-        }
-    }) {
+    while stack.last().is_some_and(|&(_, indent)| indent >= floor) {
         let (start, _) = stack.pop().expect("stack not empty");
         let mut end = row.saturating_sub(1);
         while end > start && rows[end].blank {
@@ -312,13 +259,12 @@ mod tests {
     }
 
     #[test]
-    fn lazy_continuation_absorbs() {
-        // Same-indent non-list text continues the item instead of ending it.
-        let ranges = fold("- a\ncontinued\n- b\n");
-        assert!(ranges.contains(&FoldRange {
-            start_row: 0,
-            end_row: 1
-        }));
+    fn unindented_text_terminates_list() {
+        // Unindented text directly below a list item terminates the item
+        // instead of folding into it.
+        assert!(fold("- a\ncontinued\n- b\n").is_empty());
+        assert!(fold("- [ ] item\ntest\n").is_empty());
+        assert!(fold("- [ ] item\n\ntest\n").is_empty());
     }
 
     #[test]
