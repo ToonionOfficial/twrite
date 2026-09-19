@@ -121,21 +121,21 @@ pub(crate) fn markdown_fold_ranges(
         }
         if let Some(level) = info.heading {
             // Headings terminate every open list, then nest by level.
-            close_lists(&mut open_lists, &rows, row, 0, false, &mut ranges);
+            close_lists(&mut open_lists, &rows, row, 0, &mut ranges);
             close_headings(&mut open_headings, &rows, row, level, &mut ranges);
             open_headings.push((row, level));
         } else if let Some(indent) = info.list_indent {
-            close_lists(&mut open_lists, &rows, row, indent, false, &mut ranges);
+            close_lists(&mut open_lists, &rows, row, indent, &mut ranges);
             open_lists.push((row, indent));
         } else {
-            // Continuation content dedents strictly: same-indent lazy lines
-            // absorb instead of ending the item.
-            close_lists(&mut open_lists, &rows, row, info.indent, true, &mut ranges);
+            // Content rows at or above list indent terminate open lists;
+            // only deeper-indented rows absorb into the list subtree.
+            close_lists(&mut open_lists, &rows, row, info.indent, &mut ranges);
         }
     }
     // End of document closes everything still open.
     let end = total;
-    close_lists(&mut open_lists, &rows, end, 0, false, &mut ranges);
+    close_lists(&mut open_lists, &rows, end, 0, &mut ranges);
     close_headings(&mut open_headings, &rows, end, 1, &mut ranges);
 
     ranges.sort_by_key(|range| range.start_row);
@@ -143,23 +143,15 @@ pub(crate) fn markdown_fold_ranges(
 }
 
 /// Closes stacked list folds at or above `floor` indent, trimming trailing
-/// blanks. Strict floors keep same-indent folds (lazy continuation lines
-/// absorb); non-strict floors close siblings too.
+/// blanks.
 fn close_lists(
     stack: &mut Vec<(usize, usize)>,
     rows: &[StructureRow],
     row: usize,
     floor: usize,
-    strict: bool,
     ranges: &mut Vec<FoldRange>,
 ) {
-    while stack.last().is_some_and(|&(_, indent)| {
-        if strict {
-            indent > floor
-        } else {
-            indent >= floor
-        }
-    }) {
+    while stack.last().is_some_and(|&(_, indent)| indent >= floor) {
         let (start, _) = stack.pop().expect("stack not empty");
         let mut end = row.saturating_sub(1);
         while end > start && rows[end].blank {
@@ -267,13 +259,12 @@ mod tests {
     }
 
     #[test]
-    fn lazy_continuation_absorbs() {
-        // Same-indent non-list text continues the item instead of ending it.
-        let ranges = fold("- a\ncontinued\n- b\n");
-        assert!(ranges.contains(&FoldRange {
-            start_row: 0,
-            end_row: 1
-        }));
+    fn unindented_text_terminates_list() {
+        // Unindented text directly below a list item terminates the item
+        // instead of folding into it.
+        assert!(fold("- a\ncontinued\n- b\n").is_empty());
+        assert!(fold("- [ ] item\ntest\n").is_empty());
+        assert!(fold("- [ ] item\n\ntest\n").is_empty());
     }
 
     #[test]
@@ -328,5 +319,53 @@ mod tests {
             start_row: start,
             end_row: end,
         })
+    }
+
+    #[test]
+    fn unindented_text_after_blank_line_terminates_list() {
+        // Issue #79: normal text below a checklist must not fold into the last item.
+        let text = "# Interactive Task Lists\n\
+                    - [x] Fast rope-backed text buffer\n\
+                    - [x] Focus-aware marker dimming\n\
+                    - [ ] Click this checkbox directly with your mouse!\n\
+                    - [ ] Try toggling with Ctrl+Enter!\n\
+                    \n\
+                    test\n";
+        let ranges = fold(text);
+        assert!(ranges.contains(&FoldRange {
+            start_row: 0,
+            end_row: 6,
+        }));
+        assert!(!ranges.iter().any(|range| range.start_row == 4));
+        assert!(!ranges.iter().any(|range| range.start_row == 1));
+        assert!(!ranges.iter().any(|range| range.start_row == 2));
+        assert!(!ranges.iter().any(|range| range.start_row == 3));
+    }
+
+    #[test]
+    fn thematic_breaks_terminate_lists() {
+        assert!(fold("- item\n\n---\n").is_empty());
+        assert!(fold("- item\n---\n").is_empty());
+        assert!(fold("- item\n***\n").is_empty());
+        assert!(fold("- item\n___\n").is_empty());
+    }
+
+    #[test]
+    fn blockquotes_terminate_lists() {
+        assert!(fold("- item\n> quote\n").is_empty());
+        assert!(fold("- item\n\n> quote\n").is_empty());
+    }
+
+    #[test]
+    fn nested_list_terminates_before_subsequent_text() {
+        let text = "- [ ] Parent\n  - [ ] Child 1\n  - [ ] Child 2\n\ntest\n";
+        let ranges = fold(text);
+        assert_eq!(
+            ranges,
+            vec![FoldRange {
+                start_row: 0,
+                end_row: 2,
+            }]
+        );
     }
 }

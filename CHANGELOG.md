@@ -5,6 +5,21 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.16.1] - 2026-09-19
+
+### Fixed
+- **Terminate list fold ranges on unindented text and dividers (`twrite-core`)**:
+  prevent unindented paragraphs, horizontal dividers (`---`), blockquotes, and
+  fenced blocks following a list from being absorbed into the last list item.
+  List items no longer produce invalid fold chevrons when trailing content is
+  present. Closes [#79](https://github.com/ToonionOfficial/twrite/issues/79).
+
+### Changed
+- **Flatten default heading colors (`twrite-gpui`)**:
+  change Heading(1..6) default theme colors from bright orange to neutral gray.
+
 ## [0.16.0] - 2026-09-18
 
 ### Added
