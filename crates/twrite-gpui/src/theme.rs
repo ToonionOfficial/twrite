@@ -22,12 +22,8 @@ pub struct SyntaxTheme {
     pub operator: Hsla,
     /// Color for punctuation and delimiter characters.
     pub punctuation: Hsla,
-    /// Color for top-level headers (# Header).
-    pub heading1: Hsla,
-    /// Color for second-level headers (## Header).
-    pub heading2: Hsla,
-    /// Color for third-level headers (### Header).
-    pub heading3: Hsla,
+    /// Color for headings
+    pub heading: Hsla,
     /// Color for bold text.
     pub bold: Hsla,
     /// Color for italic text.
@@ -62,29 +58,35 @@ pub struct SyntaxTheme {
 impl Default for SyntaxTheme {
     fn default() -> Self {
         Self {
-            keyword: rgb(0xcba6f7).into(),
-            function: rgb(0x89b4fa).into(),
-            type_name: rgb(0xf9e2af).into(),
-            string: rgb(0xa6e3a1).into(),
-            number: rgb(0xfab387).into(),
-            comment: rgb(0x6c7086).into(),
-            operator: rgb(0x89dceb).into(),
-            punctuation: rgb(0x9399b2).into(),
-            heading1: rgb(0xffb959).into(),
-            heading2: rgb(0xffb959).into(),
-            heading3: rgb(0xffb959).into(),
-            bold: rgb(0xcdd6f4).into(),
-            italic: rgb(0xb4befe).into(),
-            code: rgb(0xf5c2e7).into(),
+            // Markdown / syntax should mostly use the normal text color.
+            keyword: rgb(0xe6e1e9).into(),
+            function: rgb(0xe6e1e9).into(),
+            type_name: rgb(0xe6e1e9).into(),
+            string: rgb(0xe6e1e9).into(),
+            number: rgb(0xe6e1e9).into(),
+            comment: rgb(0x8f8c96).into(),
+            operator: rgb(0xe6e1e9).into(),
+            punctuation: rgb(0xb5b1ba).into(),
+
+            heading: rgb(0xe6e1e9).into(),
+
+            bold: rgb(0xe6e1e9).into(),
+            italic: rgb(0xe6e1e9).into(),
+            code: rgb(0xe6e1e9).into(),
             code_bg: hsla(0.65, 0.4, 0.6, 0.15),
             highlight_bg: hsla(0.11, 0.85, 0.6, 0.35),
+
+            // Semantic UI elements can retain color.
             callout_note: rgb(0x89b4fa).into(),
             callout_tip: rgb(0xa6e3a1).into(),
             callout_warning: rgb(0xf9e2af).into(),
             callout_caution: rgb(0xfab387).into(),
             callout_important: rgb(0xf38ba8).into(),
+
             link: rgb(0x89b4fa).into(),
+
             custom: HashMap::new(),
+
             error: rgb(0xf38ba8).into(),
             warning: rgb(0xf9e2af).into(),
         }
@@ -200,9 +202,7 @@ impl EditorTheme {
             HighlightTag::Comment => self.syntax.comment,
             HighlightTag::Operator => self.syntax.operator,
             HighlightTag::Punctuation => self.syntax.punctuation,
-            HighlightTag::Heading(1) => self.syntax.heading1,
-            HighlightTag::Heading(2) => self.syntax.heading2,
-            HighlightTag::Heading(_) => self.syntax.heading3,
+            HighlightTag::Heading(_) => self.syntax.heading,
             HighlightTag::Bold => self.syntax.bold,
             HighlightTag::Italic => self.syntax.italic,
             HighlightTag::Code => self.syntax.code,
