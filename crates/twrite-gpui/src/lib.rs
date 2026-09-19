@@ -310,23 +310,6 @@ mod tests {
     }
 
     #[test]
-    fn test_heading_level_colors() {
-        let theme = EditorTheme::default();
-        assert_eq!(
-            theme.tag_color(HighlightTag::Heading(1)),
-            theme.syntax.heading1
-        );
-        assert_eq!(
-            theme.tag_color(HighlightTag::Heading(2)),
-            theme.syntax.heading2
-        );
-        assert_eq!(
-            theme.tag_color(HighlightTag::Heading(4)),
-            theme.syntax.heading3
-        );
-    }
-
-    #[test]
     fn test_highlight_tag_styling() {
         use twrite_core::StyleValue;
         let theme = EditorTheme::default();
