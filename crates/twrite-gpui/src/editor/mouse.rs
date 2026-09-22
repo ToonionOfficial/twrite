@@ -19,6 +19,31 @@ impl Editor {
         self.focus_handle.focus(window);
         self.reset_blink_cursor(cx);
 
+        // An open completion popup owns its clicks: rows activate,
+        // anything else dismisses the session and falls through so the
+        // click still moves the cursor.
+        if let Some(rect) = self.completion_popup_rect() {
+            if rect.contains(&event.position) {
+                let snapshot = self
+                    .hooks
+                    .iter()
+                    .find_map(|hook| hook.completion_snapshot());
+                let count = snapshot.as_ref().map(|s| s.items.len()).unwrap_or(0);
+                if let Some(index) = super::completion::completion_row_at_position(
+                    event.position,
+                    rect.origin,
+                    count,
+                ) {
+                    self.dispatch_completion_select(index, Some(window), cx);
+                    return;
+                }
+            } else {
+                for hook in &mut self.hooks {
+                    hook.dismiss_completion();
+                }
+            }
+        }
+
         if event.click_count == 1
             && !event.modifiers.shift
             && let Some(url) = self.link_at_position(event.position)

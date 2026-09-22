@@ -23,6 +23,9 @@ impl Editor {
         if !self.config.context_menu {
             return;
         }
+        for hook in &mut self.hooks {
+            hook.dismiss_completion();
+        }
         self.focus_handle.focus(window);
         self.reset_blink_cursor(cx);
 

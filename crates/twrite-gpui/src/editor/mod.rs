@@ -1,4 +1,5 @@
 mod clipboard;
+mod completion;
 mod context_menu;
 mod geometry;
 mod keyboard;

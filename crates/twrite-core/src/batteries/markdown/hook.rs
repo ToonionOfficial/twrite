@@ -1,7 +1,8 @@
 use std::sync::Arc;
 
 use crate::{
-    EditorHook, HookContext, HookEffect, HookOutcome, KeyCode, KeyEvent, Point, Selection,
+    CompletionSnapshot, EditorBuffer, EditorHook, HookContext, HookEffect, HookOutcome, KeyCode,
+    KeyEvent, Point, PromptItem, Selection, fuzzy_filter,
 };
 
 use super::config::MarkdownConfig;
@@ -11,10 +12,29 @@ use super::table::{
     TableRowKind, clean_table_line, find_unescaped_pipes, split_table_cells, table_block_at,
 };
 
-/// Resolves a wikilink target to a file path the host loads.
-/// Receives the note name and optional heading; returns `None` when the note
-/// is unknown so the hook can report it instead of navigating.
-pub type WikilinkResolver = Arc<dyn Fn(&str, Option<&str>) -> Option<String> + Send + Sync>;
+/// Supplies wikilink completion candidates for a query string.
+///
+/// Hosts map the raw query (text between `[[` and the cursor) to candidate
+/// rows however they store data (files, database, memory); the hook ranks
+/// with `fuzzy_filter` and owns the session. Candidates should arrive
+/// pre-capped for large vaults.
+pub type WikilinkCompletionProvider = Arc<dyn Fn(&str) -> Vec<PromptItem> + Send + Sync>;
+
+/// Maximum rows kept per completion refresh.
+const MAX_COMPLETION_ITEMS: usize = 8;
+
+/// An in-progress `[[` completion: anchor plus ranked rows.
+#[derive(Debug, Clone)]
+struct CompletionSession {
+    /// Buffer byte offset of the opening `[[`.
+    trigger_start: usize,
+    /// Buffer row of the anchor (sessions never span lines).
+    trigger_row: usize,
+    /// Ranked candidate rows.
+    items: Vec<PromptItem>,
+    /// Selected row index.
+    selected: usize,
+}
 
 /// An editor hook providing Markdown shortcuts (Ctrl+B, Ctrl+I, Ctrl+K), smart list continuation, and task list toggles.
 #[derive(Clone)]
@@ -24,7 +44,8 @@ pub struct MarkdownHook {
     list_indentation: bool,
     list_reordering: bool,
     list_indent_size: usize,
-    wikilink_resolver: Option<WikilinkResolver>,
+    completion_provider: Option<WikilinkCompletionProvider>,
+    completion: Option<CompletionSession>,
 }
 
 impl std::fmt::Debug for MarkdownHook {
@@ -36,7 +57,11 @@ impl std::fmt::Debug for MarkdownHook {
             .field("list_indentation", &self.list_indentation)
             .field("list_reordering", &self.list_reordering)
             .field("list_indent_size", &self.list_indent_size)
-            .field("has_wikilink_resolver", &self.wikilink_resolver.is_some())
+            .field(
+                "has_completion_provider",
+                &self.completion_provider.is_some(),
+            )
+            .field("completion_active", &self.completion.is_some())
             .finish()
     }
 }
@@ -56,7 +81,8 @@ impl MarkdownHook {
             list_indentation: true,
             list_reordering: true,
             list_indent_size: 2,
-            wikilink_resolver: None,
+            completion_provider: None,
+            completion: None,
         }
     }
 
@@ -68,7 +94,8 @@ impl MarkdownHook {
             list_indentation: config.list_indentation,
             list_reordering: config.list_reordering,
             list_indent_size: config.list_indent_size,
-            wikilink_resolver: None,
+            completion_provider: None,
+            completion: None,
         }
     }
 
@@ -122,42 +149,265 @@ impl MarkdownHook {
         self.list_indent_size
     }
 
-    /// Sets the callback resolving wikilink note names to file paths.
-    pub fn set_wikilink_resolver(&mut self, resolver: WikilinkResolver) {
-        self.wikilink_resolver = Some(resolver);
-    }
-
-    /// Returns whether a wikilink resolver is configured.
-    pub fn has_wikilink_resolver(&self) -> bool {
-        self.wikilink_resolver.is_some()
-    }
-
-    /// Follows the wikilink covering `col` on `row` using the given resolver.
-    fn follow_wikilink_with(
-        ctx: &mut HookContext,
-        row: usize,
-        col: usize,
-        resolver: &WikilinkResolver,
-    ) -> bool {
+    /// Reports the wikilink covering `col` on `row` as a `FollowLink`
+    /// effect for the host to resolve against its own storage. Returns
+    /// whether a wikilink was hit.
+    fn follow_wikilink_at(ctx: &mut HookContext, row: usize, col: usize) -> bool {
         if row >= ctx.buffer.len_lines() {
             return false;
         }
         let line = ctx.buffer.line_to_string(row);
-        let resolver = resolver.clone();
         let Some(target) = parse_wikilinks(&line)
             .into_iter()
             .find(|target| target.full_range.contains(&col))
         else {
             return false;
         };
-        match resolver(&target.note, target.heading.as_deref()) {
-            Some(path) => ctx.effects.push(HookEffect::Load { path }),
-            None => ctx.effects.push(HookEffect::Message(format!(
-                "note not found: {}",
-                target.note
-            ))),
-        }
+        ctx.effects.push(HookEffect::FollowLink {
+            target: target.note,
+            fragment: target.heading,
+            label: target.alias,
+        });
         true
+    }
+
+    /// Sets the callback supplying wikilink completion candidates.
+    pub fn set_completion_provider(&mut self, provider: WikilinkCompletionProvider) {
+        self.completion_provider = Some(provider);
+    }
+
+    /// Returns whether a completion provider is configured.
+    pub fn has_completion_provider(&self) -> bool {
+        self.completion_provider.is_some()
+    }
+
+    /// Reads the live query between the session anchor and the cursor.
+    /// Returns `None` when edits broke the anchor (closed or unclosed
+    /// brackets, row change); callers dismiss the session then.
+    fn completion_query(buffer: &EditorBuffer, session: &CompletionSession) -> Option<String> {
+        let cursor = buffer.cursor_offset();
+        if cursor < session.trigger_start + 2 {
+            return None;
+        }
+        if buffer.cursor_point().row != session.trigger_row {
+            return None;
+        }
+        let text = buffer.text();
+        if !text
+            .get_byte_slice(session.trigger_start..session.trigger_start + 2)
+            .is_some_and(|slice| slice == "[[")
+        {
+            return None;
+        }
+        let query = text.get_byte_slice(session.trigger_start + 2..cursor)?;
+        Some(query.chars().collect())
+    }
+
+    /// Re-ranks session rows for `query`, capping visible rows.
+    fn refresh_completion(&mut self, query: &str) {
+        let (candidates, ranked) =
+            match (self.completion.as_mut(), self.completion_provider.clone()) {
+                (Some(_), Some(provider)) => {
+                    let candidates = provider(query);
+                    let ranked = fuzzy_filter(&candidates, query);
+                    (candidates, ranked)
+                }
+                _ => return,
+            };
+        if let Some(session) = self.completion.as_mut() {
+            session.items = ranked
+                .into_iter()
+                .take(MAX_COMPLETION_ITEMS)
+                .map(|(index, _)| candidates[index].clone())
+                .collect();
+            session.selected = session.selected.min(session.items.len().saturating_sub(1));
+        }
+    }
+
+    /// Opens a session at the just-typed second `[` (cursor sits after it).
+    fn open_completion(&mut self, trigger_start: usize, trigger_row: usize, query: &str) {
+        self.completion = Some(CompletionSession {
+            trigger_start,
+            trigger_row,
+            items: Vec::new(),
+            selected: 0,
+        });
+        self.refresh_completion(query);
+    }
+
+    /// Inserts the selected row's label over the query fragment, preserving
+    /// any `|alias` suffix and ensuring closing `]]`. Returns whether a row
+    /// was accepted.
+    fn accept_completion_at(&mut self, ctx: &mut HookContext, index: usize) -> bool {
+        let (trigger_start, label) = match self.completion.as_ref() {
+            Some(session) if index < session.items.len() => {
+                (session.trigger_start, session.items[index].label.clone())
+            }
+            _ => return false,
+        };
+        let cursor = ctx.buffer.cursor_offset();
+        let query_start = trigger_start + 2;
+        if cursor < query_start {
+            self.completion = None;
+            return false;
+        }
+        let query_text = match ctx
+            .buffer
+            .text()
+            .get_byte_slice(query_start..cursor)
+            .map(|slice| slice.chars().collect::<String>())
+        {
+            Some(query_text) => query_text,
+            None => {
+                self.completion = None;
+                return false;
+            }
+        };
+        let replace_end = match query_text.find('|') {
+            Some(pipe) => query_start + pipe,
+            None => cursor,
+        };
+        let suffix_len = cursor.saturating_sub(replace_end);
+        ctx.buffer.replace_range(query_start..replace_end, &label);
+        let label_end = query_start + label.len();
+        let suffix_end = label_end + suffix_len;
+        let needs_close = ctx
+            .buffer
+            .text()
+            .get_byte_slice(suffix_end..suffix_end + 2)
+            .is_none_or(|slice| slice != "]]");
+        if needs_close {
+            ctx.buffer.set_cursor_offset(suffix_end);
+            ctx.buffer.insert("]]");
+        }
+        ctx.buffer.set_cursor_offset(label_end);
+        *ctx.selection = None;
+        self.completion = None;
+        true
+    }
+
+    /// Routes one keystroke through an active completion session.
+    /// Returns `None` when the key falls through to normal handling (either
+    /// the session just dismissed itself or the key is not a completion key).
+    fn handle_completion_key(
+        &mut self,
+        ctx: &mut HookContext,
+        event: &KeyEvent,
+    ) -> Option<HookOutcome> {
+        let anchor_live = self
+            .completion
+            .as_ref()
+            .is_some_and(|session| Self::completion_query(ctx.buffer, session).is_some());
+        if !anchor_live {
+            self.completion = None;
+            return None;
+        }
+        match &event.code {
+            KeyCode::Escape => {
+                self.completion = None;
+                Some(HookOutcome::Consumed)
+            }
+            KeyCode::Up
+                if !event.modifiers.ctrl && !event.modifiers.alt && !event.modifiers.meta =>
+            {
+                if let Some(session) = self.completion.as_mut()
+                    && !session.items.is_empty()
+                {
+                    session.selected = session
+                        .selected
+                        .checked_sub(1)
+                        .unwrap_or(session.items.len() - 1);
+                }
+                Some(HookOutcome::Consumed)
+            }
+            KeyCode::Down
+                if !event.modifiers.ctrl && !event.modifiers.alt && !event.modifiers.meta =>
+            {
+                if let Some(session) = self.completion.as_mut()
+                    && !session.items.is_empty()
+                {
+                    session.selected = (session.selected + 1) % session.items.len();
+                }
+                Some(HookOutcome::Consumed)
+            }
+            KeyCode::Enter if !event.modifiers.shift && plain_modifiers(&event.modifiers) => {
+                let index = self.completion.as_ref().map(|session| session.selected);
+                match index {
+                    Some(index)
+                        if self
+                            .completion
+                            .as_ref()
+                            .is_some_and(|session| !session.items.is_empty()) =>
+                    {
+                        self.accept_completion_at(ctx, index);
+                        Some(HookOutcome::Consumed)
+                    }
+                    _ => {
+                        self.completion = None;
+                        None
+                    }
+                }
+            }
+            KeyCode::Tab if plain_modifiers(&event.modifiers) => {
+                let index = self.completion.as_ref().map(|session| session.selected);
+                match index {
+                    Some(index)
+                        if self
+                            .completion
+                            .as_ref()
+                            .is_some_and(|session| !session.items.is_empty()) =>
+                    {
+                        self.accept_completion_at(ctx, index);
+                        Some(HookOutcome::Consumed)
+                    }
+                    _ => None,
+                }
+            }
+            KeyCode::Backspace if plain_modifiers(&event.modifiers) => {
+                let trigger_start = self.completion.as_ref().map(|s| s.trigger_start);
+                match trigger_start {
+                    Some(trigger_start) if ctx.buffer.cursor_offset() > trigger_start + 2 => {
+                        ctx.buffer.backspace();
+                        let cursor = ctx.buffer.cursor_offset();
+                        let query = ctx
+                            .buffer
+                            .text()
+                            .get_byte_slice(trigger_start + 2..cursor)
+                            .map(|slice| slice.chars().collect::<String>())
+                            .unwrap_or_default();
+                        self.refresh_completion(completion_fragment(&query));
+                        Some(HookOutcome::Consumed)
+                    }
+                    _ => {
+                        self.completion = None;
+                        None
+                    }
+                }
+            }
+            KeyCode::Char(current) if plain_modifiers(&event.modifiers) => {
+                if *current == ']' {
+                    self.completion = None;
+                    return None;
+                }
+                let mut text = [0u8; 4];
+                ctx.buffer.insert(current.encode_utf8(&mut text));
+                let trigger_start = self
+                    .completion
+                    .as_ref()
+                    .map(|session| session.trigger_start)
+                    .unwrap_or(0);
+                let cursor = ctx.buffer.cursor_offset();
+                let query = ctx
+                    .buffer
+                    .text()
+                    .get_byte_slice(trigger_start + 2..cursor)
+                    .map(|slice| slice.chars().collect::<String>())
+                    .unwrap_or_default();
+                self.refresh_completion(completion_fragment(&query));
+                Some(HookOutcome::Consumed)
+            }
+            _ => None,
+        }
     }
 
     fn toggle_marker_at_row(ctx: &mut HookContext, row: usize) -> bool {
@@ -308,8 +558,53 @@ impl MarkdownHook {
     }
 }
 
+/// Reports keys with no active modifiers (Shift may be held for capitals).
+fn plain_modifiers(modifiers: &crate::Modifiers) -> bool {
+    !modifiers.ctrl && !modifiers.alt && !modifiers.meta
+}
+
+/// Returns the completable target fragment of a completion query: text up
+/// to any `|alias` separator. Alias text is preserved verbatim on accept
+/// and never sent to the provider, keeping providers trivial.
+fn completion_fragment(query: &str) -> &str {
+    query.split('|').next().unwrap_or(query)
+}
+
+/// Returns the offset of the first `[` when the cursor sits right after one,
+/// meaning the next typed `[` opens a `[[` completion.
+fn completion_trigger_at(ctx: &HookContext) -> Option<usize> {
+    let cursor = ctx.buffer.cursor_offset();
+    if cursor == 0 {
+        return None;
+    }
+    let before = ctx
+        .buffer
+        .text()
+        .get_byte_slice(cursor - 1..cursor)
+        .map(|slice| slice == "[")
+        .unwrap_or(false);
+    before.then_some(cursor - 1)
+}
+
 impl EditorHook for MarkdownHook {
     fn on_key(&mut self, ctx: &mut HookContext, event: &KeyEvent) -> HookOutcome {
+        // An open completion session owns its keys; anything it releases
+        // falls through to normal handling below.
+        if self.completion.is_some() {
+            if let Some(outcome) = self.handle_completion_key(ctx, event) {
+                return outcome;
+            }
+        } else if let KeyCode::Char('[') = event.code
+            && plain_modifiers(&event.modifiers)
+            && self.completion_provider.is_some()
+            && let Some(trigger_start) = completion_trigger_at(ctx)
+        {
+            ctx.buffer.insert("[");
+            let trigger_row = ctx.buffer.offset_to_point(trigger_start).row;
+            self.open_completion(trigger_start, trigger_row, "");
+            return HookOutcome::Consumed;
+        }
+
         if event.modifiers.ctrl || event.modifiers.meta {
             match &event.code {
                 KeyCode::Char('b') => {
@@ -453,10 +748,10 @@ impl EditorHook for MarkdownHook {
             // Plain `Enter` on a wikilink follows it. List and table
             // continuation above take precedence so items containing links
             // keep editing behavior.
-            if let Some(resolver) = self.wikilink_resolver.clone() {
+            {
                 let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
                 let col = cursor.saturating_sub(line_start);
-                if Self::follow_wikilink_with(ctx, row, col, &resolver) {
+                if Self::follow_wikilink_at(ctx, row, col) {
                     return HookOutcome::Consumed;
                 }
             }
@@ -499,12 +794,55 @@ impl EditorHook for MarkdownHook {
         if self.interactive_tasks && Self::toggle_marker_at_row(ctx, row) {
             return HookOutcome::Consumed;
         }
-        if let Some(resolver) = self.wikilink_resolver.clone()
-            && Self::follow_wikilink_with(ctx, row, col, &resolver)
-        {
+        if Self::follow_wikilink_at(ctx, row, col) {
             return HookOutcome::Consumed;
         }
         HookOutcome::PassThrough
+    }
+
+    fn on_selection_change(&mut self, buffer: &EditorBuffer, _selection: Option<&Selection>) {
+        let dismiss = match self.completion.as_ref() {
+            Some(session) => {
+                let cursor = buffer.cursor_offset();
+                if buffer.cursor_point().row != session.trigger_row
+                    || cursor < session.trigger_start
+                {
+                    true
+                } else {
+                    buffer
+                        .text()
+                        .get_byte_slice(session.trigger_start..cursor)
+                        .map(|slice| {
+                            let text: String = slice.chars().collect();
+                            text.contains("]]") || text.contains('\n')
+                        })
+                        .unwrap_or(true)
+                }
+            }
+            None => false,
+        };
+        if dismiss {
+            self.completion = None;
+        }
+    }
+
+    fn completion_snapshot(&self) -> Option<CompletionSnapshot> {
+        self.completion.as_ref().map(|session| CompletionSnapshot {
+            items: session.items.clone(),
+            selected: session.selected,
+        })
+    }
+
+    fn on_completion_select(&mut self, ctx: &mut HookContext, index: usize) -> HookOutcome {
+        if self.accept_completion_at(ctx, index) {
+            HookOutcome::Consumed
+        } else {
+            HookOutcome::PassThrough
+        }
+    }
+
+    fn dismiss_completion(&mut self) {
+        self.completion = None;
     }
 
     fn status_text(&self) -> Option<&str> {
@@ -519,12 +857,39 @@ mod tests {
         EditorBuffer, HookContext, HookEffect, HookOutcome, KeyEvent, PromptState, Selection,
     };
 
-    fn hook_with_resolver() -> MarkdownHook {
+    fn hook_with_notes() -> MarkdownHook {
         let mut hook = MarkdownHook::new();
-        hook.set_wikilink_resolver(Arc::new(|note: &str, _heading: Option<&str>| {
-            Some(format!("/notes/{note}.md"))
+        hook.set_completion_provider(Arc::new(|query: &str| {
+            ["Notebook", "Note", "Blog"]
+                .into_iter()
+                .filter(|name| name.contains(query))
+                .map(PromptItem::new)
+                .collect()
         }));
         hook
+    }
+
+    /// Drives one key through the hook the way the editor does: `on_key`
+    /// first, then the selection-change broadcast that follows every input.
+    fn press_completion_key(
+        hook: &mut MarkdownHook,
+        buffer: &mut EditorBuffer,
+        selection: &mut Option<Selection>,
+        cursor_style: &mut crate::CursorStyle,
+        prompt: &mut PromptState,
+        effects: &mut Vec<HookEffect>,
+        event: KeyEvent,
+    ) -> HookOutcome {
+        let outcome = {
+            let mut ctx = HookContext::new(buffer, selection, cursor_style, prompt, effects);
+            hook.on_key(&mut ctx, &event)
+        };
+        hook.on_selection_change(buffer, selection.as_ref());
+        outcome
+    }
+
+    fn plain_char_key(code: KeyCode) -> KeyEvent {
+        KeyEvent::plain(code)
     }
 
     #[test]
@@ -1290,8 +1655,7 @@ mod tests {
         let mut cursor_style = crate::CursorStyle::Bar;
         let mut prompt = PromptState::new();
         let mut effects = Vec::new();
-        let mut hook = hook_with_resolver();
-        assert!(hook.has_wikilink_resolver());
+        let mut hook = MarkdownHook::new();
         let mut ctx = HookContext::new(
             &mut buffer,
             &mut selection,
@@ -1302,14 +1666,42 @@ mod tests {
         assert_eq!(hook.on_click(&mut ctx, 0, 6), HookOutcome::Consumed);
         assert_eq!(
             ctx.effects.as_slice(),
-            &[HookEffect::Load {
-                path: "/notes/Note.md".to_string()
+            &[HookEffect::FollowLink {
+                target: "Note".to_string(),
+                fragment: None,
+                label: None,
             }]
         );
     }
 
     #[test]
-    fn test_markdown_hook_click_without_resolver_passes_through() {
+    fn test_markdown_hook_click_reports_full_target() {
+        let mut buffer = EditorBuffer::new("See [[Note#Heading|Alias]] here");
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+        assert_eq!(hook.on_click(&mut ctx, 0, 8), HookOutcome::Consumed);
+        assert_eq!(
+            ctx.effects.as_slice(),
+            &[HookEffect::FollowLink {
+                target: "Note".to_string(),
+                fragment: Some("Heading".to_string()),
+                label: Some("Alias".to_string()),
+            }]
+        );
+    }
+
+    #[test]
+    fn test_markdown_hook_click_outside_wikilink_passes_through() {
         let mut buffer = EditorBuffer::new("See [[Note]] here");
         let mut selection = None;
         let mut cursor_style = crate::CursorStyle::Bar;
@@ -1323,31 +1715,8 @@ mod tests {
             &mut prompt,
             &mut effects,
         );
-        assert_eq!(hook.on_click(&mut ctx, 0, 6), HookOutcome::PassThrough);
+        assert_eq!(hook.on_click(&mut ctx, 0, 0), HookOutcome::PassThrough);
         assert!(ctx.effects.is_empty());
-    }
-
-    #[test]
-    fn test_markdown_hook_click_unknown_note_reports_message() {
-        let mut buffer = EditorBuffer::new("See [[Missing]] here");
-        let mut selection = None;
-        let mut cursor_style = crate::CursorStyle::Bar;
-        let mut prompt = PromptState::new();
-        let mut effects = Vec::new();
-        let mut hook = MarkdownHook::new();
-        hook.set_wikilink_resolver(Arc::new(|_note: &str, _heading: Option<&str>| None));
-        let mut ctx = HookContext::new(
-            &mut buffer,
-            &mut selection,
-            &mut cursor_style,
-            &mut prompt,
-            &mut effects,
-        );
-        assert_eq!(hook.on_click(&mut ctx, 0, 6), HookOutcome::Consumed);
-        assert_eq!(
-            ctx.effects.as_slice(),
-            &[HookEffect::Message("note not found: Missing".to_string())]
-        );
     }
 
     #[test]
@@ -1358,7 +1727,7 @@ mod tests {
         let mut cursor_style = crate::CursorStyle::Bar;
         let mut prompt = PromptState::new();
         let mut effects = Vec::new();
-        let mut hook = hook_with_resolver();
+        let mut hook = MarkdownHook::new();
         let mut ctx = HookContext::new(
             &mut buffer,
             &mut selection,
@@ -1372,9 +1741,358 @@ mod tests {
         );
         assert_eq!(
             ctx.effects.as_slice(),
-            &[HookEffect::Load {
-                path: "/notes/Note.md".to_string()
+            &[HookEffect::FollowLink {
+                target: "Note".to_string(),
+                fragment: None,
+                label: None,
             }]
         );
+    }
+
+    #[test]
+    fn test_completion_opens_on_second_bracket() {
+        let mut buffer = EditorBuffer::new("See [");
+        buffer.set_cursor_offset(5);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        assert!(hook.has_completion_provider());
+        let outcome = press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            plain_char_key(KeyCode::Char('[')),
+        );
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(buffer.text().to_string(), "See [[");
+        let snapshot = hook.completion_snapshot().expect("session must be open");
+        assert_eq!(snapshot.items.len(), 3);
+        assert_eq!(snapshot.selected, 0);
+    }
+
+    #[test]
+    fn test_completion_ignores_single_bracket() {
+        let mut buffer = EditorBuffer::new("See ");
+        buffer.set_cursor_offset(4);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        let outcome = press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            plain_char_key(KeyCode::Char('[')),
+        );
+        assert_eq!(outcome, HookOutcome::PassThrough);
+        assert!(hook.completion_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_completion_filters_as_you_type() {
+        let mut buffer = EditorBuffer::new("See [");
+        buffer.set_cursor_offset(5);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        let open = plain_char_key(KeyCode::Char('['));
+        assert_eq!(
+            press_completion_key(
+                &mut hook,
+                &mut buffer,
+                &mut selection,
+                &mut cursor_style,
+                &mut prompt,
+                &mut effects,
+                open
+            ),
+            HookOutcome::Consumed
+        );
+        for key in ['N', 'o', 't', 'e'] {
+            let outcome = press_completion_key(
+                &mut hook,
+                &mut buffer,
+                &mut selection,
+                &mut cursor_style,
+                &mut prompt,
+                &mut effects,
+                plain_char_key(KeyCode::Char(key)),
+            );
+            assert_eq!(outcome, HookOutcome::Consumed);
+        }
+        assert_eq!(buffer.text().to_string(), "See [[Note");
+        let snapshot = hook.completion_snapshot().expect("session must be open");
+        assert_eq!(snapshot.items.len(), 2);
+        assert!(
+            snapshot
+                .items
+                .iter()
+                .all(|item| item.label.contains("Note"))
+        );
+    }
+
+    #[test]
+    fn test_completion_enter_accepts_selected_label() {
+        let mut buffer = EditorBuffer::new("See [");
+        buffer.set_cursor_offset(5);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        for key in ['[', 'B', 'l', 'o', 'g'] {
+            press_completion_key(
+                &mut hook,
+                &mut buffer,
+                &mut selection,
+                &mut cursor_style,
+                &mut prompt,
+                &mut effects,
+                plain_char_key(KeyCode::Char(key)),
+            );
+        }
+        let outcome = press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            KeyEvent::plain(KeyCode::Enter),
+        );
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(buffer.text().to_string(), "See [[Blog]]");
+        assert_eq!(buffer.cursor_offset(), 10);
+        assert!(hook.completion_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_completion_navigates_and_tabs_to_accept() {
+        let mut buffer = EditorBuffer::new("[");
+        buffer.set_cursor_offset(1);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            plain_char_key(KeyCode::Char('[')),
+        );
+        press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            KeyEvent::plain(KeyCode::Down),
+        );
+        let snapshot = hook.completion_snapshot().expect("session must be open");
+        assert_eq!(snapshot.selected, 1);
+        press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            KeyEvent::plain(KeyCode::Up),
+        );
+        let snapshot = hook.completion_snapshot().expect("session must be open");
+        assert_eq!(snapshot.selected, 0);
+        let outcome = press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            KeyEvent::plain(KeyCode::Tab),
+        );
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(buffer.text().to_string(), "[[Notebook]]");
+        assert!(hook.completion_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_completion_escape_keeps_typed_text() {
+        let mut buffer = EditorBuffer::new("[");
+        buffer.set_cursor_offset(1);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            plain_char_key(KeyCode::Char('[')),
+        );
+        press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            plain_char_key(KeyCode::Char('x')),
+        );
+        let outcome = press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            KeyEvent::plain(KeyCode::Escape),
+        );
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(buffer.text().to_string(), "[[x");
+        assert!(hook.completion_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_completion_backspace_to_anchor_dismisses() {
+        let mut buffer = EditorBuffer::new("[");
+        buffer.set_cursor_offset(1);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            plain_char_key(KeyCode::Char('[')),
+        );
+        assert!(hook.completion_snapshot().is_some());
+        let outcome = press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            KeyEvent::plain(KeyCode::Backspace),
+        );
+        assert_eq!(outcome, HookOutcome::PassThrough);
+        assert!(hook.completion_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_completion_cursor_leave_dismisses() {
+        let mut buffer = EditorBuffer::new("See [");
+        buffer.set_cursor_offset(5);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            plain_char_key(KeyCode::Char('[')),
+        );
+        assert!(hook.completion_snapshot().is_some());
+        buffer.set_cursor_offset(0);
+        hook.on_selection_change(&buffer, selection.as_ref());
+        assert!(hook.completion_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_completion_mouse_select_accepts_row() {
+        let mut buffer = EditorBuffer::new("[");
+        buffer.set_cursor_offset(1);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            plain_char_key(KeyCode::Char('[')),
+        );
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+        assert_eq!(
+            hook.on_completion_select(&mut ctx, 1),
+            HookOutcome::Consumed
+        );
+        assert_eq!(ctx.buffer.text().to_string(), "[[Note]]");
+        assert!(hook.completion_snapshot().is_none());
+    }
+
+    #[test]
+    fn test_completion_preserves_alias_suffix_on_accept() {
+        let mut buffer = EditorBuffer::new("[");
+        buffer.set_cursor_offset(1);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_notes();
+        for key in ['[', 'N', 'o', 't', 'e', 'b', '|', 'm', 'y'] {
+            press_completion_key(
+                &mut hook,
+                &mut buffer,
+                &mut selection,
+                &mut cursor_style,
+                &mut prompt,
+                &mut effects,
+                plain_char_key(KeyCode::Char(key)),
+            );
+        }
+        assert_eq!(buffer.text().to_string(), "[[Noteb|my");
+        let outcome = press_completion_key(
+            &mut hook,
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+            KeyEvent::plain(KeyCode::Enter),
+        );
+        assert_eq!(outcome, HookOutcome::Consumed);
+        assert_eq!(buffer.text().to_string(), "[[Notebook|my]]");
+        assert!(hook.completion_snapshot().is_none());
     }
 }

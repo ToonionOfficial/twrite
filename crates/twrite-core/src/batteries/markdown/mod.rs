@@ -28,7 +28,7 @@ mod table;
 
 pub use config::{ConcealMode, MarkdownConfig};
 pub use highlight::MarkdownHighlighter;
-pub use hook::{MarkdownHook, WikilinkResolver};
+pub use hook::{MarkdownHook, WikilinkCompletionProvider};
 pub use links::{
     WIKILINK_SCHEME, WikilinkTarget, extract_markdown_links, is_wikilink_url, parse_wikilinks,
     wikilink_url,

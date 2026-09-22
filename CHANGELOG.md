@@ -10,14 +10,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.17.0] - 2026-09-22
 
 ### Added
-- **Wikilinks (`twrite-core`, `twrite-gpui`)**: `[[Note]]`, `[[Note|Alias]]`,
-  and `[[Note#Heading]]` parse into link styled spans with Obsidian style
-  concealment (inactive rows show the label only, the cursor row reveals raw
-  markup for editing). Targets resolve through
-  `MarkdownHook::set_wikilink_resolver` and follow on click or `Enter` via a
-  `Load` effect for resolved notes, while unknown notes report a message and
-  clicks without a resolver fall through to cursor movement. Embeds
-  (`![[...]]`) stay literal for transclusions to claim.
+- **Wikilinks (`twrite-core`, `twrite-gpui`)**: `[[Target]]`,
+  `[[Target|Label]]`, and `[[Target#Fragment]]` parse into link styled spans
+  with Obsidian style concealment (inactive rows show the label only, the
+  cursor row reveals raw markup for editing). Clicking one or pressing
+  `Enter` on it reports a `HookEffect::FollowLink` carrying target,
+  fragment, and label for the host to resolve against any storage (files,
+  database, memory); the core never touches storage. Typing `[[` opens an
+  inline cursor-anchored completion popup fed by a host provider callback
+  (`MarkdownHook::set_completion_provider`), with `Up`/`Down` navigation and
+  `Enter`/`Tab` accept preserving any `|alias` suffix. Embeds (`![[...]]`)
+  stay literal for transclusions to claim.
   Closes [#62](https://github.com/ToonionOfficial/twrite/issues/62).
 
 ## [0.16.1] - 2026-09-19

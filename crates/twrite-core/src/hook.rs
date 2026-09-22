@@ -1,7 +1,7 @@
 use std::ops::Range;
 
 use crate::{ContextMenuContext, ContextMenuItem, EditorBuffer, KeyCode, SearchAction, Selection};
-use crate::{HookEffect, PromptState};
+use crate::{HookEffect, PromptItem, PromptState};
 
 /// Keyboard modifier keys state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -200,6 +200,33 @@ pub trait EditorHook: 'static {
         HookOutcome::PassThrough
     }
 
+    /// Returns a live inline-completion snapshot for renderers, if any.
+    ///
+    /// Hooks driving cursor-anchored completion (e.g. wikilink `[[`
+    /// suggestions) return their filtered rows plus the selected index;
+    /// frontends poll this every frame and draw the popup near the cursor.
+    /// The default is `None` (no completion active).
+    fn completion_snapshot(&self) -> Option<CompletionSnapshot> {
+        None
+    }
+
+    /// Activates an inline-completion row by index into the latest
+    /// [`Self::completion_snapshot`].
+    ///
+    /// Pointer rows cannot travel as [`KeyCode`] (or as context-menu `id`s,
+    /// which are `&'static str` and cannot name dynamic candidates), so
+    /// popup clicks arrive here. The default passes through.
+    fn on_completion_select(&mut self, _ctx: &mut HookContext, _index: usize) -> HookOutcome {
+        HookOutcome::PassThrough
+    }
+
+    /// Dismisses an active inline-completion session, if any.
+    ///
+    /// Editors call this when pointer input outside the popup implies the
+    /// session is over (the session also dismisses itself on cursor moves
+    /// via [`Self::on_selection_change`]). The default does nothing.
+    fn dismiss_completion(&mut self) {}
+
     /// Returns a human-readable status or active mode name, if any.
     fn status_text(&self) -> Option<&str> {
         None
@@ -242,6 +269,20 @@ pub struct SearchSnapshot {
     pub query: String,
     /// Current replacement string.
     pub replacement: String,
+}
+
+/// Owned snapshot of a hook's inline-completion session for renderers.
+///
+/// Returned by [`EditorHook::completion_snapshot`]; editors poll it every
+/// frame to draw the cursor-anchored popup. Rows reuse [`PromptItem`] so
+/// candidates stay dynamic strings. Owned (not borrowed) so hosts can
+/// retain it across frames without pinning hooks.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CompletionSnapshot {
+    /// Filtered candidate rows in display order.
+    pub items: Vec<PromptItem>,
+    /// Selected row index (always in range when `items` is non-empty).
+    pub selected: usize,
 }
 
 /// Built-in hook that automatically inserts closing quotes, brackets, and braces, wraps selected text, and steps over closing pairs.
