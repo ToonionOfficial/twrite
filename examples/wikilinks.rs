@@ -130,8 +130,10 @@ fn main() {
                     let mut ed = Editor::new(&notes["Overview"], cx);
                     ed.config.line_numbers = true;
 
-                    let mut markdown_config = MarkdownConfig::default();
-                    markdown_config.conceal_mode = ConcealMode::Hidden;
+                    let markdown_config = MarkdownConfig {
+                        conceal_mode: ConcealMode::Hidden,
+                        ..Default::default()
+                    };
                     // Manual battery wiring (instead of `enable_markdown`)
                     // so the hook instance carries our provider.
                     ed.set_highlighter(MarkdownHighlighter::with_config(markdown_config));
