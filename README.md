@@ -62,6 +62,7 @@ cargo run --example prompt    # 4. input boxes and palettes on ctx.prompt
 cargo run --example markdown --features markdown  # 5. the Markdown battery
 cargo run --example vim       # 6. a full modal Vim system on hooks alone
 cargo run --example context_menu  # supplemental: right-click menu + hook rows (after hooks)
+cargo run --example wikilinks --features markdown  # supplemental: wikilinks + inline completion (after markdown)
 ```
 
 The pattern everywhere is the same: `Editor` owns the buffer, hooks

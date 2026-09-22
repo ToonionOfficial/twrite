@@ -20,7 +20,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   inline cursor-anchored completion popup fed by a host provider callback
   (`MarkdownHook::set_completion_provider`), with `Up`/`Down` navigation and
   `Enter`/`Tab` accept preserving any `|alias` suffix. Embeds (`![[...]]`)
-  stay literal for transclusions to claim.
+  stay literal for transclusions to claim. Ships a `wikilinks` example
+  (`cargo run --example wikilinks --features markdown`) navigating an
+  in-memory note store.
   Closes [#62](https://github.com/ToonionOfficial/twrite/issues/62).
 
 ## [0.16.1] - 2026-09-19

@@ -14,6 +14,7 @@ its number and prerequisites:
    stock `SearchHook` (needs `--features markdown`).
 6. **`vim`**: the full modal system on hooks alone; read last.
 7. **`context_menu`** (supplemental, after `hooks`): the expandable right-click menu — built-in edit rows plus hook-contributed UPPERCASE/separator actions.
+8. **`wikilinks`** (supplemental, after `markdown`): wikilink rendering, inline `[[` completion, and `FollowLink` navigation against an in-memory note store (needs `--features markdown`).
 
 Run any of them with `cargo run --example <name>` (add `--features
 markdown` for the markdown demo).
