@@ -19,12 +19,84 @@ impl Editor {
         self.focus_handle.focus(window);
         self.reset_blink_cursor(cx);
 
+        // An open completion popup owns its clicks: rows activate,
+        // anything else dismisses the session and falls through so the
+        // click still moves the cursor.
+        if let Some(rect) = self.completion_popup_rect() {
+            if rect.contains(&event.position) {
+                let snapshot = self
+                    .hooks
+                    .iter()
+                    .find_map(|hook| hook.completion_snapshot());
+                let count = snapshot.as_ref().map(|s| s.items.len()).unwrap_or(0);
+                if let Some(index) = super::completion::completion_row_at_position(
+                    event.position,
+                    rect.origin,
+                    count,
+                ) {
+                    self.dispatch_completion_select(index, Some(window), cx);
+                    return;
+                }
+            } else {
+                for hook in &mut self.hooks {
+                    hook.dismiss_completion();
+                }
+            }
+        }
+
         if event.click_count == 1
             && !event.modifiers.shift
             && let Some(url) = self.link_at_position(event.position)
         {
-            cx.open_url(&url);
-            return;
+            // Wikilink targets resolve inside the editor through hook
+            // effects, never through the browser. The prefix mirrors
+            // `twrite_core::WIKILINK_SCHEME` without requiring the markdown
+            // feature on this render path.
+            if url.starts_with("wikilink:") {
+                let clicked = find_visible_line(&self.visible_lines, event.position.y)
+                    .map(|visible| (visible.row, visible.line_start_byte, visible.line_len_bytes));
+                if let Some((row, line_start_byte, line_len_bytes)) = clicked {
+                    let offset = self.offset_for_position(event.position, window);
+                    let column = offset.saturating_sub(line_start_byte).min(line_len_bytes);
+                    let initial_version = self.buffer.version();
+                    let mut consumed = false;
+                    let mut hook_index = 0;
+                    while hook_index < self.hooks.len() {
+                        let mut ctx = HookContext::new(
+                            &mut self.buffer,
+                            &mut self.selection,
+                            &mut self.cursor_style,
+                            &mut self.prompt,
+                            &mut self.pending_effects,
+                        );
+                        if self.hooks[hook_index].on_click(&mut ctx, row, column)
+                            == HookOutcome::Consumed
+                        {
+                            consumed = true;
+                            break;
+                        }
+                        hook_index += 1;
+                    }
+                    if consumed {
+                        if self.buffer.version() != initial_version {
+                            for hook in &mut self.hooks {
+                                hook.after_edit(&mut self.buffer);
+                            }
+                        }
+                        for hook in &mut self.hooks {
+                            hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                        }
+                        self.selection = None;
+                        self.is_selecting = false;
+                        self.flush_effects();
+                        cx.notify();
+                        return;
+                    }
+                }
+            } else {
+                cx.open_url(&url);
+                return;
+            }
         }
 
         if event.click_count == 1 && !event.modifiers.shift {

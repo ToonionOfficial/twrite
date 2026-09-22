@@ -52,16 +52,18 @@ pub use effect::HookEffect;
 pub use error::{EditorError, Result as EditorResult};
 pub use folding::{FoldRange, FoldState};
 pub use hook::{
-    AutoPairsHook, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent, Modifiers,
-    SearchSnapshot,
+    AutoPairsHook, CompletionSnapshot, CursorStyle, EditorHook, HookContext, HookOutcome, KeyEvent,
+    Modifiers, SearchSnapshot,
 };
 pub use keycode::KeyCode;
 #[cfg(feature = "markdown")]
 pub use markdown::{
     ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook, TABLE_CELL_TAG,
     TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout, TableRowKind,
-    fence_rows, find_unescaped_pipes, is_fenced_row, parse_delimiter_row, split_table_cells,
+    WIKILINK_SCHEME, WikilinkCompletionProvider, WikilinkTarget, fence_rows, find_unescaped_pipes,
+    is_fenced_row, is_wikilink_url, parse_delimiter_row, parse_wikilinks, split_table_cells,
     table_block_at, table_block_at_with_fences, table_layouts, table_layouts_with_fences,
+    wikilink_url,
 };
 pub use movement::{
     CharKind, classify_char, find_line_end, find_line_range_at, find_line_start,

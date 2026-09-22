@@ -28,8 +28,11 @@ mod table;
 
 pub use config::{ConcealMode, MarkdownConfig};
 pub use highlight::MarkdownHighlighter;
-pub use hook::MarkdownHook;
-pub use links::extract_markdown_links;
+pub use hook::{MarkdownHook, WikilinkCompletionProvider};
+pub use links::{
+    WIKILINK_SCHEME, WikilinkTarget, extract_markdown_links, is_wikilink_url, parse_wikilinks,
+    wikilink_url,
+};
 pub use list::{ListMarker, ParsedListItem, parse_list_item};
 pub use table::{
     TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout,

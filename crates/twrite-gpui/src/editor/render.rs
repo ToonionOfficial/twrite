@@ -79,6 +79,7 @@ impl Render for Editor {
             );
 
         let root = root.child(self.render_context_menu(cx));
+        let root = root.child(self.render_completion(cx));
         if !self.prompt.is_open() {
             return root;
         }

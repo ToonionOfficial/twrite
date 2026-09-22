@@ -50,3 +50,12 @@ required-features = ["markdown"]
 [[example]]
 name = "context_menu"
 path = "../../examples/context_menu.rs"
+
+[[example]]
+name = "wikilinks"
+path = "../../examples/wikilinks.rs"
+required-features = ["markdown"]
+
+[[example]]
+name = "completion"
+path = "../../examples/completion.rs"

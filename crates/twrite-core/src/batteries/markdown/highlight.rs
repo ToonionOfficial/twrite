@@ -926,6 +926,28 @@ mod tests {
     }
 
     #[test]
+    fn test_markdown_wikilink_concealment() {
+        let line = "See [[Note|Alias]] here.";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+        buffer.set_cursor_offset(line.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert!(
+            spans
+                .iter()
+                .any(|s| s.style == StyleValue::Tag(HighlightTag::Link)),
+            "wikilink label must style as a link: {spans:?}"
+        );
+        assert_eq!(
+            ConcealedLine::build(line, &spans).display_text,
+            "See Alias here."
+        );
+    }
+
+    #[test]
     fn test_markdown_task_marker_reveal() {
         // The checkbox structural tag is always present; the raw `- [ ]`
         // bytes reveal only while the cursor sits on the marker (0..6).

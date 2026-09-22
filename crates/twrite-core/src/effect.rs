@@ -15,6 +15,20 @@ pub enum HookEffect {
         /// File path to load.
         path: String,
     },
+    /// Follow an internal link (e.g. a Markdown `[[target]]` wikilink).
+    ///
+    /// The core reports activation only; hosts resolve `target` against
+    /// whatever storage they use (files, database, memory) and decide what
+    /// following means (open, reveal, create, message). This keeps the core
+    /// free of storage assumptions.
+    FollowLink {
+        /// Link target text (note name, document id, anchor name).
+        target: String,
+        /// Optional `#fragment` within the target.
+        fragment: Option<String>,
+        /// Optional display label (`|label` alias), if the link carries one.
+        label: Option<String>,
+    },
     /// Request application exit.
     Quit {
         /// Skip dirty-buffer checks.

@@ -40,6 +40,44 @@ Lines starting with `- [ ]` or `- [x]` (or numbered `1. [ ]`) render as clickabl
 ### Clickable Hyperlinks
 Inline links formatted as `[Link text](https://example.com)` are detected. Single-clicking a link opens the URL in the system default browser. Double-clicking still selects the text for editing.
 
+### Wikilinks
+`[[Target]]`, `[[Target|Label]]`, and `[[Target#Fragment]]` render as links with Obsidian style concealment (inactive rows show the label only). Clicking one or pressing `Enter` on it reports a `HookEffect::FollowLink` carrying `target`, `fragment`, and `label`; the host resolves that against whatever storage it uses (files, database, memory) by draining `editor.take_effects()`. The core never touches storage:
+
+```rust
+use twrite::HookEffect;
+
+// ... ed.add_hook(MarkdownHook::new()) ...
+
+// After input, drain and resolve against your own store:
+let pending = editor.update(cx, |editor, _| editor.take_effects());
+for effect in pending {
+    if let HookEffect::FollowLink {
+        target,
+        fragment,
+        label,
+    } = effect
+    {
+        open_target_in_your_store(&target, fragment.as_deref(), label.as_deref());
+    }
+}
+```
+
+Typing `[[` opens an inline completion popup near the cursor. Provide candidates through a provider callback (plain strings in, storage stays yours); the hook filters, navigates (`Up`/`Down`), accepts (`Enter`/`Tab`, preserving any `|alias` suffix), and dismisses (`Esc`, typing `]]`, or moving the cursor away):
+
+```rust
+use std::sync::Arc;
+use twrite::{MarkdownHook, PromptItem};
+
+let mut hooks = MarkdownHook::new();
+hooks.set_completion_provider(Arc::new(|query: &str| {
+    list_names_in_your_store()
+        .into_iter()
+        .filter(|name| name.contains(query))
+        .map(|name| PromptItem::new(&name))
+        .collect()
+}));
+```
+
 ### Text Highlight
 Wrapping text in double equals signs (`==important==`) renders it with a tinted background wash. The markers conceal and reveal following the active conceal mode, word by word like other inline formatting.
 

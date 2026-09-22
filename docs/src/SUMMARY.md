@@ -11,6 +11,7 @@
 - [Custom Hooks & Shortcuts](recipe-hooks.md)
 - [Command Palettes & Prompts](recipe-prompt.md)
 - [Right-Click Context Menu](recipe-context-menu.md)
+- [Inline Completion](recipe-completion.md)
 - [Modal & Vim Editing](recipe-vim.md)
 
 # Concepts
