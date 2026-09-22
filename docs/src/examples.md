@@ -15,7 +15,7 @@ its number and prerequisites:
 6. **`vim`**: the full modal system on hooks alone; read last.
 7. **`context_menu`** (supplemental, after `hooks`): the expandable right-click menu — built-in edit rows plus hook-contributed UPPERCASE/separator actions.
 8. **`wikilinks`** (supplemental, after `markdown`): wikilink rendering, inline `[[` completion, and `FollowLink` navigation against an in-memory note store (needs `--features markdown`).
-9. **`completion`** (supplemental, after `hooks`): the generic inline-completion surface on the hook system alone — an `@mention` popup with no feature flags.
+9. **`completion`** (supplemental, after `hooks`): the generic inline-completion surface on the hook system alone - an `@mention` popup with no feature flags.
 
 Run any of them with `cargo run --example <name>` (add `--features
 markdown` for the markdown demo).
