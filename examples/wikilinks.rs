@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use gpui::*;
-use twrite::markdown::{MarkdownHighlighter, MarkdownHook};
+use twrite::markdown::{ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook};
 use twrite::{Editor, HookEffect, PromptItem};
 
 /// In-memory note store standing in for any host storage.
@@ -129,9 +129,12 @@ fn main() {
                 let editor = cx.new(|cx| {
                     let mut ed = Editor::new(&notes["Overview"], cx);
                     ed.config.line_numbers = true;
+
+                    let mut markdown_config = MarkdownConfig::default();
+                    markdown_config.conceal_mode = ConcealMode::Hidden;
                     // Manual battery wiring (instead of `enable_markdown`)
                     // so the hook instance carries our provider.
-                    ed.set_highlighter(MarkdownHighlighter::new());
+                    ed.set_highlighter(MarkdownHighlighter::with_config(markdown_config));
                     let mut hooks = MarkdownHook::new();
                     let candidates = notes.clone();
                     hooks.set_completion_provider(Arc::new(move |query: &str| {
@@ -144,6 +147,7 @@ fn main() {
                         rows
                     }));
                     ed.add_hook(hooks);
+
                     ed
                 });
 
