@@ -14,10 +14,29 @@ use super::table::{
 
 /// Supplies wikilink completion candidates for a query string.
 ///
-/// Hosts map the raw query (text between `[[` and the cursor) to candidate
-/// rows however they store data (files, database, memory); the hook ranks
-/// with `fuzzy_filter` and owns the session. Candidates should arrive
-/// pre-capped for large vaults.
+/// Hosts map the raw query (the target fragment between `[[` and the
+/// cursor, never alias text after `|`) to candidate rows however they store
+/// data (files, database, memory). The hook ranks rows with `fuzzy_filter`
+/// and caps visible rows, so providers can return generous lists; pre-cap
+/// for very large vaults.
+///
+/// # Examples
+///
+/// ```
+/// use std::sync::Arc;
+/// use twrite_core::PromptItem;
+/// use twrite_core::markdown::MarkdownHook;
+///
+/// let mut hook = MarkdownHook::new();
+/// hook.set_completion_provider(Arc::new(|query: &str| {
+///     ["Notebook", "Note"]
+///         .into_iter()
+///         .filter(|name| name.contains(query))
+///         .map(PromptItem::new)
+///         .collect()
+/// }));
+/// assert!(hook.has_completion_provider());
+/// ```
 pub type WikilinkCompletionProvider = Arc<dyn Fn(&str) -> Vec<PromptItem> + Send + Sync>;
 
 /// Maximum rows kept per completion refresh.
@@ -37,6 +56,11 @@ struct CompletionSession {
 }
 
 /// An editor hook providing Markdown shortcuts (Ctrl+B, Ctrl+I, Ctrl+K), smart list continuation, and task list toggles.
+///
+/// It also recognizes `[[Target]]`, `[[Target|Label]]`, and
+/// `[[Target#Fragment]]` wikilinks: click or `Enter` reports a `FollowLink` effect for the host to resolve, and typing `[[`
+/// opens inline completion when a provider is set (see
+/// [`Self::set_completion_provider`]).
 #[derive(Clone)]
 pub struct MarkdownHook {
     interactive_tasks: bool,
@@ -172,6 +196,13 @@ impl MarkdownHook {
     }
 
     /// Sets the callback supplying wikilink completion candidates.
+    ///
+    /// Typing the second `[` of `[[` then opens an inline popup: typing
+    /// filters rows, `Up`/`Down` move, `Enter`/`Tab` accept (preserving any
+    /// `|alias` suffix and ensuring closing `]]`), and `Esc`, typing `]]`,
+    /// or moving the cursor away dismisses. Accepts and popup clicks insert
+    /// the selected label over the query. See the "Inline Completion"
+    /// recipe for the session contract in full.
     pub fn set_completion_provider(&mut self, provider: WikilinkCompletionProvider) {
         self.completion_provider = Some(provider);
     }

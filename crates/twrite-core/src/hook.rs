@@ -206,6 +206,12 @@ pub trait EditorHook: 'static {
     /// suggestions) return their filtered rows plus the selected index;
     /// frontends poll this every frame and draw the popup near the cursor.
     /// The default is `None` (no completion active).
+    ///
+    /// The snapshot is a pure view of hook-owned session state: mutate the
+    /// session in `on_key` / `on_selection_change`, never while polling.
+    /// `selected` must stay in range whenever `items` is non-empty; the
+    /// renderer highlights that row and activates it on click through
+    /// [`Self::on_completion_select`].
     fn completion_snapshot(&self) -> Option<CompletionSnapshot> {
         None
     }
@@ -277,6 +283,24 @@ pub struct SearchSnapshot {
 /// frame to draw the cursor-anchored popup. Rows reuse [`PromptItem`] so
 /// candidates stay dynamic strings. Owned (not borrowed) so hosts can
 /// retain it across frames without pinning hooks.
+///
+/// `None` from `completion_snapshot` means no popup. A snapshot with empty
+/// `items` renders nothing but keeps the session's keys (e.g. `Esc` still
+/// dismisses); see the "Inline Completion" recipe for the full pattern.
+///
+/// # Examples
+///
+/// ```
+/// use twrite_core::{CompletionSnapshot, PromptItem};
+///
+/// let snapshot = CompletionSnapshot {
+///     items: vec![PromptItem::new("Notebook"), PromptItem::new("Note")],
+///     selected: 1,
+/// };
+///
+/// assert_eq!(snapshot.items.len(), 2);
+/// assert_eq!(snapshot.items[snapshot.selected].label, "Note");
+/// ```
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CompletionSnapshot {
     /// Filtered candidate rows in display order.
