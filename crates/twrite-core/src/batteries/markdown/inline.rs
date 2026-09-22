@@ -1,5 +1,6 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
+use super::links::parse_wikilinks;
 use crate::syntax::{HighlightTag, StyleSpan, StyleValue, TextStyle};
 
 /// Parses inline CommonMark and GFM elements (bold, italic, highlight,
@@ -173,6 +174,7 @@ pub(crate) fn highlight_inline_markdown(
     // pulldown-cmark has no mark support, so `==` pairs are scanned
     // separately against spans the pulldown pass already emitted.
     highlight_mark_spans(line_text, cursor_offset, delimiter_tag, spans);
+    highlight_wikilink_spans(line_text, cursor_offset, delimiter_tag, spans);
 }
 
 /// Reports whether the cursor sits inside a concealable construct so its
@@ -264,4 +266,42 @@ fn overlaps_reserved(spans: &[StyleSpan], start: usize, end: usize) -> bool {
         ) && span.range.start < end
             && start < span.range.end
     })
+}
+
+/// Emits `Link` spans for `[[Note]]`, `[[Note|Alias]]`, and
+/// `[[Note#Heading]]` with the same conceal/reveal behavior as standard
+/// links: inactive rows show the label only, the cursor row reveals the raw
+/// construct for editing. Aliased links conceal the `[[Note|` prefix so only
+/// the alias reads.
+fn highlight_wikilink_spans(
+    line_text: &str,
+    cursor_offset: Option<usize>,
+    delimiter_tag: Option<HighlightTag>,
+    spans: &mut Vec<StyleSpan>,
+) {
+    for target in parse_wikilinks(line_text) {
+        let start = target.full_range.start;
+        let end = target.full_range.end;
+        let overlaps_link = spans.iter().any(|span| {
+            matches!(span.style, StyleValue::Tag(HighlightTag::Link))
+                && span.range.start < end
+                && start < span.range.end
+        });
+        if overlaps_link || overlaps_reserved(spans, start, end) {
+            continue;
+        }
+        if cursor_inside_construct(cursor_offset, start, end) || delimiter_tag.is_none() {
+            spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
+            continue;
+        }
+        let delimiter_tag = delimiter_tag.unwrap_or(HighlightTag::Dimmed);
+        let display = target.display_range.clone();
+        if display.start > start {
+            spans.push(StyleSpan::tag(start..display.start, delimiter_tag));
+        }
+        spans.push(StyleSpan::tag(display.clone(), HighlightTag::Link));
+        if display.end < end {
+            spans.push(StyleSpan::tag(display.end..end, delimiter_tag));
+        }
+    }
 }

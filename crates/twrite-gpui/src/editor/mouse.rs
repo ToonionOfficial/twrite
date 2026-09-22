@@ -23,8 +23,55 @@ impl Editor {
             && !event.modifiers.shift
             && let Some(url) = self.link_at_position(event.position)
         {
-            cx.open_url(&url);
-            return;
+            // Wikilink targets resolve inside the editor through hook
+            // effects, never through the browser. The prefix mirrors
+            // `twrite_core::WIKILINK_SCHEME` without requiring the markdown
+            // feature on this render path.
+            if url.starts_with("wikilink:") {
+                let clicked = find_visible_line(&self.visible_lines, event.position.y)
+                    .map(|visible| (visible.row, visible.line_start_byte, visible.line_len_bytes));
+                if let Some((row, line_start_byte, line_len_bytes)) = clicked {
+                    let offset = self.offset_for_position(event.position, window);
+                    let column = offset.saturating_sub(line_start_byte).min(line_len_bytes);
+                    let initial_version = self.buffer.version();
+                    let mut consumed = false;
+                    let mut hook_index = 0;
+                    while hook_index < self.hooks.len() {
+                        let mut ctx = HookContext::new(
+                            &mut self.buffer,
+                            &mut self.selection,
+                            &mut self.cursor_style,
+                            &mut self.prompt,
+                            &mut self.pending_effects,
+                        );
+                        if self.hooks[hook_index].on_click(&mut ctx, row, column)
+                            == HookOutcome::Consumed
+                        {
+                            consumed = true;
+                            break;
+                        }
+                        hook_index += 1;
+                    }
+                    if consumed {
+                        if self.buffer.version() != initial_version {
+                            for hook in &mut self.hooks {
+                                hook.after_edit(&mut self.buffer);
+                            }
+                        }
+                        for hook in &mut self.hooks {
+                            hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                        }
+                        self.selection = None;
+                        self.is_selecting = false;
+                        self.flush_effects();
+                        cx.notify();
+                        return;
+                    }
+                }
+            } else {
+                cx.open_url(&url);
+                return;
+            }
         }
 
         if event.click_count == 1 && !event.modifiers.shift {

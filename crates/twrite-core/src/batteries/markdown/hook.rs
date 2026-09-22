@@ -1,19 +1,44 @@
-use crate::{EditorHook, HookContext, HookOutcome, KeyCode, KeyEvent, Point, Selection};
+use std::sync::Arc;
+
+use crate::{
+    EditorHook, HookContext, HookEffect, HookOutcome, KeyCode, KeyEvent, Point, Selection,
+};
 
 use super::config::MarkdownConfig;
+use super::links::parse_wikilinks;
 use super::list::{handle_list_move, handle_list_tab};
 use super::table::{
     TableRowKind, clean_table_line, find_unescaped_pipes, split_table_cells, table_block_at,
 };
 
+/// Resolves a wikilink target to a file path the host loads.
+/// Receives the note name and optional heading; returns `None` when the note
+/// is unknown so the hook can report it instead of navigating.
+pub type WikilinkResolver = Arc<dyn Fn(&str, Option<&str>) -> Option<String> + Send + Sync>;
+
 /// An editor hook providing Markdown shortcuts (Ctrl+B, Ctrl+I, Ctrl+K), smart list continuation, and task list toggles.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MarkdownHook {
     interactive_tasks: bool,
     table_navigation: bool,
     list_indentation: bool,
     list_reordering: bool,
     list_indent_size: usize,
+    wikilink_resolver: Option<WikilinkResolver>,
+}
+
+impl std::fmt::Debug for MarkdownHook {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("MarkdownHook")
+            .field("interactive_tasks", &self.interactive_tasks)
+            .field("table_navigation", &self.table_navigation)
+            .field("list_indentation", &self.list_indentation)
+            .field("list_reordering", &self.list_reordering)
+            .field("list_indent_size", &self.list_indent_size)
+            .field("has_wikilink_resolver", &self.wikilink_resolver.is_some())
+            .finish()
+    }
 }
 
 impl Default for MarkdownHook {
@@ -31,6 +56,7 @@ impl MarkdownHook {
             list_indentation: true,
             list_reordering: true,
             list_indent_size: 2,
+            wikilink_resolver: None,
         }
     }
 
@@ -42,6 +68,7 @@ impl MarkdownHook {
             list_indentation: config.list_indentation,
             list_reordering: config.list_reordering,
             list_indent_size: config.list_indent_size,
+            wikilink_resolver: None,
         }
     }
 
@@ -93,6 +120,44 @@ impl MarkdownHook {
     /// Returns the number of spaces per list indent level.
     pub fn list_indent_size(&self) -> usize {
         self.list_indent_size
+    }
+
+    /// Sets the callback resolving wikilink note names to file paths.
+    pub fn set_wikilink_resolver(&mut self, resolver: WikilinkResolver) {
+        self.wikilink_resolver = Some(resolver);
+    }
+
+    /// Returns whether a wikilink resolver is configured.
+    pub fn has_wikilink_resolver(&self) -> bool {
+        self.wikilink_resolver.is_some()
+    }
+
+    /// Follows the wikilink covering `col` on `row` using the given resolver.
+    fn follow_wikilink_with(
+        ctx: &mut HookContext,
+        row: usize,
+        col: usize,
+        resolver: &WikilinkResolver,
+    ) -> bool {
+        if row >= ctx.buffer.len_lines() {
+            return false;
+        }
+        let line = ctx.buffer.line_to_string(row);
+        let resolver = resolver.clone();
+        let Some(target) = parse_wikilinks(&line)
+            .into_iter()
+            .find(|target| target.full_range.contains(&col))
+        else {
+            return false;
+        };
+        match resolver(&target.note, target.heading.as_deref()) {
+            Some(path) => ctx.effects.push(HookEffect::Load { path }),
+            None => ctx.effects.push(HookEffect::Message(format!(
+                "note not found: {}",
+                target.note
+            ))),
+        }
+        true
     }
 
     fn toggle_marker_at_row(ctx: &mut HookContext, row: usize) -> bool {
@@ -384,6 +449,17 @@ impl EditorHook for MarkdownHook {
                     return HookOutcome::Consumed;
                 }
             }
+
+            // Plain `Enter` on a wikilink follows it. List and table
+            // continuation above take precedence so items containing links
+            // keep editing behavior.
+            if let Some(resolver) = self.wikilink_resolver.clone() {
+                let line_start = ctx.buffer.point_to_offset(Point::new(row, 0));
+                let col = cursor.saturating_sub(line_start);
+                if Self::follow_wikilink_with(ctx, row, col, &resolver) {
+                    return HookOutcome::Consumed;
+                }
+            }
         }
 
         if event.code == KeyCode::Tab
@@ -419,11 +495,13 @@ impl EditorHook for MarkdownHook {
         HookOutcome::PassThrough
     }
 
-    fn on_click(&mut self, ctx: &mut HookContext, row: usize, _col: usize) -> HookOutcome {
-        if !self.interactive_tasks {
-            return HookOutcome::PassThrough;
+    fn on_click(&mut self, ctx: &mut HookContext, row: usize, col: usize) -> HookOutcome {
+        if self.interactive_tasks && Self::toggle_marker_at_row(ctx, row) {
+            return HookOutcome::Consumed;
         }
-        if Self::toggle_marker_at_row(ctx, row) {
+        if let Some(resolver) = self.wikilink_resolver.clone()
+            && Self::follow_wikilink_with(ctx, row, col, &resolver)
+        {
             return HookOutcome::Consumed;
         }
         HookOutcome::PassThrough
@@ -437,7 +515,17 @@ impl EditorHook for MarkdownHook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{EditorBuffer, HookContext, HookOutcome, KeyEvent, PromptState, Selection};
+    use crate::{
+        EditorBuffer, HookContext, HookEffect, HookOutcome, KeyEvent, PromptState, Selection,
+    };
+
+    fn hook_with_resolver() -> MarkdownHook {
+        let mut hook = MarkdownHook::new();
+        hook.set_wikilink_resolver(Arc::new(|note: &str, _heading: Option<&str>| {
+            Some(format!("/notes/{note}.md"))
+        }));
+        hook
+    }
 
     #[test]
     fn test_markdown_hook_bold_wrapping() {
@@ -1193,5 +1281,100 @@ mod tests {
             },
         };
         assert_eq!(hook.on_key(&mut ctx, &event), HookOutcome::PassThrough);
+    }
+
+    #[test]
+    fn test_markdown_hook_click_follows_wikilink() {
+        let mut buffer = EditorBuffer::new("See [[Note]] here");
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_resolver();
+        assert!(hook.has_wikilink_resolver());
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+        assert_eq!(hook.on_click(&mut ctx, 0, 6), HookOutcome::Consumed);
+        assert_eq!(
+            ctx.effects.as_slice(),
+            &[HookEffect::Load {
+                path: "/notes/Note.md".to_string()
+            }]
+        );
+    }
+
+    #[test]
+    fn test_markdown_hook_click_without_resolver_passes_through() {
+        let mut buffer = EditorBuffer::new("See [[Note]] here");
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+        assert_eq!(hook.on_click(&mut ctx, 0, 6), HookOutcome::PassThrough);
+        assert!(ctx.effects.is_empty());
+    }
+
+    #[test]
+    fn test_markdown_hook_click_unknown_note_reports_message() {
+        let mut buffer = EditorBuffer::new("See [[Missing]] here");
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = MarkdownHook::new();
+        hook.set_wikilink_resolver(Arc::new(|_note: &str, _heading: Option<&str>| None));
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+        assert_eq!(hook.on_click(&mut ctx, 0, 6), HookOutcome::Consumed);
+        assert_eq!(
+            ctx.effects.as_slice(),
+            &[HookEffect::Message("note not found: Missing".to_string())]
+        );
+    }
+
+    #[test]
+    fn test_markdown_hook_enter_follows_wikilink() {
+        let mut buffer = EditorBuffer::new("See [[Note]] here");
+        buffer.set_cursor_offset(6);
+        let mut selection = None;
+        let mut cursor_style = crate::CursorStyle::Bar;
+        let mut prompt = PromptState::new();
+        let mut effects = Vec::new();
+        let mut hook = hook_with_resolver();
+        let mut ctx = HookContext::new(
+            &mut buffer,
+            &mut selection,
+            &mut cursor_style,
+            &mut prompt,
+            &mut effects,
+        );
+        assert_eq!(
+            hook.on_key(&mut ctx, &KeyEvent::plain(KeyCode::Enter)),
+            HookOutcome::Consumed
+        );
+        assert_eq!(
+            ctx.effects.as_slice(),
+            &[HookEffect::Load {
+                path: "/notes/Note.md".to_string()
+            }]
+        );
     }
 }
