@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Enter`/`Tab` accept preserving any `|alias` suffix. Embeds (`![[...]]`)
   stay literal for transclusions to claim. Ships a `wikilinks` example
   (`cargo run --example wikilinks --features markdown`) navigating an
-  in-memory note store.
+  in-memory note store, plus a feature-free `completion` example
+  (`cargo run --example completion`) driving the popup from a plain hook.
   Closes [#62](https://github.com/ToonionOfficial/twrite/issues/62).
 
 ## [0.16.1] - 2026-09-19
