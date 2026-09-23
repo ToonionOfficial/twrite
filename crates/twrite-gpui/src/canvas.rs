@@ -1023,7 +1023,7 @@ impl RenderOnce for EditorCanvas {
                     }
                     if let Some((origin, shaped_chevron)) = line.fold_chevron {
                         // Same row pitch as gutter numbers.
-                        // Keep the older GPUI signature available for the upstream pin.
+
                         #[cfg(not(feature = "gpui-latest-api"))]
                         {
                             let _ = shaped_chevron.paint(origin, line.line_height, window, cx);
@@ -1044,7 +1044,7 @@ impl RenderOnce for EditorCanvas {
                         window.paint_quad(badge);
                     }
                     if let Some((origin, shaped_indicator)) = line.fold_indicator_text {
-                        // Keep the older GPUI signature available for the upstream pin.
+
                         #[cfg(not(feature = "gpui-latest-api"))]
                         {
                             let _ = shaped_indicator.paint(origin, line.line_height, window, cx);
@@ -1064,6 +1064,7 @@ impl RenderOnce for EditorCanvas {
 
                     if let Some((origin, shaped_num)) = line.gutter_num {
                         // gpui 0.2.2 bakes TextAlign::Left into ShapedLine::paint.
+
                         #[cfg(not(feature = "gpui-latest-api"))]
                         {
                             let _ = shaped_num.paint(origin, line.line_height, window, cx);

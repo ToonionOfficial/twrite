@@ -26,7 +26,7 @@ impl Editor {
         for hook in &mut self.hooks {
             hook.dismiss_completion();
         }
-        // Newer GPUI requires the application context when focusing.
+
         #[cfg(not(feature = "gpui-latest-api"))]
         {
             self.focus_handle.focus(window);
@@ -35,6 +35,7 @@ impl Editor {
         {
             self.focus_handle.focus(window, cx);
         }
+
         self.reset_blink_cursor(cx);
 
         let offset = self.offset_for_position(event.position, window);
