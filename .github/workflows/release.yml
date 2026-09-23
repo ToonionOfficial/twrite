@@ -50,7 +50,39 @@ jobs:
         run: cargo check --workspace --examples
 
       - name: Publish to crates.io
-        run: cargo publish --workspace --locked
+        # One crate at a time, in dependency order, each with retries.
+        # A single `cargo publish --workspace` aborts the whole release when
+        # the registry index lags behind an upload (as happened for 0.18.0:
+        # twrite-core uploaded, then the 60s wait for it timed out and the
+        # other two crates never published). Per-crate steps resume cleanly,
+        # and already-published versions are treated as done.
+        run: |
+          publish_crate() {
+            local package="$1"
+            local output=""
+            local attempts=5
+            local attempt=1
+            while [ "$attempt" -le "$attempts" ]; do
+              if output=$(cargo publish -p "$package" --locked 2>&1); then
+                echo "$output"
+                return 0
+              fi
+              echo "$output"
+              if echo "$output" | grep -qiE "already published|already exists"; then
+                echo "$package already published; continuing."
+                return 0
+              fi
+              if [ "$attempt" -lt "$attempts" ]; then
+                echo "Publish of $package failed (attempt $attempt/$attempts); retrying in 60s..."
+                sleep 60
+              fi
+              attempt=$((attempt + 1))
+            done
+            return 1
+          }
+          publish_crate twrite-core
+          publish_crate twrite-gpui
+          publish_crate twrite
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
