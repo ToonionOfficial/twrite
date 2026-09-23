@@ -14,3 +14,5 @@ twrite-core = { workspace = true }
 [features]
 default = []
 markdown = ["twrite-core/markdown"]
+# Enables compatibility with newer GPUI API signatures.
+gpui-latest-api = []
