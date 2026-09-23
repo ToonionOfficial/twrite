@@ -16,7 +16,16 @@ impl Editor {
         // A left-click outside the menu dismisses it, then proceeds
         // normally so the click still moves the cursor.
         self.dismiss_context_menu(cx);
-        self.focus_handle.focus(window);
+
+        #[cfg(not(feature = "gpui-latest-api"))]
+        {
+            self.focus_handle.focus(window);
+        }
+        #[cfg(feature = "gpui-latest-api")]
+        {
+            self.focus_handle.focus(window, cx);
+        }
+
         self.reset_blink_cursor(cx);
 
         // An open completion popup owns its clicks: rows activate,

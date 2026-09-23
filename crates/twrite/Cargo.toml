@@ -21,6 +21,8 @@ markdown = ["twrite-core/markdown", "twrite-gpui/markdown"]
 wayland = ["gpui/wayland"]
 x11 = ["gpui/x11"]
 font-kit = ["gpui/font-kit"]
+# Enables compatibility with newer GPUI API signatures.
+gpui-latest-api = ["twrite-gpui/gpui-latest-api"]
 
 [[example]]
 name = "simple"
