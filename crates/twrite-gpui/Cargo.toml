@@ -11,6 +11,9 @@ readme = "../../README.md"
 gpui = { workspace = true }
 twrite-core = { workspace = true }
 
+[dev-dependencies]
+gpui = { workspace = true, features = ["test-support"] }
+
 [features]
 default = []
 markdown = ["twrite-core/markdown"]
