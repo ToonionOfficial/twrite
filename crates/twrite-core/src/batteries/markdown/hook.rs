@@ -680,6 +680,7 @@ impl EditorHook for MarkdownHook {
                         ctx.buffer.move_cursor_left();
                         ctx.buffer.move_cursor_left();
                         ctx.buffer.move_cursor_left();
+                        ctx.buffer.move_cursor_left();
                     }
                     return HookOutcome::Consumed;
                 }
