@@ -44,7 +44,13 @@ jobs:
         run: cargo hack clippy --all-targets --workspace --feature-powerset --exclude-features gpui-new-api -- -D warnings
 
       - name: Run Tests
-        run: cargo hack test --all-targets --workspace --feature-powerset --exclude-features gpui-new-api
+        # No --all-targets here: linking every example test binary in each
+        # powerset combo exhausts the runner (ld bus error). Examples are
+        # compile-checked across the same matrix in the next step instead.
+        run: cargo hack test --workspace --feature-powerset --exclude-features gpui-new-api
+
+      - name: Check All Targets
+        run: cargo hack check --workspace --all-targets --feature-powerset --exclude-features gpui-new-api
 
       - name: Run GPUI Compatibility Tests
         run: |
