@@ -2,6 +2,8 @@
 
 /// Canvas element handling prepaint, layout, and GPU quad rendering.
 pub mod canvas;
+/// Compatibility shims for the old and new GPUI ABIs (paint, focus).
+pub(crate) mod compat;
 /// Configuration settings for font size, line height, wrapping, and gutters.
 pub mod config;
 /// Main editor entity, keybindings, selections, and hook executions.

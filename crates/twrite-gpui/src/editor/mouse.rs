@@ -36,15 +36,7 @@ impl Editor {
         // A left-click outside the menu dismisses it, then proceeds
         // normally so the click still moves the cursor.
         self.dismiss_context_menu(cx);
-
-        #[cfg(not(feature = "gpui-zed-1-0"))]
-        {
-            self.focus_handle.focus(window);
-        }
-        #[cfg(feature = "gpui-zed-1-0")]
-        {
-            self.focus_handle.focus(window, cx);
-        }
+        crate::compat::focus_editor(&self.focus_handle, window, cx);
 
         self.reset_blink_cursor(cx);
 

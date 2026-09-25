@@ -21,8 +21,8 @@ markdown = ["twrite-core/markdown", "twrite-gpui/markdown"]
 wayland = ["gpui/wayland"]
 x11 = ["gpui/x11"]
 font-kit = ["gpui/font-kit"]
-# Enables compatibility with newer GPUI API signatures.
-gpui-zed-1-0 = ["twrite-gpui/gpui-zed-1-0"]
+# Post-0.2.2 GPUI ABI (gpui-ce, zed v1.0+, bezel 0.3.12+). Remove when gpui crates-io moves past 0.2.2.
+gpui-new-api = ["twrite-gpui/gpui-new-api"]
 
 [[example]]
 name = "simple"

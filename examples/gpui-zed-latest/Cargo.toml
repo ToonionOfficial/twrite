@@ -1,5 +1,5 @@
 [package]
-name = "gpui-api-compatibility"
+name = "gpui-zed-latest"
 version = "1.0.0"
 edition = "2024"
 
@@ -7,7 +7,7 @@ edition = "2024"
 
 # This example verifies compatibility against latest version of GPUI.
 [dependencies]
-twrite = { features = ["gpui-zed-1-0"], path = "../../crates/twrite" }
+twrite = { features = ["gpui-new-api"], path = "../../crates/twrite" }
 gpui = "0.2.2"
 gpui_platform = { git = "https://github.com/zed-industries/zed", version = ">=0.1.0" }
 

@@ -26,15 +26,7 @@ impl Editor {
         for hook in &mut self.hooks {
             hook.dismiss_completion();
         }
-
-        #[cfg(not(feature = "gpui-zed-1-0"))]
-        {
-            self.focus_handle.focus(window);
-        }
-        #[cfg(feature = "gpui-zed-1-0")]
-        {
-            self.focus_handle.focus(window, cx);
-        }
+        crate::compat::focus_editor(&self.focus_handle, window, cx);
 
         self.reset_blink_cursor(cx);
 

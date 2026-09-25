@@ -1,5 +1,5 @@
 [package]
-name = "gpui-api-compatibility"
+name = "gpui-zed-1-0"
 version = "1.0.0"
 edition = "2024"
 
@@ -9,7 +9,7 @@ edition = "2024"
 gpui = "0.2.2"
 twrite = {
     path = "../../crates/twrite",
-    features = ["gpui-zed-1-0"]  # Enable Zed v1.0+ compatibility
+    features = ["gpui-new-api"]  # Enable new GPUI ABI compatibility
 }
 
 # Application::new() is no longer available in latest GPUI version

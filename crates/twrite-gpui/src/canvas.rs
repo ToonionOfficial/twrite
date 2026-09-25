@@ -6,6 +6,7 @@ use twrite_core::{
 
 use std::ops::Range;
 
+use crate::compat::paint_shaped_line;
 use crate::editor::Editor;
 use crate::theme::EditorTheme;
 
@@ -1023,63 +1024,18 @@ impl RenderOnce for EditorCanvas {
                     }
                     if let Some((origin, shaped_chevron)) = line.fold_chevron {
                         // Same row pitch as gutter numbers.
-
-                        #[cfg(not(feature = "gpui-zed-1-0"))]
-                        {
-                            let _ = shaped_chevron.paint(origin, line.line_height, window, cx);
-                        }
-                        #[cfg(feature = "gpui-zed-1-0")]
-                        {
-                            let _ = shaped_chevron.paint(
-                                origin,
-                                line.line_height,
-                                TextAlign::Left,
-                                None,
-                                window,
-                                cx,
-                            );
-                        }
+                        paint_shaped_line(&shaped_chevron, origin, line.line_height, window, cx);
                     }
                     if let Some(badge) = line.fold_indicator_badge {
                         window.paint_quad(badge);
                     }
                     if let Some((origin, shaped_indicator)) = line.fold_indicator_text {
-
-                        #[cfg(not(feature = "gpui-zed-1-0"))]
-                        {
-                            let _ = shaped_indicator.paint(origin, line.line_height, window, cx);
-                        }
-                        #[cfg(feature = "gpui-zed-1-0")]
-                        {
-                            let _ = shaped_indicator.paint(
-                                origin,
-                                line.line_height,
-                                TextAlign::Left,
-                                None,
-                                window,
-                                cx,
-                            );
-                        }
+                        paint_shaped_line(&shaped_indicator, origin, line.line_height, window, cx);
                     }
 
                     if let Some((origin, shaped_num)) = line.gutter_num {
                         // gpui 0.2.2 bakes TextAlign::Left into ShapedLine::paint.
-
-                        #[cfg(not(feature = "gpui-zed-1-0"))]
-                        {
-                            let _ = shaped_num.paint(origin, line.line_height, window, cx);
-                        }
-                        #[cfg(feature = "gpui-zed-1-0")]
-                        {
-                            let _ = shaped_num.paint(
-                                origin,
-                                line.line_height,
-                                TextAlign::Left,
-                                None,
-                                window,
-                                cx,
-                            );
-                        }
+                        paint_shaped_line(&shaped_num, origin, line.line_height, window, cx);
                     }
 
                     if !is_break {
