@@ -40,6 +40,9 @@
 //! - `markdown`: CommonMark/GFM highlighter (`markdown` module) and task widgets.
 //! - `wayland`, `x11`, `font-kit`: platform-backend passthrough to `gpui`
 //!   (its defaults already include all three).
+//! - `gpui-new-api`: new GPUI ABI (gpui-ce, zed v1.0+, bezel 0.3.12+) via a
+//!   `[patch.crates-io]` pin; focus with `twrite::focus_editor` instead of
+//!   `FocusHandle::focus` so one call compiles on both ABIs.
 //!
 //! [`Editor`]: https://docs.rs/twrite-gpui/latest/twrite_gpui/struct.Editor.html
 
