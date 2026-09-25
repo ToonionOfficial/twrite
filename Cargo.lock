@@ -5804,7 +5804,7 @@ dependencies = [
 
 [[package]]
 name = "twrite"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "gpui",
  "twrite-core",
@@ -5813,7 +5813,7 @@ dependencies = [
 
 [[package]]
 name = "twrite-core"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "pulldown-cmark",
  "regex",
@@ -5824,7 +5824,7 @@ dependencies = [
 
 [[package]]
 name = "twrite-gpui"
-version = "0.18.0"
+version = "0.19.0"
 dependencies = [
  "gpui",
  "twrite-core",
