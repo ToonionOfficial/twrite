@@ -44,10 +44,15 @@ jobs:
         run: cargo hack clippy --all-targets --workspace --feature-powerset --exclude-features gpui-new-api -- -D warnings
 
       - name: Run Tests
-        # No --all-targets here: linking every example test binary in each
-        # powerset combo exhausts the runner (ld bus error). Examples are
-        # compile-checked across the same matrix in the next step instead.
-        run: cargo hack test --workspace --feature-powerset --exclude-features gpui-new-api
+        # Bounded selection: linking every example test binary in each
+        # powerset combo exhausts the runner (ld bus error), and plain
+        # `cargo test` builds examples unconditionally. Lib, integration,
+        # and doc tests run here per single feature; full-combo compile
+        # coverage comes from Check All Targets below.
+        run: cargo hack test --lib --tests --workspace --feature-powerset --depth 1 --exclude-features gpui-new-api
+
+      - name: Run Doc Tests
+        run: cargo hack test --doc --workspace --feature-powerset --depth 1 --exclude-features gpui-new-api
 
       - name: Check All Targets
         run: cargo hack check --workspace --all-targets --feature-powerset --exclude-features gpui-new-api
