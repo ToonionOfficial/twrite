@@ -6,6 +6,26 @@ use twrite_core::{HookContext, HookOutcome, Selection};
 use super::geometry::find_visible_line;
 use super::{Editor, SelectionGranularity};
 
+/// What a click on a hyperlink does when no hook claimed it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LinkClickFallback {
+    OpenInBrowser,
+    PlaceCursor,
+}
+
+/// Decides the fallback for a click on `url` that no hook consumed.
+/// Callers dispatch to hooks first and only consult this afterwards.
+/// Internal links stay in the editor for cursor placement while anything
+/// else opens in the browser. The literal prefix mirrors
+/// `twrite_core::WIKILINK_SCHEME` without requiring the markdown feature.
+fn resolve_unclaimed_link_click(url: &str) -> LinkClickFallback {
+    if url.starts_with("wikilink:") {
+        LinkClickFallback::PlaceCursor
+    } else {
+        LinkClickFallback::OpenInBrowser
+    }
+}
+
 impl Editor {
     pub(crate) fn handle_mouse_down(
         &mut self,
@@ -57,54 +77,56 @@ impl Editor {
             && !event.modifiers.shift
             && let Some(url) = self.link_at_position(event.position)
         {
-            // Wikilink targets resolve inside the editor through hook
-            // effects, never through the browser. The prefix mirrors
-            // `twrite_core::WIKILINK_SCHEME` without requiring the markdown
-            // feature on this render path.
-            if url.starts_with("wikilink:") {
-                let clicked = find_visible_line(&self.visible_lines, event.position.y)
-                    .map(|visible| (visible.row, visible.line_start_byte, visible.line_len_bytes));
-                if let Some((row, line_start_byte, line_len_bytes)) = clicked {
-                    let offset = self.offset_for_position(event.position, window);
-                    let column = offset.saturating_sub(line_start_byte).min(line_len_bytes);
-                    let initial_version = self.buffer.version();
-                    let mut consumed = false;
-                    let mut hook_index = 0;
-                    while hook_index < self.hooks.len() {
-                        let mut ctx = HookContext::new(
-                            &mut self.buffer,
-                            &mut self.selection,
-                            &mut self.cursor_style,
-                            &mut self.prompt,
-                            &mut self.pending_effects,
-                        );
-                        if self.hooks[hook_index].on_click(&mut ctx, row, column)
-                            == HookOutcome::Consumed
-                        {
-                            consumed = true;
-                            break;
-                        }
-                        hook_index += 1;
+            // Link clicks belong to hooks first, whatever the scheme: a
+            // custom language claims its ranges here instead of borrowing
+            // another scheme's prefix. Unclaimed destinations keep their
+            // previous path via the fallback below.
+            let clicked = find_visible_line(&self.visible_lines, event.position.y)
+                .map(|visible| (visible.row, visible.line_start_byte, visible.line_len_bytes));
+            if let Some((row, line_start_byte, line_len_bytes)) = clicked {
+                let offset = self.offset_for_position(event.position, window);
+                let column = offset.saturating_sub(line_start_byte).min(line_len_bytes);
+                let initial_version = self.buffer.version();
+                let mut consumed = false;
+                let mut hook_index = 0;
+                while hook_index < self.hooks.len() {
+                    let mut ctx = HookContext::new(
+                        &mut self.buffer,
+                        &mut self.selection,
+                        &mut self.cursor_style,
+                        &mut self.prompt,
+                        &mut self.pending_effects,
+                    );
+                    if self.hooks[hook_index].on_click(&mut ctx, row, column)
+                        == HookOutcome::Consumed
+                    {
+                        consumed = true;
+                        break;
                     }
-                    if consumed {
-                        if self.buffer.version() != initial_version {
-                            for hook in &mut self.hooks {
-                                hook.after_edit(&mut self.buffer);
-                            }
-                        }
-                        for hook in &mut self.hooks {
-                            hook.on_selection_change(&self.buffer, self.selection.as_ref());
-                        }
-                        self.selection = None;
-                        self.is_selecting = false;
-                        self.flush_effects();
-                        cx.notify();
-                        return;
-                    }
+                    hook_index += 1;
                 }
-            } else {
-                cx.open_url(&url);
-                return;
+                if consumed {
+                    if self.buffer.version() != initial_version {
+                        for hook in &mut self.hooks {
+                            hook.after_edit(&mut self.buffer);
+                        }
+                    }
+                    for hook in &mut self.hooks {
+                        hook.on_selection_change(&self.buffer, self.selection.as_ref());
+                    }
+                    self.selection = None;
+                    self.is_selecting = false;
+                    self.flush_effects();
+                    cx.notify();
+                    return;
+                }
+            }
+            match resolve_unclaimed_link_click(&url) {
+                LinkClickFallback::OpenInBrowser => {
+                    cx.open_url(&url);
+                    return;
+                }
+                LinkClickFallback::PlaceCursor => {}
             }
         }
 
@@ -342,5 +364,156 @@ impl Editor {
         }
 
         cx.notify();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    use gpui::{Bounds, Modifiers, MouseButton, Pixels, Point, TestAppContext, point, px, size};
+    use twrite_core::{EditorHook, HookContext, HookEffect, HookOutcome};
+
+    use crate::editor::{VisibleLineLayout, VisibleLink};
+
+    #[test]
+    fn unclaimed_plain_link_opens_browser() {
+        assert_eq!(
+            resolve_unclaimed_link_click("https://example.com"),
+            LinkClickFallback::OpenInBrowser
+        );
+    }
+
+    #[test]
+    fn unclaimed_custom_scheme_link_opens_browser() {
+        assert_eq!(
+            resolve_unclaimed_link_click("story:inspect"),
+            LinkClickFallback::OpenInBrowser
+        );
+    }
+
+    #[test]
+    fn unclaimed_internal_link_places_cursor() {
+        assert_eq!(
+            resolve_unclaimed_link_click("wikilink:Note"),
+            LinkClickFallback::PlaceCursor
+        );
+    }
+
+    struct RecordingHook {
+        clicks: Rc<RefCell<Vec<(usize, usize)>>>,
+        consume: bool,
+    }
+
+    impl EditorHook for RecordingHook {
+        fn on_click(&mut self, ctx: &mut HookContext, row: usize, col: usize) -> HookOutcome {
+            self.clicks.borrow_mut().push((row, col));
+            if self.consume {
+                ctx.effects.push(HookEffect::FollowLink {
+                    target: "inspect".into(),
+                    fragment: None,
+                    label: None,
+                });
+                HookOutcome::Consumed
+            } else {
+                HookOutcome::PassThrough
+            }
+        }
+    }
+
+    fn visible_layout_with_link(url: &str) -> (Bounds<Pixels>, Vec<VisibleLineLayout>) {
+        let window_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(800.0), px(600.0)));
+        let link_bounds = Bounds::new(point(px(0.0), px(0.0)), size(px(40.0), px(22.0)));
+        let lines = vec![VisibleLineLayout {
+            row: 0,
+            top: px(0.0),
+            bottom: px(22.0),
+            line_start_byte: 0,
+            line_len_bytes: 20,
+            text_origin_x: px(50.0),
+            line_height: px(22.0),
+            is_task_checkbox: false,
+            checkbox_box_x: px(0.0),
+            task_state: None,
+            links: vec![VisibleLink {
+                bounds: link_bounds,
+                url: url.into(),
+            }],
+            fold_indicator_bounds: None,
+        }];
+        (window_bounds, lines)
+    }
+
+    fn click_at(position: Point<Pixels>) -> MouseDownEvent {
+        MouseDownEvent {
+            button: MouseButton::Left,
+            position,
+            modifiers: Modifiers::default(),
+            click_count: 1,
+            ..Default::default()
+        }
+    }
+
+    #[gpui::test]
+    async fn custom_scheme_click_reaches_hooks_before_browser(cx: &mut TestAppContext) {
+        let recorded: Rc<RefCell<Vec<(usize, usize)>>> = Rc::default();
+        let hook = RecordingHook {
+            clicks: Rc::clone(&recorded),
+            consume: true,
+        };
+        let (window_bounds, lines) = visible_layout_with_link("story:inspect");
+        let (editor, test_cx) = cx.add_window_view(|_, cx| Editor::new("! Inspect the crates", cx));
+        test_cx.update(|_window, app| {
+            editor.update(app, |editor, _| {
+                editor.hooks.push(Box::new(hook));
+                editor.last_bounds = Some(window_bounds);
+                editor.visible_lines = lines;
+            })
+        });
+        let event = click_at(point(px(10.0), px(11.0)));
+        editor.update_in(&mut *test_cx, |editor, window, cx| {
+            editor.handle_mouse_down(&event, window, cx);
+        });
+        assert_eq!(*recorded.borrow(), vec![(0, 0)]);
+        assert_eq!(test_cx.opened_url(), None);
+        let effects =
+            test_cx.update(|_window, app| editor.update(app, |editor, _| editor.take_effects()));
+        assert_eq!(
+            effects,
+            vec![HookEffect::FollowLink {
+                target: "inspect".into(),
+                fragment: None,
+                label: None,
+            }]
+        );
+    }
+
+    #[gpui::test]
+    async fn unclaimed_plain_click_still_opens_browser(cx: &mut TestAppContext) {
+        let recorded: Rc<RefCell<Vec<(usize, usize)>>> = Rc::default();
+        let hook = RecordingHook {
+            clicks: Rc::clone(&recorded),
+            consume: false,
+        };
+        let (window_bounds, lines) = visible_layout_with_link("https://example.com");
+        let (editor, test_cx) = cx.add_window_view(|_, cx| Editor::new("! Inspect the crates", cx));
+        test_cx.update(|_window, app| {
+            editor.update(app, |editor, _| {
+                editor.hooks.push(Box::new(hook));
+                editor.last_bounds = Some(window_bounds);
+                editor.visible_lines = lines;
+            })
+        });
+        let event = click_at(point(px(10.0), px(11.0)));
+        editor.update_in(&mut *test_cx, |editor, window, cx| {
+            editor.handle_mouse_down(&event, window, cx);
+        });
+        assert_eq!(*recorded.borrow(), vec![(0, 0)]);
+        assert_eq!(
+            test_cx.opened_url(),
+            Some("https://example.com".to_string())
+        );
     }
 }

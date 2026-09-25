@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.18.0] - 2026-09-23
+
+### Added
+- **First-class clickable ranges for custom languages (`twrite-gpui`)**:
+  single clicks landing on any `extract_links` range are now offered to
+  hooks via `on_click` (row plus column) before the browser fallback, so a
+  custom language claims its own URL schemes without borrowing the
+  `wikilink:` prefix. Unclaimed destinations keep their previous path
+  (browser for plain URLs, cursor placement for internal links).
+  Closes [#83](https://github.com/ToonionOfficial/twrite/issues/83).
+
 ## [0.17.0] - 2026-09-22
 
 ### Added

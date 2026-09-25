@@ -126,3 +126,49 @@ Hooks run in the order they were added to `Editor`:
 1. The first hook whose `on_key` returns `HookOutcome::Consumed` halts the key pipeline.
 2. If no hook consumes the key, the key falls through to the active prompt (if open), and finally to the default buffer text editing handlers.
 3. Therefore, register high-priority modal hooks (like search or Vim emulation) first.
+
+## 6. Custom Clickable Ranges
+
+A single click landing on an `extract_links` range goes to hooks before the browser. Give your language its own URL scheme in the highlighter, then claim clicks positionally in `on_click`:
+
+```rust
+use std::ops::Range;
+use twrite::{EditorBuffer, EditorHook, HookContext, HookEffect, HookOutcome, SyntaxHighlighter};
+
+impl SyntaxHighlighter for StoryHighlighter {
+    // ... highlight_line ...
+    fn extract_links(
+        &self,
+        _buffer: &EditorBuffer,
+        _row: usize,
+        line_text: &str,
+    ) -> Vec<(Range<usize>, String)> {
+        match classify(line_text) {
+            StoryLine::Choice { label_start } if label_start < line_text.len() => {
+                let label = line_text[label_start..].trim().to_string();
+                vec![(label_start..line_text.len(), format!("story:choice:{label}"))]
+            }
+            _ => Vec::new(),
+        }
+    }
+}
+
+impl EditorHook for StoryHook {
+    fn on_click(&mut self, ctx: &mut HookContext, row: usize, col: usize) -> HookOutcome {
+        let line = ctx.buffer.line_to_string(row);
+        match classify(&line) {
+            StoryLine::Choice { label_start }
+                if label_start < line.len() && (label_start..line.len()).contains(&col) =>
+            {
+                let label = line[label_start..].trim().to_string();
+                ctx.effects
+                    .push(HookEffect::Message(format!("Choice picked: {label}")));
+                HookOutcome::Consumed
+            }
+            _ => HookOutcome::PassThrough,
+        }
+    }
+}
+```
+
+The contract is position in, decision out: re-derive the hit from the buffer (row plus pre-concealment byte column) instead of parsing the URL, return `Consumed` only for your own ranges, and pass everything else through. Unclaimed destinations keep their previous path: plain URLs open in the browser, internal `wikilink:` links place the cursor and never leave the editor.
