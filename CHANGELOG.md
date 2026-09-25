@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 - **New feature `gpui-new-api`**: allow using newer GPUI (gpui-ce, official
   Zed repository, bezel) by patching dependencies with `[patch.crates-io]`.
-  See complete example in `examples/gpui-zed-1-0`. The workspace examples
+  See complete example in `examples/gpui-compat-zed`. The workspace examples
   keep the `gpui 0.2.2` bootstrap (`Application::new`) and use the new
   `twrite::focus_editor` helper so the same code compiles on both ABIs.
 

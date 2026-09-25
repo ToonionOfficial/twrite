@@ -1,5 +1,5 @@
 [package]
-name = "gpui-zed-1-0"
+name = "gpui-compat-zed"
 version = "1.0.0"
 edition = "2024"
 

@@ -48,10 +48,6 @@ jobs:
 
       - name: Run GPUI Compatibility Tests
         run: |
-          pushd examples/gpui-zed-1-0
-          cargo build --all-targets --all-features
-          popd
-
-          pushd examples/gpui-zed-latest
+          pushd examples/gpui-compat-zed
           cargo build --all-targets --all-features
           popd
