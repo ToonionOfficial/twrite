@@ -54,7 +54,7 @@ fn main() {
                 });
 
                 let focus_handle = editor.read(cx).focus_handle.clone();
-                focus_handle.focus(window, cx);
+                twrite::focus_editor(&focus_handle, window, cx);
 
                 cx.new(|_| AppView { editor })
             },

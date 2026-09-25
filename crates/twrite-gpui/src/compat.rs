@@ -28,7 +28,7 @@ pub(crate) fn paint_shaped_line(
 /// Moves focus to the editor handle.
 ///
 /// The new GPUI ABI threads the app context through focus changes.
-pub(crate) fn focus_editor(handle: &FocusHandle, window: &mut Window, cx: &mut App) {
+pub fn focus_editor(handle: &FocusHandle, window: &mut Window, cx: &mut App) {
     #[cfg(not(feature = "gpui-new-api"))]
     {
         let _ = cx;
