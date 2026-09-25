@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **New feature `gpui-zed-1-0`**: allow using official GPUI from Zed repository
+  by patching dependencies with `[patch.crates-io]`. See complete example in
+  `examples/gpui-zed-1-0`.
+
 ## [0.18.0] - 2026-09-23
 
 ### Added

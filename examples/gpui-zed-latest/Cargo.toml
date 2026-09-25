@@ -5,7 +5,7 @@ edition = "2024"
 
 [workspace]
 
-# This example verifies GPUI compatibility against latest version of GPUI.
+# This example verifies compatibility against latest version of GPUI.
 [dependencies]
 twrite = { features = ["gpui-zed-1-0"], path = "../../crates/twrite" }
 gpui = "0.2.2"
