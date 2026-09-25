@@ -18,4 +18,4 @@ gpui = { workspace = true, features = ["test-support"] }
 default = []
 markdown = ["twrite-core/markdown"]
 # Enables compatibility with newer GPUI API signatures.
-gpui-latest-api = []
+gpui-zed-1-0 = []

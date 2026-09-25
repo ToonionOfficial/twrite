@@ -37,11 +37,11 @@ impl Editor {
         // normally so the click still moves the cursor.
         self.dismiss_context_menu(cx);
 
-        #[cfg(not(feature = "gpui-latest-api"))]
+        #[cfg(not(feature = "gpui-zed-1-0"))]
         {
             self.focus_handle.focus(window);
         }
-        #[cfg(feature = "gpui-latest-api")]
+        #[cfg(feature = "gpui-zed-1-0")]
         {
             self.focus_handle.focus(window, cx);
         }

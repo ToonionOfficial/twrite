@@ -31,6 +31,9 @@ jobs:
             libxkbcommon-x11-dev \
             libxkbcommon-dev
 
+      - name: Install Testing Utility
+        run: cargo install cargo-hack
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
@@ -38,7 +41,17 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo hack clippy --all-targets --workspace --feature-powerset --exclude-features gpui-zed-1-0 -- -D warnings
 
       - name: Run Tests
-        run: cargo test --all-targets --all-features
+        run: cargo hack test --all-targets --workspace --feature-powerset --exclude-features gpui-zed-1-0
+
+      - name: Run GPUI Compatibility Tests
+        run: |
+          pushd examples/gpui-zed-1-0
+          cargo build --all-targets --all-features
+          popd
+
+          pushd examples/gpui-zed-latest
+          cargo build --all-targets --all-features
+          popd

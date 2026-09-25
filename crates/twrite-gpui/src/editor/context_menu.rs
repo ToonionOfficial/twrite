@@ -27,11 +27,11 @@ impl Editor {
             hook.dismiss_completion();
         }
 
-        #[cfg(not(feature = "gpui-latest-api"))]
+        #[cfg(not(feature = "gpui-zed-1-0"))]
         {
             self.focus_handle.focus(window);
         }
-        #[cfg(feature = "gpui-latest-api")]
+        #[cfg(feature = "gpui-zed-1-0")]
         {
             self.focus_handle.focus(window, cx);
         }
