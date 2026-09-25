@@ -49,7 +49,9 @@ jobs:
         run: mdbook build docs
 
       - name: Build API reference
-        run: cargo doc --no-deps --all-features --workspace --lib
+        # Enumerated, not --all-features: gpui-new-api only compiles against
+        # a patched GPUI (zed/bezel), so enabling it with registry gpui fails.
+        run: cargo doc --no-deps --workspace --lib --features markdown,wayland,x11,font-kit
 
       - name: Assemble Pages artifact
         run: |

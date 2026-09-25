@@ -41,7 +41,9 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        # Enumerated, not --all-features: gpui-new-api only compiles against
+        # a patched GPUI (zed/bezel), so enabling it with registry gpui fails.
+        run: cargo clippy --all-targets --features markdown,wayland,x11,font-kit -- -D warnings
 
       - name: Run Tests
         run: cargo test --workspace
