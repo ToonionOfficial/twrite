@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Markdown link cursor**: Markdown link cursor was off by one when clicking `Ctrl k`
+
 ## [0.19.0] - 2026-09-25
 
 ### Added
