@@ -1,9 +1,6 @@
-//! Getting-started example 1 of 6: a bare editor with find.
+//! GPUI dependency replacement example.
 //!
-//! Read first. Demonstrates the minimum to open an editor window plus one
-//! stock hook (SearchHook on Ctrl+F). Keeps everything else default.
-//! Run with: `cargo run --example simple`
-//! Next: `hooks` (writing your own hook).
+//! This file verifies compatibility against official GPUI v1.0.0 or later.
 use gpui::*;
 use twrite::Editor;
 use twrite::SearchHook;
@@ -31,7 +28,7 @@ impl Render for AppView {
 }
 
 fn main() {
-    Application::new().run(|cx: &mut App| {
+    gpui_platform::application().run(|cx: &mut App| {
         let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {

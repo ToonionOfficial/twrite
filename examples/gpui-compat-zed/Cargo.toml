@@ -1,0 +1,29 @@
+[package]
+name = "gpui-compat-zed"
+version = "1.0.0"
+edition = "2024"
+
+[workspace]
+
+[dependencies]
+gpui = "0.2.2"
+twrite = {
+    path = "../../crates/twrite",
+    features = ["gpui-new-api"]  # Enable new GPUI ABI compatibility
+}
+
+# Application::new() is no longer available in latest GPUI version
+# Instead, use gpui_platform::application().run(...)
+gpui_platform = {
+    git = "https://github.com/zed-industries/zed",
+    tag = "v1.0.0",      # Zed version
+    version = ">=0.1.0"  # Crate version (not changed on API update)
+}
+
+# Overrides gpui dependency to official GPUI from Zed repository
+[patch.crates-io]
+gpui = {
+    git = "https://github.com/zed-industries/zed",
+    tag = "v1.0.0",      # Zed version
+    version = ">=0.2.2"  # Crate version (not changed on API update)
+}

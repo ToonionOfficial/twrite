@@ -89,7 +89,27 @@ cargo run
 
 You now have a fully functional text editor window with smooth scrolling, text selection, undo/redo (`Ctrl+Z` / `Ctrl+Y`), and line numbers.
 
-## 4. Next Steps
+## 4. New GPUI ABI (gpui-ce, zed, bezel)
+
+The default above targets registry `gpui 0.2.2`. For newer GPUI, enable the
+`gpui-new-api` feature and pin the GPUI source (example: official Zed `v1.0.0`):
+
+```toml
+[dependencies]
+gpui = "0.2.2"
+twrite = { version = "0.19", features = ["gpui-new-api"] }
+gpui_platform = { git = "https://github.com/zed-industries/zed", tag = "v1.0.0" }
+
+[patch.crates-io]
+gpui = { git = "https://github.com/zed-industries/zed", tag = "v1.0.0" }
+```
+
+Two call sites change: bootstrap with `gpui_platform::application().run(...)`
+instead of `Application::new().run(...)`, and focus with
+`twrite::focus_editor(&handle, window, cx)` instead of
+`handle.focus(window)`. See the complete recipe in `examples/gpui-compat-zed`.
+
+## 5. Next Steps
 
 Check out the step-by-step recipes:
 

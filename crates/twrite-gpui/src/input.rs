@@ -17,10 +17,10 @@ use twrite_core::{KeyCode, KeyEvent, Modifiers};
 /// combos (Ctrl/Cmd held) keep physical key names so `Ctrl+B`-style bindings
 /// keep matching, and Option/Alt-modified keys keep theirs too.
 ///
-/// NOTE (gpui 0.2.2): the git-era `KeyDownEvent::prefer_character_input`
+/// NOTE (gpui 0.2.2): the new-ABI `KeyDownEvent::prefer_character_input`
 /// signal (AltGr, macOS Option accents) does not exist in the 0.2.2 API, so
-/// Alt-modified keys always keep physical names here. Revisit when upgrading
-/// past 0.2.2 if that signal returns.
+/// Alt-modified keys always keep physical names here, including under the
+/// `gpui-new-api` flag until the translator reads that signal.
 pub fn translate_key_down(event: &KeyDownEvent) -> Option<KeyEvent> {
     let keystroke = &event.keystroke;
     Some(KeyEvent {
@@ -97,6 +97,12 @@ mod tests {
                 modifiers,
             },
             is_held: false,
+            // New GPUI ABI (bezel 0.3.12+, zed) carries layout signals the
+            // translator does not read yet, so default them in tests.
+            #[cfg(feature = "gpui-new-api")]
+            prefer_character_input: false,
+            #[cfg(feature = "gpui-new-api")]
+            layout: None,
         }
     }
 

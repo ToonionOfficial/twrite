@@ -17,3 +17,5 @@ gpui = { workspace = true, features = ["test-support"] }
 [features]
 default = []
 markdown = ["twrite-core/markdown"]
+# Post-0.2.2 GPUI ABI (gpui-ce, zed v1.0+, bezel 0.3.12+). Remove when gpui crates-io moves past 0.2.2.
+gpui-new-api = []

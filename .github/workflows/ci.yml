@@ -31,6 +31,9 @@ jobs:
             libxkbcommon-x11-dev \
             libxkbcommon-dev
 
+      - name: Install Testing Utility
+        run: cargo install cargo-hack
+
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
 
@@ -38,7 +41,24 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy Lint
-        run: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo hack clippy --all-targets --workspace --feature-powerset --exclude-features gpui-new-api -- -D warnings
 
       - name: Run Tests
-        run: cargo test --all-targets --all-features
+        # Bounded selection: linking every example test binary in each
+        # powerset combo exhausts the runner (ld bus error), and plain
+        # `cargo test` builds examples unconditionally. Lib, integration,
+        # and doc tests run here per single feature; full-combo compile
+        # coverage comes from Check All Targets below.
+        run: cargo hack test --lib --tests --workspace --feature-powerset --depth 1 --exclude-features gpui-new-api
+
+      - name: Run Doc Tests
+        run: cargo hack test --doc --workspace --feature-powerset --depth 1 --exclude-features gpui-new-api
+
+      - name: Check All Targets
+        run: cargo hack check --workspace --all-targets --feature-powerset --exclude-features gpui-new-api
+
+      - name: Run GPUI Compatibility Tests
+        run: |
+          pushd examples/gpui-compat-zed
+          cargo build --all-targets --all-features
+          popd

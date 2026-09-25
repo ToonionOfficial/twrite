@@ -26,7 +26,8 @@ impl Editor {
         for hook in &mut self.hooks {
             hook.dismiss_completion();
         }
-        self.focus_handle.focus(window);
+        crate::compat::focus_editor(&self.focus_handle, window, cx);
+
         self.reset_blink_cursor(cx);
 
         let offset = self.offset_for_position(event.position, window);

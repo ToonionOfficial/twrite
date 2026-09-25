@@ -2,6 +2,8 @@
 
 /// Canvas element handling prepaint, layout, and GPU quad rendering.
 pub mod canvas;
+/// Compatibility shims for the old and new GPUI ABIs (paint, focus).
+pub mod compat;
 /// Configuration settings for font size, line height, wrapping, and gutters.
 pub mod config;
 /// Main editor entity, keybindings, selections, and hook executions.
@@ -18,6 +20,7 @@ pub mod prompt_bar;
 pub mod theme;
 
 pub use canvas::{EditorCanvas, LineMetrics, RunFonts, build_line_text_runs};
+pub use compat::focus_editor;
 pub use config::EditorConfig;
 pub use editor::{Editor, FaceAvailability, SelectionGranularity, VisibleLineLayout, VisibleLink};
 pub use fps::{FrameStats, fps_badge};

@@ -31,6 +31,13 @@ cargo add gpui@0.2 --no-default-features --features wayland
 cargo add twrite --no-default-features --features wayland
 ```
 
+For newer GPUI (gpui-ce, zed, bezel), pin the GPUI source with
+`[patch.crates-io]` and opt in (see `examples/gpui-compat-zed`):
+
+```sh
+cargo add twrite --features gpui-new-api
+```
+
 Linux also needs GPUI system libraries; see the
 [full setup](https://toonionofficial.github.io/twrite/docs/getting-started.html).
 

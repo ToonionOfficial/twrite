@@ -36,7 +36,8 @@ impl Editor {
         // A left-click outside the menu dismisses it, then proceeds
         // normally so the click still moves the cursor.
         self.dismiss_context_menu(cx);
-        self.focus_handle.focus(window);
+        crate::compat::focus_editor(&self.focus_handle, window, cx);
+
         self.reset_blink_cursor(cx);
 
         // An open completion popup owns its clicks: rows activate,
