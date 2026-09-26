@@ -16,4 +16,5 @@ pulldown-cmark = { workspace = true, optional = true }
 
 [features]
 default = []
+vim = []
 markdown = ["dep:pulldown-cmark"]

@@ -113,6 +113,7 @@ impl SyntaxTheme {
     }
 }
 
+// TODO: add more theme configs like rounded corners for the tags and code blocks
 /// Complete theme configuration for the editor.
 #[derive(Clone, Debug)]
 pub struct EditorTheme {

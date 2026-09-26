@@ -21,10 +21,9 @@ pub mod history;
 pub mod hook;
 /// Structured key identity for hooks, hints, and keymaps.
 pub mod keycode;
-/// CommonMark and GitHub Flavored Markdown highlighter and interactive hook.
-///
 /// Lives at `src/batteries/markdown/`; this shim keeps the public path
 /// `twrite_core::markdown` stable regardless of file layout.
+/// CommonMark and GitHub Flavored Markdown highlighter and interactive hook.
 #[cfg(feature = "markdown")]
 #[path = "batteries/markdown/mod.rs"]
 pub mod markdown;
@@ -40,6 +39,10 @@ pub mod search_hook;
 pub mod selection;
 /// Headless syntax highlighting, styling tokens, and interval splitting.
 pub mod syntax;
+/// Vim motions
+#[cfg(feature = "vim")]
+#[path = "batteries/vim/mod.rs"]
+pub mod vim;
 
 pub use buffer::EditorBuffer;
 pub use context_menu::{
@@ -56,6 +59,10 @@ pub use hook::{
     Modifiers, SearchSnapshot,
 };
 pub use keycode::KeyCode;
+
+#[cfg(feature = "vim")]
+pub use vim::*;
+
 #[cfg(feature = "markdown")]
 pub use markdown::{
     ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook, TABLE_CELL_TAG,
@@ -65,6 +72,7 @@ pub use markdown::{
     table_block_at, table_block_at_with_fences, table_layouts, table_layouts_with_fences,
     wikilink_url,
 };
+
 pub use movement::{
     CharKind, classify_char, find_line_end, find_line_range_at, find_line_start,
     find_next_word_end, find_prev_word_start, find_word_range_at, move_lines_with_selection,
