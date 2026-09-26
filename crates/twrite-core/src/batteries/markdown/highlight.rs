@@ -1349,6 +1349,30 @@ mod tests {
     }
 
     #[test]
+    fn test_markdown_empty_link_stays_visible_when_hidden() {
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        for line in [
+            "[](https://example.com)",
+            "[   ](https://example.com)",
+            "<>",
+        ] {
+            let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+            buffer.set_cursor_offset(line.len() + 1);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            assert!(
+                !spans
+                    .iter()
+                    .any(|s| s.style == StyleValue::Tag(HighlightTag::Hidden)),
+                "empty link must not conceal: {line} -> {spans:?}"
+            );
+            assert_eq!(ConcealedLine::build(line, &spans).display_text, line);
+        }
+    }
+
+    #[test]
     fn test_markdown_structural_tags_in_dimmed_mode() {
         let buffer = EditorBuffer::new("- [ ] Todo\n- [x] Done\n> Quote\n---");
         let highlighter = MarkdownHighlighter::new();

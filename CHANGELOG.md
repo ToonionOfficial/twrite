@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.19.1] - 2026-09-26
+
 ### Fixed
 - **Markdown link cursor**: Markdown link cursor was off by one when clicking `Ctrl k`
+- **Empty markdown link concealment (`twrite-core`)**: empty or whitespace-only link labels (`[](url)`) stay fully visible in `ConcealMode::Hidden` when the cursor leaves the link instead of collapsing to zero width. Closes [#90](https://github.com/ToonionOfficial/twrite/issues/90).
 
 ## [0.19.0] - 2026-09-25
 

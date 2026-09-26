@@ -129,27 +129,44 @@ pub(crate) fn highlight_inline_markdown(
                             if let Some(bracket_idx) = line_text[start..end].find("](") {
                                 let label_start = start + 1;
                                 let label_end = start + bracket_idx;
-                                spans.push(StyleSpan::tag(start..label_start, delim_tag));
-                                spans.push(StyleSpan::tag(
-                                    label_start..label_end,
-                                    HighlightTag::Link,
-                                ));
-                                spans.push(StyleSpan::tag(label_end..end, delim_tag));
+                                if link_label_has_content(line_text, label_start, label_end) {
+                                    spans.push(StyleSpan::tag(start..label_start, delim_tag));
+                                    spans.push(StyleSpan::tag(
+                                        label_start..label_end,
+                                        HighlightTag::Link,
+                                    ));
+                                    spans.push(StyleSpan::tag(label_end..end, delim_tag));
+                                } else {
+                                    spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
+                                }
                             } else if let Some(bracket_idx) = line_text[start..end].find("][") {
                                 let label_start = start + 1;
                                 let label_end = start + bracket_idx;
-                                spans.push(StyleSpan::tag(start..label_start, delim_tag));
-                                spans.push(StyleSpan::tag(
-                                    label_start..label_end,
-                                    HighlightTag::Link,
-                                ));
-                                spans.push(StyleSpan::tag(label_end..end, delim_tag));
+                                if link_label_has_content(line_text, label_start, label_end) {
+                                    spans.push(StyleSpan::tag(start..label_start, delim_tag));
+                                    spans.push(StyleSpan::tag(
+                                        label_start..label_end,
+                                        HighlightTag::Link,
+                                    ));
+                                    spans.push(StyleSpan::tag(label_end..end, delim_tag));
+                                } else {
+                                    spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
+                                }
                             } else if line_text[start..end].starts_with('<')
                                 && line_text[start..end].ends_with('>')
                             {
-                                spans.push(StyleSpan::tag(start..start + 1, delim_tag));
-                                spans.push(StyleSpan::tag(start + 1..end - 1, HighlightTag::Link));
-                                spans.push(StyleSpan::tag(end - 1..end, delim_tag));
+                                if end > start + 2
+                                    && link_label_has_content(line_text, start + 1, end - 1)
+                                {
+                                    spans.push(StyleSpan::tag(start..start + 1, delim_tag));
+                                    spans.push(StyleSpan::tag(
+                                        start + 1..end - 1,
+                                        HighlightTag::Link,
+                                    ));
+                                    spans.push(StyleSpan::tag(end - 1..end, delim_tag));
+                                } else {
+                                    spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
+                                }
                             } else {
                                 spans.push(StyleSpan::tag(start..end, HighlightTag::Link));
                             }
@@ -182,6 +199,14 @@ pub(crate) fn highlight_inline_markdown(
 /// resting just past the closing delimiter has left the construct.
 fn cursor_inside_construct(cursor_offset: Option<usize>, start: usize, end: usize) -> bool {
     cursor_offset.is_some_and(|cursor| start <= cursor && cursor < end)
+}
+
+/// An empty label leaves nothing visible once delimiters conceal, so the
+/// whole construct stays revealed instead of collapsing to zero width.
+fn link_label_has_content(line_text: &str, label_start: usize, label_end: usize) -> bool {
+    line_text
+        .get(label_start..label_end)
+        .is_some_and(|label| !label.trim().is_empty())
 }
 
 /// Scans `==mark==` pairs pulldown-cmark does not parse and appends
