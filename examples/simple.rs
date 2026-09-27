@@ -52,7 +52,6 @@ fn main() {
                     ed.config.relative_line_numbers = true;
 
                     ed.add_hook(SearchHook::new());
-
                     ed
                 });
 

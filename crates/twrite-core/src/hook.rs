@@ -325,8 +325,6 @@ impl AutoPairsHook {
             '[' => Some(']'),
             '{' => Some('}'),
             '"' => Some('"'),
-            '\'' => Some('\''),
-            '`' => Some('`'),
             _ => None,
         }
     }
