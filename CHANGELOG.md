@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- **Auto-pairs quote handling (`twrite-core`)**: `AutoPairsHook::matching_close` no longer auto-closes `'` and `` ` ``. Only `(`, `[`, `{`, `"` auto-insert/skip-over/wrap now, avoiding stray `'` inside words (`don't`) and conflicts with Markdown code spans. `)` / `]` / `}` step-over and empty-pair `Backspace` delete are unchanged.
+
 ## [0.19.1] - 2026-09-26
 
 ### Fixed
