@@ -7,7 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Configurable code corner radius (`twrite-gpui`)**: new `SyntaxTheme::code_radius` (default 4px) rounds inline `` `code` `` pills and fenced code block backgrounds. `==mark==` highlights are unaffected.
+- **Rounded inline code pills (`twrite-gpui`)**: inline code spans now paint as rounded quads with hardcoded 4px horizontal padding and a 2px vertical inset, so pills on adjacent lines no longer touch. The previous sharp `TextRun` background is suppressed to avoid double painting.
+
 ### Fixed
+- **Conceal delimiter grace (`twrite-core`)**: inline constructs (code, bold, italic, strikethrough, mark, links) keep their delimiters visible until the cursor is one step past either edge, instead of concealing the moment it leaves the range.
 - **Auto-pairs quote handling (`twrite-core`)**: `AutoPairsHook::matching_close` no longer auto-closes `'` and `` ` ``. Only `(`, `[`, `{`, `"` auto-insert/skip-over/wrap now, avoiding stray `'` inside words (`don't`) and conflicts with Markdown code spans. `)` / `]` / `}` step-over and empty-pair `Backspace` delete are unchanged.
 
 ## [0.19.1] - 2026-09-26

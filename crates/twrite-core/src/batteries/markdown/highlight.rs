@@ -913,11 +913,8 @@ mod tests {
         let mut away = EditorBuffer::new(&format!("{line}\nother"));
         away.set_cursor_offset(line.len() + 1);
         assert_eq!(
-            ConcealedLine::build(
-                line,
-                &hidden_highlighter.highlight_line(&away, 0, line)
-            )
-            .display_text,
+            ConcealedLine::build(line, &hidden_highlighter.highlight_line(&away, 0, line))
+                .display_text,
             "alpha plain beta"
         );
     }
