@@ -878,7 +878,7 @@ mod tests {
     #[test]
     fn test_markdown_word_level_reveal() {
         // Issue #71: on the cursor row each construct reveals independently.
-        // `**alpha**` covers 0..9, `__beta__` covers 16..25.
+        // `**alpha**` covers 0..9, `__beta__` covers 16..24.
         let line = "**alpha** plain __beta__";
         let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
             conceal_mode: ConcealMode::Hidden,
@@ -894,15 +894,29 @@ mod tests {
         // Cursor inside the first word reveals only it.
         assert_eq!(concealed_at(0), "**alpha** plain beta");
         assert_eq!(concealed_at(8), "**alpha** plain beta");
-        // Cursor just past the closing delimiter has left the word.
-        assert_eq!(concealed_at(9), "alpha plain beta");
+        // ±1 grace: cursor on the closing delimiter (end) still reveals;
+        // concealment starts one step further away.
+        assert_eq!(concealed_at(9), "**alpha** plain beta");
+        assert_eq!(concealed_at(10), "alpha plain beta");
         // Cursor on plain text reveals nothing.
         assert_eq!(concealed_at(12), "alpha plain beta");
         // Cursor inside the second word reveals only it (`__beta__` is 16..24).
+        // Start edge is exact: one step before the opener already conceals.
+        assert_eq!(concealed_at(15), "alpha plain beta");
         assert_eq!(concealed_at(16), "alpha plain __beta__");
         assert_eq!(concealed_at(23), "alpha plain __beta__");
-        // Cursor just past the closing delimiter has left the word.
-        assert_eq!(concealed_at(24), "alpha plain beta");
+        // Cursor on the closing delimiter still reveals; one step past conceals.
+        assert_eq!(concealed_at(24), "alpha plain __beta__");
+        // At EOL the cursor sits on the closing delimiter (offsets clamp to
+        // len), so the trailing word reveals while the cursor stays on its
+        // row; moving off the row conceals it.
+        let mut away = EditorBuffer::new(&format!("{line}\nother"));
+        away.set_cursor_offset(line.len() + 1);
+        assert_eq!(
+            ConcealedLine::build(line, &hidden_highlighter.highlight_line(&away, 0, line))
+                .display_text,
+            "alpha plain beta"
+        );
     }
 
     #[test]
@@ -1082,9 +1096,16 @@ mod tests {
         };
 
         assert_eq!(concealed_at(2), "==a== plain b");
-        assert_eq!(concealed_at(5), "a plain b");
+        // ±1 grace: cursor on the closing delimiter (end) still reveals;
+        // concealment starts one step further away.
+        assert_eq!(concealed_at(5), "==a== plain b");
+        assert_eq!(concealed_at(6), "a plain b");
         assert_eq!(concealed_at(8), "a plain b");
+        // Start edge is exact (one step before conceals); right edge
+        // (end, at EOL) keeps its grace and reveals.
+        assert_eq!(concealed_at(11), "a plain b");
         assert_eq!(concealed_at(14), "a plain ==b==");
+        assert_eq!(concealed_at(17), "a plain ==b==");
     }
 
     #[test]
@@ -1846,7 +1867,11 @@ mod tests {
             ..Default::default()
         });
         let mut buffer = EditorBuffer::new(text);
-        buffer.set_cursor_offset(text.len());
+        // Cursor on "body" (off the bold construct + grace) so `**bold**`
+        // conceals; at EOL the cursor would sit on the closing delimiter
+        // and reveal it under the ±1 grace rule.
+        let row1_start = text.find('\n').unwrap() + 1;
+        buffer.set_cursor_offset(row1_start + 4);
 
         let body = hidden_highlighter.highlight_line(&buffer, 1, "> body **bold**");
         let dim = body

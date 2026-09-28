@@ -1,7 +1,7 @@
 use gpui::*;
 use twrite_core::{
-    CalloutKind, HighlightTag, Point as BufferPoint, StyleSpan, StyleValue, UnderlineDecoration,
-    split_line_intervals,
+    CalloutKind, ConcealedLine, HighlightTag, Point as BufferPoint, StyleSpan, StyleValue,
+    UnderlineDecoration, split_line_intervals,
 };
 
 use std::ops::Range;
@@ -34,6 +34,15 @@ const MIN_BODY_LINE_RATIO: f32 = 22.0 / 16.0;
 /// (e.g. 24px type on a 22px pitch, where full-size glyphs would overflow
 /// their rows and crowd each other).
 const GUTTER_NUMBER_FONT_SCALE: f32 = 0.8;
+
+/// Hardcoded horizontal padding applied on each side of inline `` `code` ``
+/// pills. Radius comes from `SyntaxTheme::code_radius`.
+const INLINE_CODE_PADDING_X: f32 = 4.0;
+
+/// Hardcoded vertical inset applied top and bottom of inline `` `code` ``
+/// pills so pills on adjacent lines don't touch. Pill height is
+/// `line_height - 2 * INLINE_CODE_PADDING_Y`, centered in the line box.
+const INLINE_CODE_PADDING_Y: f32 = 2.0;
 
 /// Visual layout metrics and block-level decorations for a single rendered line.
 #[derive(Debug, Clone)]
@@ -209,6 +218,11 @@ pub fn build_line_text_runs(
             Some(theme.selection)
         } else if is_code_block {
             None
+        } else if matches!(segment.style, Some(StyleValue::Tag(HighlightTag::Code))) {
+            // Inline code is painted as a rounded pill quad
+            // (`inline_code_pill_quads`); keeping the TextRun bg would leave
+            // a sharp rect underneath and double-darken the alpha fill.
+            None
         } else {
             resolved.as_ref().and_then(|r| r.background)
         };
@@ -288,6 +302,87 @@ pub fn build_line_text_runs(
     merged
 }
 
+/// Builds rounded background quads for inline `` `code` `` spans.
+fn inline_code_pill_quads(
+    concealed: &ConcealedLine,
+    text_line: &WrappedLine,
+    line_text_origin_x: Pixels,
+    current_y: Pixels,
+    line_height: Pixels,
+    theme: &EditorTheme,
+    selection_line_range: Option<(usize, usize)>,
+) -> Vec<PaintQuad> {
+    if concealed.display_text.is_empty() {
+        return Vec::new();
+    }
+    let segments = split_line_intervals(
+        concealed.display_text.len(),
+        &concealed.spans,
+        selection_line_range,
+    );
+    let pad_x = px(INLINE_CODE_PADDING_X);
+
+    let mut out = Vec::new();
+    for seg in segments {
+        if seg.is_selected {
+            continue;
+        }
+        if !matches!(seg.style, Some(StyleValue::Tag(HighlightTag::Code))) {
+            continue;
+        }
+        let (Some(s), Some(e)) = (
+            text_line.position_for_index(seg.range.start, line_height),
+            text_line.position_for_index(seg.range.end, line_height),
+        ) else {
+            continue;
+        };
+        // Single visual line only; wrapped spans fall back to no pill for
+        // v1 (same compromise as the search wash below).
+        if s.y != e.y || e.x <= s.x {
+            continue;
+        }
+        let pad_y = px(INLINE_CODE_PADDING_Y);
+        let pill_h = (line_height - pad_y * 2.0).max(px(4.0));
+        let pill_y = current_y + s.y + (line_height - pill_h) / 2.0;
+        out.push(
+            fill(
+                Bounds::new(
+                    point(line_text_origin_x + s.x - pad_x, pill_y),
+                    size(e.x - s.x + pad_x * 2.0, pill_h),
+                ),
+                theme.syntax.code_bg,
+            )
+            .corner_radii(theme.syntax.code_radius.min(pill_h / 2.0)),
+        );
+    }
+    out
+}
+
+/// Corner radii for one row of a fenced code block background.
+///
+/// A multi-line block should read as a single container, not stacked pills:
+/// only the first row rounds the top corners and only the last row rounds
+/// the bottom ones. A single-line block rounds all four.
+fn code_block_corner_radii(is_first: bool, is_last: bool, radius: Pixels) -> Corners<Pixels> {
+    let square = px(0.0);
+    match (is_first, is_last) {
+        (true, true) => Corners::all(radius),
+        (true, false) => Corners {
+            top_left: radius,
+            top_right: radius,
+            bottom_left: square,
+            bottom_right: square,
+        },
+        (false, true) => Corners {
+            top_left: square,
+            top_right: square,
+            bottom_left: radius,
+            bottom_right: radius,
+        },
+        (false, false) => Corners::all(square),
+    }
+}
+
 /// Data computed during prepaint for each visible line.
 struct PreparedLine {
     gutter_num: Option<(Point<Pixels>, ShapedLine)>,
@@ -296,6 +391,8 @@ struct PreparedLine {
     line_height: Pixels,
     quote_bar_quad: Option<PaintQuad>,
     code_block_bg_quad: Option<PaintQuad>,
+    /// Rounded pills for inline `` `code` `` spans (painted under the text).
+    code_pill_quads: Vec<PaintQuad>,
     callout_bg_quad: Option<PaintQuad>,
     thematic_break_quad: Option<PaintQuad>,
     empty_selection_quad: Option<PaintQuad>,
@@ -723,6 +820,22 @@ impl RenderOnce for EditorCanvas {
                         ));
                     }
 
+                    // Fenced code blocks use the full-width `code_block_bg_quad`
+                    // below; inline pills only apply outside them.
+                    let code_pill_quads = if metrics.is_code_block {
+                        Vec::new()
+                    } else {
+                        inline_code_pill_quads(
+                            concealed,
+                            &text_line,
+                            line_text_origin_x,
+                            current_y,
+                            metrics.line_height,
+                            &theme,
+                            selection_line_range,
+                        )
+                    };
+
                     let quote_bar_quad = if metrics.is_quote {
                         // Callout blocks tint the bar with the kind accent;
                         // plain quotes keep the comment gray.
@@ -760,13 +873,16 @@ impl RenderOnce for EditorCanvas {
 
                     let code_block_bg_quad = if metrics.is_code_block {
                         let bg_width = (bounds.size.width - gutter_width - px(8.0)).max(px(0.0));
-                        Some(fill(
-                            Bounds::new(
-                                point(bounds.left() + gutter_width + px(4.0), current_y),
-                                size(bg_width, line_total_height),
-                            ),
-                            theme.syntax.code_bg,
-                        ))
+                        Some(
+                            fill(
+                                Bounds::new(
+                                    point(bounds.left() + gutter_width + px(4.0), current_y),
+                                    size(bg_width, line_total_height),
+                                ),
+                                theme.syntax.code_bg,
+                            )
+                            .corner_radii(theme.syntax.code_radius),
+                        )
                     } else {
                         None
                     };
@@ -953,6 +1069,7 @@ impl RenderOnce for EditorCanvas {
                         line_height: metrics.line_height,
                         quote_bar_quad,
                         code_block_bg_quad,
+                        code_pill_quads,
                         callout_bg_quad,
                         thematic_break_quad,
                         empty_selection_quad,
@@ -987,6 +1104,23 @@ impl RenderOnce for EditorCanvas {
                     });
 
                     current_y += line_total_height;
+                }
+
+                // Stacked block rows share exact edges, so round only the
+                // outer ends: first visible row keeps top corners, last keeps
+                // bottom corners, middle rows go square. A block cut by the
+                // viewport edge rounds there too; acceptable since the rest
+                // of the block is off-screen.
+                for i in 0..lines.len() {
+                    if lines[i].code_block_bg_quad.is_none() {
+                        continue;
+                    }
+                    let is_first = i == 0 || lines[i - 1].code_block_bg_quad.is_none();
+                    let is_last = i + 1 >= lines.len() || lines[i + 1].code_block_bg_quad.is_none();
+                    if let Some(quad) = lines[i].code_block_bg_quad.as_mut() {
+                        quad.corner_radii =
+                            code_block_corner_radii(is_first, is_last, theme.syntax.code_radius);
+                    }
                 }
 
                 editor_handle.update(cx, |editor, _| {
@@ -1049,6 +1183,10 @@ impl RenderOnce for EditorCanvas {
                         );
                     }
 
+                    for quad in line.code_pill_quads {
+                        window.paint_quad(quad);
+                    }
+
                     for quad in line.search_match_quads {
                         window.paint_quad(quad);
                     }
@@ -1080,7 +1218,8 @@ impl RenderOnce for EditorCanvas {
 
 #[cfg(test)]
 mod tests {
-    use super::wash_ranges_for_line;
+    use super::{code_block_corner_radii, wash_ranges_for_line};
+    use gpui::px;
     use std::ops::Range;
 
     fn matches_vec(ranges: &[Range<usize>]) -> Vec<Range<usize>> {
@@ -1129,5 +1268,31 @@ mod tests {
             wash_ranges_for_line(&matches, &mut cursor, 20, 40),
             vec![30..35]
         );
+    }
+
+    #[test]
+    fn code_block_corners_round_only_outer_ends() {
+        let r = px(4.0);
+        let square = px(0.0);
+
+        let single = code_block_corner_radii(true, true, r);
+        assert_eq!(single.top_left, r);
+        assert_eq!(single.bottom_right, r);
+
+        let first = code_block_corner_radii(true, false, r);
+        assert_eq!(first.top_left, r);
+        assert_eq!(first.top_right, r);
+        assert_eq!(first.bottom_left, square);
+        assert_eq!(first.bottom_right, square);
+
+        let last = code_block_corner_radii(false, true, r);
+        assert_eq!(last.top_left, square);
+        assert_eq!(last.top_right, square);
+        assert_eq!(last.bottom_left, r);
+        assert_eq!(last.bottom_right, r);
+
+        let middle = code_block_corner_radii(false, false, r);
+        assert_eq!(middle.top_left, square);
+        assert_eq!(middle.bottom_right, square);
     }
 }
