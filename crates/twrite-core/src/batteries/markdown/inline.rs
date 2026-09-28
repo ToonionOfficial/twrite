@@ -195,10 +195,11 @@ pub(crate) fn highlight_inline_markdown(
 }
 
 /// Reports whether the cursor sits inside a concealable construct so its
-/// delimiters stay visible for editing. The end edge is exclusive: a cursor
-/// resting just past the closing delimiter has left the construct.
+/// delimiters stay visible for editing. Both edges are inclusive with a
+/// 1-byte grace: a cursor resting on either delimiter, or one step past it,
+/// still counts as inside so the delimiters don't flicker on exit.
 fn cursor_inside_construct(cursor_offset: Option<usize>, start: usize, end: usize) -> bool {
-    cursor_offset.is_some_and(|cursor| start <= cursor && cursor < end)
+    cursor_offset.is_some_and(|cursor| start.saturating_sub(1) <= cursor && cursor <= end)
 }
 
 /// An empty label leaves nothing visible once delimiters conceal, so the
