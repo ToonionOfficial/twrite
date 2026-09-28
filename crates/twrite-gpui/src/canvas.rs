@@ -311,9 +311,8 @@ fn inline_code_pill_quads(
     line_height: Pixels,
     theme: &EditorTheme,
     selection_line_range: Option<(usize, usize)>,
-    is_code_block: bool,
 ) -> Vec<PaintQuad> {
-    if is_code_block || concealed.display_text.is_empty() {
+    if concealed.display_text.is_empty() {
         return Vec::new();
     }
     let segments = split_line_intervals(
@@ -796,16 +795,21 @@ impl RenderOnce for EditorCanvas {
                         ));
                     }
 
-                    let code_pill_quads = inline_code_pill_quads(
-                        concealed,
-                        &text_line,
-                        line_text_origin_x,
-                        current_y,
-                        metrics.line_height,
-                        &theme,
-                        selection_line_range,
-                        metrics.is_code_block,
-                    );
+                    // Fenced code blocks use the full-width `code_block_bg_quad`
+                    // below; inline pills only apply outside them.
+                    let code_pill_quads = if metrics.is_code_block {
+                        Vec::new()
+                    } else {
+                        inline_code_pill_quads(
+                            concealed,
+                            &text_line,
+                            line_text_origin_x,
+                            current_y,
+                            metrics.line_height,
+                            &theme,
+                            selection_line_range,
+                        )
+                    };
 
                     let quote_bar_quad = if metrics.is_quote {
                         // Callout blocks tint the bar with the kind accent;
