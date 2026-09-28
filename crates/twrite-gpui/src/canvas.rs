@@ -358,6 +358,31 @@ fn inline_code_pill_quads(
     out
 }
 
+/// Corner radii for one row of a fenced code block background.
+///
+/// A multi-line block should read as a single container, not stacked pills:
+/// only the first row rounds the top corners and only the last row rounds
+/// the bottom ones. A single-line block rounds all four.
+fn code_block_corner_radii(is_first: bool, is_last: bool, radius: Pixels) -> Corners<Pixels> {
+    let square = px(0.0);
+    match (is_first, is_last) {
+        (true, true) => Corners::all(radius),
+        (true, false) => Corners {
+            top_left: radius,
+            top_right: radius,
+            bottom_left: square,
+            bottom_right: square,
+        },
+        (false, true) => Corners {
+            top_left: square,
+            top_right: square,
+            bottom_left: radius,
+            bottom_right: radius,
+        },
+        (false, false) => Corners::all(square),
+    }
+}
+
 /// Data computed during prepaint for each visible line.
 struct PreparedLine {
     gutter_num: Option<(Point<Pixels>, ShapedLine)>,
@@ -1081,6 +1106,23 @@ impl RenderOnce for EditorCanvas {
                     current_y += line_total_height;
                 }
 
+                // Stacked block rows share exact edges, so round only the
+                // outer ends: first visible row keeps top corners, last keeps
+                // bottom corners, middle rows go square. A block cut by the
+                // viewport edge rounds there too; acceptable since the rest
+                // of the block is off-screen.
+                for i in 0..lines.len() {
+                    if lines[i].code_block_bg_quad.is_none() {
+                        continue;
+                    }
+                    let is_first = i == 0 || lines[i - 1].code_block_bg_quad.is_none();
+                    let is_last = i + 1 >= lines.len() || lines[i + 1].code_block_bg_quad.is_none();
+                    if let Some(quad) = lines[i].code_block_bg_quad.as_mut() {
+                        quad.corner_radii =
+                            code_block_corner_radii(is_first, is_last, theme.syntax.code_radius);
+                    }
+                }
+
                 editor_handle.update(cx, |editor, _| {
                     editor.layout_cache = layout_cache;
                     editor.restore_fold_epoch(fold_epoch);
@@ -1176,7 +1218,8 @@ impl RenderOnce for EditorCanvas {
 
 #[cfg(test)]
 mod tests {
-    use super::wash_ranges_for_line;
+    use super::{code_block_corner_radii, wash_ranges_for_line};
+    use gpui::px;
     use std::ops::Range;
 
     fn matches_vec(ranges: &[Range<usize>]) -> Vec<Range<usize>> {
@@ -1225,5 +1268,31 @@ mod tests {
             wash_ranges_for_line(&matches, &mut cursor, 20, 40),
             vec![30..35]
         );
+    }
+
+    #[test]
+    fn code_block_corners_round_only_outer_ends() {
+        let r = px(4.0);
+        let square = px(0.0);
+
+        let single = code_block_corner_radii(true, true, r);
+        assert_eq!(single.top_left, r);
+        assert_eq!(single.bottom_right, r);
+
+        let first = code_block_corner_radii(true, false, r);
+        assert_eq!(first.top_left, r);
+        assert_eq!(first.top_right, r);
+        assert_eq!(first.bottom_left, square);
+        assert_eq!(first.bottom_right, square);
+
+        let last = code_block_corner_radii(false, true, r);
+        assert_eq!(last.top_left, square);
+        assert_eq!(last.top_right, square);
+        assert_eq!(last.bottom_left, r);
+        assert_eq!(last.bottom_right, r);
+
+        let middle = code_block_corner_radii(false, false, r);
+        assert_eq!(middle.top_left, square);
+        assert_eq!(middle.bottom_right, square);
     }
 }
