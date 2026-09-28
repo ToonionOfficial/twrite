@@ -36,9 +36,13 @@ const MIN_BODY_LINE_RATIO: f32 = 22.0 / 16.0;
 const GUTTER_NUMBER_FONT_SCALE: f32 = 0.8;
 
 /// Hardcoded horizontal padding applied on each side of inline `` `code` ``
-/// pills. Vertical size stays `line_height` so pills never bleed into
-/// adjacent lines. Radius comes from `SyntaxTheme::code_radius`.
+/// pills. Radius comes from `SyntaxTheme::code_radius`.
 const INLINE_CODE_PADDING_X: f32 = 4.0;
+
+/// Hardcoded vertical inset applied top and bottom of inline `` `code` ``
+/// pills so pills on adjacent lines don't touch. Pill height is
+/// `line_height - 2 * INLINE_CODE_PADDING_Y`, centered in the line box.
+const INLINE_CODE_PADDING_Y: f32 = 2.0;
 
 /// Visual layout metrics and block-level decorations for a single rendered line.
 #[derive(Debug, Clone)]
@@ -318,6 +322,7 @@ fn inline_code_pill_quads(
         selection_line_range,
     );
     let pad_x = px(INLINE_CODE_PADDING_X);
+
     let mut out = Vec::new();
     for seg in segments {
         if seg.is_selected {
@@ -337,15 +342,18 @@ fn inline_code_pill_quads(
         if s.y != e.y || e.x <= s.x {
             continue;
         }
+        let pad_y = px(INLINE_CODE_PADDING_Y);
+        let pill_h = (line_height - pad_y * 2.0).max(px(4.0));
+        let pill_y = current_y + s.y + (line_height - pill_h) / 2.0;
         out.push(
             fill(
                 Bounds::new(
-                    point(line_text_origin_x + s.x - pad_x, current_y + s.y),
-                    size(e.x - s.x + pad_x * 2.0, line_height),
+                    point(line_text_origin_x + s.x - pad_x, pill_y),
+                    size(e.x - s.x + pad_x * 2.0, pill_h),
                 ),
                 theme.syntax.code_bg,
             )
-            .corner_radii(theme.syntax.code_radius),
+            .corner_radii(theme.syntax.code_radius.min(pill_h / 2.0)),
         );
     }
     out
