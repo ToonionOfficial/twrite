@@ -901,8 +901,8 @@ mod tests {
         // Cursor on plain text reveals nothing.
         assert_eq!(concealed_at(12), "alpha plain beta");
         // Cursor inside the second word reveals only it (`__beta__` is 16..24).
-        // Cursor at start-1 (left grace) reveals as well.
-        assert_eq!(concealed_at(15), "alpha plain __beta__");
+        // Start edge is exact: one step before the opener already conceals.
+        assert_eq!(concealed_at(15), "alpha plain beta");
         assert_eq!(concealed_at(16), "alpha plain __beta__");
         assert_eq!(concealed_at(23), "alpha plain __beta__");
         // Cursor on the closing delimiter still reveals; one step past conceals.
@@ -1101,8 +1101,9 @@ mod tests {
         assert_eq!(concealed_at(5), "==a== plain b");
         assert_eq!(concealed_at(6), "a plain b");
         assert_eq!(concealed_at(8), "a plain b");
-        // Left grace (start-1) and right edge (end, at EOL) reveal.
-        assert_eq!(concealed_at(11), "a plain ==b==");
+        // Start edge is exact (one step before conceals); right edge
+        // (end, at EOL) keeps its grace and reveals.
+        assert_eq!(concealed_at(11), "a plain b");
         assert_eq!(concealed_at(14), "a plain ==b==");
         assert_eq!(concealed_at(17), "a plain ==b==");
     }
