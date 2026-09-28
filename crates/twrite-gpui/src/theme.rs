@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use gpui::{Hsla, hsla, rgb};
+use gpui::{Hsla, Pixels, hsla, px, rgb};
 use twrite_core::{CalloutKind, HighlightTag, Rgba, StyleValue, UnderlineDecoration};
 
 /// Color configuration for syntax elements.
@@ -32,6 +32,8 @@ pub struct SyntaxTheme {
     pub code: Hsla,
     /// Background pill fill color for inline code spans.
     pub code_bg: Hsla,
+    /// Corner radius for code spans (`` ` ``) and fenced code blocks (`` ``` ``).
+    pub code_radius: Pixels,
     /// Background tint color for `==mark==` highlight spans.
     pub highlight_bg: Hsla,
     /// Accent color for `> [!NOTE]` callout blocks.
@@ -74,6 +76,7 @@ impl Default for SyntaxTheme {
             italic: rgb(0xe6e1e9).into(),
             code: rgb(0xe6e1e9).into(),
             code_bg: hsla(0.65, 0.4, 0.6, 0.15),
+            code_radius: px(4.0),
             highlight_bg: hsla(0.11, 0.85, 0.6, 0.35),
 
             // Semantic UI elements can retain color.

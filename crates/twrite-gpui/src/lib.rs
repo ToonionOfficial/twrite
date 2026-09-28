@@ -98,7 +98,10 @@ mod tests {
             false,
         );
         assert_eq!(runs_inline.len(), 1);
-        assert_eq!(runs_inline[0].background_color, Some(theme.syntax.code_bg));
+        // Inline code bg moved to rounded pill quads
+        // (`inline_code_pill_quads`); the TextRun stays transparent to avoid
+        // a sharp rect double-painting under the pill.
+        assert!(runs_inline[0].background_color.is_none());
 
         let runs_task_checked = build_line_text_runs(
             "test",
