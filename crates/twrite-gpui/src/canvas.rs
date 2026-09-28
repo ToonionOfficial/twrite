@@ -1,7 +1,7 @@
 use gpui::*;
 use twrite_core::{
-    CalloutKind, HighlightTag, Point as BufferPoint, StyleSpan, StyleValue, UnderlineDecoration,
-    split_line_intervals,
+    CalloutKind, ConcealedLine, HighlightTag, Point as BufferPoint, StyleSpan, StyleValue,
+    UnderlineDecoration, split_line_intervals,
 };
 
 use std::ops::Range;
@@ -34,6 +34,11 @@ const MIN_BODY_LINE_RATIO: f32 = 22.0 / 16.0;
 /// (e.g. 24px type on a 22px pitch, where full-size glyphs would overflow
 /// their rows and crowd each other).
 const GUTTER_NUMBER_FONT_SCALE: f32 = 0.8;
+
+/// Hardcoded horizontal padding applied on each side of inline `` `code` ``
+/// pills. Vertical size stays `line_height` so pills never bleed into
+/// adjacent lines. Radius comes from `SyntaxTheme::code_radius`.
+const INLINE_CODE_PADDING_X: f32 = 4.0;
 
 /// Visual layout metrics and block-level decorations for a single rendered line.
 #[derive(Debug, Clone)]
@@ -209,6 +214,11 @@ pub fn build_line_text_runs(
             Some(theme.selection)
         } else if is_code_block {
             None
+        } else if matches!(segment.style, Some(StyleValue::Tag(HighlightTag::Code))) {
+            // Inline code is painted as a rounded pill quad
+            // (`inline_code_pill_quads`); keeping the TextRun bg would leave
+            // a sharp rect underneath and double-darken the alpha fill.
+            None
         } else {
             resolved.as_ref().and_then(|r| r.background)
         };
@@ -288,6 +298,59 @@ pub fn build_line_text_runs(
     merged
 }
 
+/// Builds rounded background quads for inline `` `code` `` spans.
+fn inline_code_pill_quads(
+    concealed: &ConcealedLine,
+    text_line: &WrappedLine,
+    line_text_origin_x: Pixels,
+    current_y: Pixels,
+    line_height: Pixels,
+    theme: &EditorTheme,
+    selection_line_range: Option<(usize, usize)>,
+    is_code_block: bool,
+) -> Vec<PaintQuad> {
+    if is_code_block || concealed.display_text.is_empty() {
+        return Vec::new();
+    }
+    let segments = split_line_intervals(
+        concealed.display_text.len(),
+        &concealed.spans,
+        selection_line_range,
+    );
+    let pad_x = px(INLINE_CODE_PADDING_X);
+    let mut out = Vec::new();
+    for seg in segments {
+        if seg.is_selected {
+            continue;
+        }
+        if !matches!(seg.style, Some(StyleValue::Tag(HighlightTag::Code))) {
+            continue;
+        }
+        let (Some(s), Some(e)) = (
+            text_line.position_for_index(seg.range.start, line_height),
+            text_line.position_for_index(seg.range.end, line_height),
+        ) else {
+            continue;
+        };
+        // Single visual line only; wrapped spans fall back to no pill for
+        // v1 (same compromise as the search wash below).
+        if s.y != e.y || e.x <= s.x {
+            continue;
+        }
+        out.push(
+            fill(
+                Bounds::new(
+                    point(line_text_origin_x + s.x - pad_x, current_y + s.y),
+                    size(e.x - s.x + pad_x * 2.0, line_height),
+                ),
+                theme.syntax.code_bg,
+            )
+            .corner_radii(theme.syntax.code_radius),
+        );
+    }
+    out
+}
+
 /// Data computed during prepaint for each visible line.
 struct PreparedLine {
     gutter_num: Option<(Point<Pixels>, ShapedLine)>,
@@ -296,6 +359,8 @@ struct PreparedLine {
     line_height: Pixels,
     quote_bar_quad: Option<PaintQuad>,
     code_block_bg_quad: Option<PaintQuad>,
+    /// Rounded pills for inline `` `code` `` spans (painted under the text).
+    code_pill_quads: Vec<PaintQuad>,
     callout_bg_quad: Option<PaintQuad>,
     thematic_break_quad: Option<PaintQuad>,
     empty_selection_quad: Option<PaintQuad>,
@@ -723,6 +788,17 @@ impl RenderOnce for EditorCanvas {
                         ));
                     }
 
+                    let code_pill_quads = inline_code_pill_quads(
+                        concealed,
+                        &text_line,
+                        line_text_origin_x,
+                        current_y,
+                        metrics.line_height,
+                        &theme,
+                        selection_line_range,
+                        metrics.is_code_block,
+                    );
+
                     let quote_bar_quad = if metrics.is_quote {
                         // Callout blocks tint the bar with the kind accent;
                         // plain quotes keep the comment gray.
@@ -760,13 +836,16 @@ impl RenderOnce for EditorCanvas {
 
                     let code_block_bg_quad = if metrics.is_code_block {
                         let bg_width = (bounds.size.width - gutter_width - px(8.0)).max(px(0.0));
-                        Some(fill(
-                            Bounds::new(
-                                point(bounds.left() + gutter_width + px(4.0), current_y),
-                                size(bg_width, line_total_height),
-                            ),
-                            theme.syntax.code_bg,
-                        ))
+                        Some(
+                            fill(
+                                Bounds::new(
+                                    point(bounds.left() + gutter_width + px(4.0), current_y),
+                                    size(bg_width, line_total_height),
+                                ),
+                                theme.syntax.code_bg,
+                            )
+                            .corner_radii(theme.syntax.code_radius),
+                        )
                     } else {
                         None
                     };
@@ -953,6 +1032,7 @@ impl RenderOnce for EditorCanvas {
                         line_height: metrics.line_height,
                         quote_bar_quad,
                         code_block_bg_quad,
+                        code_pill_quads,
                         callout_bg_quad,
                         thematic_break_quad,
                         empty_selection_quad,
@@ -1047,6 +1127,10 @@ impl RenderOnce for EditorCanvas {
                             window,
                             cx,
                         );
+                    }
+
+                    for quad in line.code_pill_quads {
+                        window.paint_quad(quad);
                     }
 
                     for quad in line.search_match_quads {
