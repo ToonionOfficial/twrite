@@ -81,6 +81,9 @@ hooks.set_completion_provider(Arc::new(|query: &str| {
 ### Text Highlight
 Wrapping text in double equals signs (`==important==`) renders it with a tinted background wash. The markers conceal and reveal following the active conceal mode, word by word like other inline formatting.
 
+### Math
+Wrapping text in single dollar signs (`$E=mc^2$`) marks inline math and `$$x^2$$` marks display math, each with its own custom tag (`markdown.math.inline`, `markdown.math.block`) for host theming via `SyntaxTheme::set_custom_tag_color`. A `$$` line opens a display block pairing with the next `$$` line; block rows render as math so LaTeX never parses as Markdown. The delimiters conceal and reveal following the active conceal mode, word by word like other inline formatting. `\$` stays literal, and `$` inside code spans and link URLs never parses as math. Full typeset rendering is a follow-up on top of the embedded-content system.
+
 ### Callouts
 A quote block opening with `[!KIND]` (`> [!NOTE] Title`) renders as a callout: the bar and body wash take the kind accent (NOTE, TIP, WARNING, CAUTION, IMPORTANT, others fall back to NOTE), the marker conceals like other delimiters, the title renders bold, and body text dims to quote gray under inline formatting. The `>` prefix conceals word-level like other markers. Collapsing bodies is not supported yet.
 
