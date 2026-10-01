@@ -65,10 +65,11 @@ pub use vim::*;
 
 #[cfg(feature = "markdown")]
 pub use markdown::{
-    ConcealMode, MarkdownConfig, MarkdownHighlighter, MarkdownHook, TABLE_CELL_TAG,
-    TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout, TableRowKind,
-    WIKILINK_SCHEME, WikilinkCompletionProvider, WikilinkTarget, fence_rows, find_unescaped_pipes,
-    is_fenced_row, is_wikilink_url, parse_delimiter_row, parse_wikilinks, split_table_cells,
+    ConcealMode, MATH_BLOCK_TAG, MATH_INLINE_TAG, MarkdownConfig, MarkdownHighlighter,
+    MarkdownHook, TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment,
+    TableBlock, TableLayout, TableRowKind, WIKILINK_SCHEME, WikilinkCompletionProvider,
+    WikilinkTarget, fence_rows, find_unescaped_pipes, is_fenced_row, is_wikilink_url,
+    math_block_at, parse_delimiter_row, parse_wikilinks, scan_math_blocks, split_table_cells,
     table_block_at, table_block_at_with_fences, table_layouts, table_layouts_with_fences,
     wikilink_url,
 };
