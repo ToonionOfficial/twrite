@@ -11,11 +11,12 @@
 //! - [`hook`]: `MarkdownHook` (`EditorHook` impl: shortcuts, lists, tables).
 //! - [`links`]: single-line hyperlink extraction shared by highlighting and
 //!   click handling.
+//! - [`math`]: `$...$` inline and `$$...$$` display math recognition.
 //!
 //! Everything here is built only on the public core API (`SyntaxHighlighter`,
 //! `EditorHook`, `HighlightTag`, `ConcealedLine`, …) and emits only existing
-//! `HighlightTag` variants plus `Custom("markdown.table.*")` names, so no
-//! `twrite-gpui`-side code is required.
+//! `HighlightTag` variants plus `Custom("markdown.table.*")` and
+//! `Custom("markdown.math.*")` names, so no `twrite-gpui`-side code is required.
 
 mod config;
 mod folding;
@@ -24,6 +25,7 @@ mod hook;
 mod inline;
 mod links;
 mod list;
+mod math;
 mod table;
 
 pub use config::{ConcealMode, MarkdownConfig};
@@ -34,6 +36,7 @@ pub use links::{
     wikilink_url,
 };
 pub use list::{ListMarker, ParsedListItem, parse_list_item};
+pub use math::{MATH_BLOCK_TAG, MATH_INLINE_TAG, math_block_at, scan_math_blocks};
 pub use table::{
     TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout,
     TableRowKind, fence_rows, find_unescaped_pipes, is_fenced_row, parse_delimiter_row,

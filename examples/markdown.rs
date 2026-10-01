@@ -11,7 +11,8 @@ use twrite::Editor;
 use twrite::SearchHook;
 use twrite::fps_badge;
 use twrite::markdown::{
-    ConcealMode, MarkdownHighlighter, TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG,
+    ConcealMode, MATH_BLOCK_TAG, MATH_INLINE_TAG, MarkdownHighlighter, TABLE_CELL_TAG,
+    TABLE_DELIMITER_TAG, TABLE_HEADER_TAG,
 };
 
 struct MarkdownApp {
@@ -230,6 +231,15 @@ fn main() {
 
 > Blockquotes are rendered with a sleek vertical accent bar.
 
+### Math (inline $...$ and display $$...$$)
+Einstein wrote $E=mc^2$ inline, and the area is $$x^2$$ on its own line.
+
+$$
+\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}
+$$
+
+Escaped \\$ stays literal, and `$x$` inside code never parses as math.
+
 ### Tables (Tab / Shift+Tab moves between cells, Enter adds a row)
 | Name | Age | City |
 | --- | ---: | :---: |
@@ -252,6 +262,12 @@ fn main() {
                     ed.theme
                         .syntax
                         .set_custom_tag_color(TABLE_DELIMITER_TAG, gpui::rgb(0x6c7086).into());
+                    ed.theme
+                        .syntax
+                        .set_custom_tag_color(MATH_INLINE_TAG, gpui::rgb(0x94e2d5).into());
+                    ed.theme
+                        .syntax
+                        .set_custom_tag_color(MATH_BLOCK_TAG, gpui::rgb(0xcba6f7).into());
                     // No explicit family: the editor auto-selects the first
                     // platform monospace with bold + italic faces (see
                     // `Editor::face_availability`). Set `ed.config.font_family

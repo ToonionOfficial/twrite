@@ -5,6 +5,21 @@ All notable changes to the `twrite` editor engine will be documented in this fil
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.21.0] - 2026-10-01
+
+### Added
+- **Math and LaTeX recognition (`twrite-core`)**: `$...$` inline math and
+  `$$...$$` display math parse into dedicated custom tags
+  (`markdown.math.inline`, `markdown.math.block`) for host theming via
+  `SyntaxTheme::set_custom_tag_color`. A `$$` line opens a display block
+  that pairs with the next `$$` line; block rows render as math so LaTeX
+  content never parses as Markdown headings, lists, or links. Delimiters
+  conceal and reveal following the active conceal mode, word by word like
+  other inline formatting. `\$` stays literal, and `$` inside code spans
+  and link URLs never parses as math. Full typeset rendering stays a
+  follow-up on top of the embedded-content system.
+  Closes [#56](https://github.com/ToonionOfficial/twrite/issues/56).
+
 ## [0.20.0] - 2026-09-28
 
 ### Added

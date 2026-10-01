@@ -10,6 +10,7 @@ use crate::{
 use super::config::{ConcealMode, MarkdownConfig};
 use super::folding::{heading_level, markdown_fold_ranges};
 use super::links::extract_markdown_links;
+use super::math::{MATH_BLOCK_TAG, math_block_at, scan_math_blocks};
 use super::table::{
     TABLE_CELL_TAG, TABLE_DELIMITER_TAG, TABLE_HEADER_TAG, TableAlignment, TableBlock, TableLayout,
     TableRowKind, clean_table_line, find_unescaped_pipes, is_fenced_row, split_table_cells,
@@ -25,6 +26,9 @@ type FenceCache = Arc<RwLock<Option<(usize, Vec<usize>)>>>;
 /// Cached frontmatter row range and associated document version.
 type FrontmatterCache = Arc<RwLock<Option<(usize, Option<Range<usize>>)>>>;
 
+/// Cached display-math block ranges and associated document version.
+type MathCache = Arc<RwLock<Option<(usize, Vec<Range<usize>>)>>>;
+
 /// A syntax highlighter for CommonMark and GFM Markdown documents using `pulldown-cmark`.
 #[derive(Debug, Clone)]
 pub struct MarkdownHighlighter {
@@ -32,6 +36,7 @@ pub struct MarkdownHighlighter {
     cached_fences: FenceCache,
     cached_tables: TableCache,
     cached_frontmatter: FrontmatterCache,
+    cached_math: MathCache,
 }
 
 impl Default for MarkdownHighlighter {
@@ -53,6 +58,7 @@ impl MarkdownHighlighter {
             cached_fences: Arc::new(RwLock::new(None)),
             cached_tables: Arc::new(RwLock::new(None)),
             cached_frontmatter: Arc::new(RwLock::new(None)),
+            cached_math: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -127,6 +133,36 @@ impl MarkdownHighlighter {
         } else {
             let fences = self.cached_fence_rows(buffer);
             scan_frontmatter(buffer, &fences)
+        }
+    }
+
+    /// Returns the display-math blocks for this document version, pairing
+    /// `$$` fence rows once and sharing the result across all per-row
+    /// queries in the epoch, like the fence and table caches above. Code
+    /// fence rows win: `$$` inside a fenced code block never opens math.
+    fn cached_math_blocks(&self, buffer: &EditorBuffer) -> Vec<Range<usize>> {
+        let version = buffer.version();
+        if let Ok(guard) = self.cached_math.read()
+            && let Some((cached_version, ref blocks)) = *guard
+            && cached_version == version
+        {
+            return blocks.clone();
+        }
+
+        if let Ok(mut guard) = self.cached_math.write() {
+            if let Some((cached_version, ref blocks)) = *guard
+                && cached_version == version
+            {
+                return blocks.clone();
+            }
+
+            let fences = self.cached_fence_rows(buffer);
+            let blocks = scan_math_blocks(buffer, &fences);
+            *guard = Some((version, blocks.clone()));
+            blocks
+        } else {
+            let fences = self.cached_fence_rows(buffer);
+            scan_math_blocks(buffer, &fences)
         }
     }
 
@@ -457,6 +493,18 @@ impl SyntaxHighlighter for MarkdownHighlighter {
             return spans;
         }
 
+        // Display math blocks render as math, never as markdown, so LaTeX
+        // content cannot parse as headings, lists, or links. Fenced code
+        // above already won over `$$`; single-line `$$...$$` pairs fall
+        // through to the inline pass below.
+        if math_block_at(&self.cached_math_blocks(buffer), row).is_some() {
+            spans.push(StyleSpan::tag(
+                0..line_text.len(),
+                HighlightTag::Custom(MATH_BLOCK_TAG),
+            ));
+            return spans;
+        }
+
         // YAML frontmatter renders as dimmed metadata, never as a rule plus
         // plain text. Fences stay dim in every conceal mode so the rows never
         // collapse; the inline pass is skipped so YAML punctuation cannot
@@ -711,6 +759,10 @@ impl SyntaxHighlighter for MarkdownHighlighter {
         {
             return Vec::new();
         }
+        // Link syntax inside display math is LaTeX, never navigation.
+        if math_block_at(&self.cached_math_blocks(buffer), row).is_some() {
+            return Vec::new();
+        }
         extract_markdown_links(line_text)
     }
 
@@ -754,6 +806,7 @@ impl SyntaxHighlighter for MarkdownHighlighter {
 #[cfg(test)]
 mod tests {
     use super::super::links::extract_markdown_links;
+    use super::super::math::MATH_INLINE_TAG;
     use super::*;
     use crate::{ConcealedLine, StyleValue};
 
@@ -1261,6 +1314,171 @@ mod tests {
         let row = hidden_highlighter().highlight_line(&active, 1, "title: x");
         assert_eq!(row.len(), 1);
         assert_eq!(row[0].style, StyleValue::Tag(HighlightTag::Dimmed));
+    }
+
+    #[test]
+    fn test_markdown_math_inline_concealment() {
+        let line = "Einstein wrote $E=mc^2$ here.";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+        buffer.set_cursor_offset(line.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert_eq!(spans.len(), 3);
+        assert_eq!(spans[0].range, 15..16);
+        assert_eq!(spans[0].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(spans[1].range, 16..22);
+        assert_eq!(
+            spans[1].style,
+            StyleValue::Tag(HighlightTag::Custom(MATH_INLINE_TAG))
+        );
+        assert_eq!(spans[2].range, 22..23);
+        assert_eq!(spans[2].style, StyleValue::Tag(HighlightTag::Hidden));
+        assert_eq!(
+            ConcealedLine::build(line, &spans).display_text,
+            "Einstein wrote E=mc^2 here."
+        );
+    }
+
+    #[test]
+    fn test_markdown_math_inline_cursor_reveal() {
+        let line = "See $x^2$ here.";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(line);
+        buffer.set_cursor_offset(5);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert_eq!(spans.len(), 1);
+        assert_eq!(spans[0].range, 4..9);
+        assert_eq!(
+            spans[0].style,
+            StyleValue::Tag(HighlightTag::Custom(MATH_INLINE_TAG))
+        );
+        assert_eq!(
+            ConcealedLine::build(line, &spans).display_text,
+            "See $x^2$ here."
+        );
+    }
+
+    #[test]
+    fn test_markdown_math_single_line_block() {
+        let line = "Area is $$x^2$$ exactly.";
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+        buffer.set_cursor_offset(line.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+        assert_eq!(spans.len(), 3);
+        assert_eq!(
+            spans[1].style,
+            StyleValue::Tag(HighlightTag::Custom(MATH_BLOCK_TAG))
+        );
+        assert_eq!(
+            ConcealedLine::build(line, &spans).display_text,
+            "Area is x^2 exactly."
+        );
+    }
+
+    #[test]
+    fn test_markdown_math_literal_cases() {
+        let hidden_highlighter = MarkdownHighlighter::with_config(MarkdownConfig {
+            conceal_mode: ConcealMode::Hidden,
+            ..Default::default()
+        });
+        // A lone `$$` line is a display fence by design, so literal cases
+        // below never start a line with `$$`.
+        for line in ["$open", "$ $", "costs \\$5", "a $ b $ c"] {
+            let mut buffer = EditorBuffer::new(&format!("{line}\nother"));
+            buffer.set_cursor_offset(line.len() + 1);
+            let spans = hidden_highlighter.highlight_line(&buffer, 0, line);
+            assert!(
+                spans.iter().all(|span| !matches!(
+                    span.style,
+                    StyleValue::Tag(HighlightTag::Custom(MATH_INLINE_TAG | MATH_BLOCK_TAG))
+                )),
+                "{line:?} must not parse as math: {spans:?}"
+            );
+        }
+
+        // Dollars inside code spans stay code, never math.
+        let code = "`$x$` here";
+        let mut buffer = EditorBuffer::new(&format!("{code}\nother"));
+        buffer.set_cursor_offset(code.len() + 1);
+        let spans = hidden_highlighter.highlight_line(&buffer, 0, code);
+        assert!(
+            spans
+                .iter()
+                .any(|span| span.style == StyleValue::Tag(HighlightTag::Code)),
+            "code span must survive: {spans:?}"
+        );
+        assert!(
+            spans.iter().all(|span| !matches!(
+                span.style,
+                StyleValue::Tag(HighlightTag::Custom(MATH_INLINE_TAG | MATH_BLOCK_TAG))
+            )),
+            "code dollars must not parse as math: {spans:?}"
+        );
+    }
+
+    #[test]
+    fn test_markdown_math_block_spans_lines() {
+        let lines = ["text", "$$", "# not a heading", "x^2", "$$", "more"];
+        let text = lines.join("\n");
+        let highlighter = MarkdownHighlighter::new();
+        let buffer = EditorBuffer::new(&text);
+
+        for (row, line) in lines.iter().enumerate().skip(1).take(4) {
+            let spans = highlighter.highlight_line(&buffer, row, line);
+            assert_eq!(spans.len(), 1, "row {row} must tag wholly: {spans:?}");
+            assert_eq!(
+                spans[0].style,
+                StyleValue::Tag(HighlightTag::Custom(MATH_BLOCK_TAG))
+            );
+        }
+
+        // LaTeX content never parses as markdown.
+        let heading = highlighter.highlight_line(&buffer, 2, lines[2]);
+        assert!(
+            heading
+                .iter()
+                .all(|span| !matches!(span.style, StyleValue::Tag(HighlightTag::Heading(_)))),
+            "math content must not head: {heading:?}"
+        );
+
+        // Link syntax inside display math is not navigation.
+        let links = highlighter.extract_links(&buffer, 2, "[a](http://x)");
+        assert!(links.is_empty(), "math links must not extract: {links:?}");
+
+        // Rows outside the block are untouched.
+        assert!(highlighter.highlight_line(&buffer, 0, lines[0]).is_empty());
+        assert!(highlighter.highlight_line(&buffer, 5, lines[5]).is_empty());
+    }
+
+    #[test]
+    fn test_markdown_math_code_fence_wins_over_dollars() {
+        let lines = ["```", "$$", "```", "$$"];
+        let text = lines.join("\n");
+        let highlighter = MarkdownHighlighter::new();
+        let buffer = EditorBuffer::new(&text);
+
+        // The first `$$` sits inside the code block, so only the trailing
+        // opener remains, covering just its own row.
+        let code_row = highlighter.highlight_line(&buffer, 1, lines[1]);
+        assert_eq!(code_row.len(), 1);
+        assert_eq!(code_row[0].style, StyleValue::Tag(HighlightTag::Code));
+
+        let lone = highlighter.highlight_line(&buffer, 3, lines[3]);
+        assert_eq!(lone.len(), 1);
+        assert_eq!(
+            lone[0].style,
+            StyleValue::Tag(HighlightTag::Custom(MATH_BLOCK_TAG))
+        );
     }
 
     #[test]

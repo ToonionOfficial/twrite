@@ -1,6 +1,7 @@
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use super::links::parse_wikilinks;
+use super::math::highlight_math_spans;
 use crate::syntax::{HighlightTag, StyleSpan, StyleValue, TextStyle};
 
 /// Parses inline CommonMark and GFM elements (bold, italic, highlight,
@@ -192,6 +193,7 @@ pub(crate) fn highlight_inline_markdown(
     // separately against spans the pulldown pass already emitted.
     highlight_mark_spans(line_text, cursor_offset, delimiter_tag, spans);
     highlight_wikilink_spans(line_text, cursor_offset, delimiter_tag, spans);
+    highlight_math_spans(line_text, cursor_offset, delimiter_tag, spans);
 }
 
 /// Reports whether the cursor sits inside a concealable construct so its
@@ -199,7 +201,11 @@ pub(crate) fn highlight_inline_markdown(
 /// step before the opener has left the construct); the end edge keeps a
 /// 1-byte grace (a cursor resting on the closing delimiter still counts as
 /// inside) so delimiters don't flicker the moment the cursor steps past them.
-fn cursor_inside_construct(cursor_offset: Option<usize>, start: usize, end: usize) -> bool {
+pub(crate) fn cursor_inside_construct(
+    cursor_offset: Option<usize>,
+    start: usize,
+    end: usize,
+) -> bool {
     cursor_offset.is_some_and(|cursor| start <= cursor && cursor <= end)
 }
 
@@ -285,7 +291,7 @@ fn find_mark_delimiter(bytes: &[u8], from: usize, opening: bool) -> Option<usize
 
 /// Reports whether `start..end` intersects an emitted span that mark pairs
 /// must not cross: code spans, link brackets/URLs, and concealed ranges.
-fn overlaps_reserved(spans: &[StyleSpan], start: usize, end: usize) -> bool {
+pub(crate) fn overlaps_reserved(spans: &[StyleSpan], start: usize, end: usize) -> bool {
     spans.iter().any(|span| {
         matches!(
             span.style,
